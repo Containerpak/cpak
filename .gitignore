@@ -1,3 +1,6 @@
-./cpak
-./_cpak
-./vendor/
+/cpak
+/_cpak
+/vendor/
+podman-launcher
+go.work
+go.work.sum
