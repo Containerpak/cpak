@@ -80,13 +80,6 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 		return
 	}
 
-	if os.Getenv("CPAK_ENGINE") == "" {
-		// options.ContainerEngine, err = setupBuiltinContainerEngine(options.BinPath)
-		options.ContainerEngine = "podman"
-	} else {
-		options.ContainerEngine = os.Getenv("CPAK_ENGINE")
-	}
-
 	err = tools.EnsureUnixDeps(options.BinPath, "rootlesskit")
 	if err != nil {
 		return

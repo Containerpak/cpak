@@ -98,6 +98,9 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 		cmds = append(cmds, "--env", env)
 	}
 
+	// following is where dependencies and future dependencies are exported
+	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, container.Application.Id)+":$PATH")
+
 	cmd := exec.Command(rootlesskitBin, cmds...)
 	fmt.Println(cmd.String())
 	fmt.Println(cmd.Args)

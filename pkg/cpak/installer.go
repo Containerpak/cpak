@@ -68,7 +68,6 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) 
 		Layers:             layers,
 		Config:             config,
 	}
-	fmt.Println(app.Layers)
 
 	err = store.NewApplication(app)
 	if err != nil {
@@ -80,5 +79,21 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) 
 		return
 	}
 
+	// err = c.CreateExports(app)
+	// if err != nil {
+	// 	return
+	// }
+
 	return nil
+}
+
+// Remove removes a package from the local store.
+func (c *Cpak) Remove(name string) (err error) {
+	panic("not implemented")
+}
+
+// CreateExports creates the exports for a given application.
+func (c *Cpak) CreateExports(app types.Application) (err error) {
+	panic("not implemented")
+	// TODO: before implementing this, we have to resolve dependencies
 }
