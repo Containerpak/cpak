@@ -11,4 +11,6 @@ type Application struct {
 	Binaries           []string
 	DesktopEntries     []string
 	FutureDependencies []string
+	Layers             []string
+	Config             string
 }

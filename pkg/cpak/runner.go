@@ -21,25 +21,20 @@ func (c *Cpak) Run(origin string, version string, binary string, extraArgs ...st
 
 	app, err := store.GetApplicationByOrigin(origin, version)
 	if err != nil {
-		return fmt.Errorf("no application found for origin %s and version %s", origin, version)
+		return fmt.Errorf("no application found for origin %s and version %s: %s", origin, version, err)
 	}
 
 	var container types.Container
-	if c.Options.Mode == "keep" {
-		container, err = c.PrepareContainer(app)
-		if err != nil {
-			return
-		}
+	container, err = c.PrepareContainer(app)
+	if err != nil {
+		return
 	}
 
+	command := []string{}
 	if strings.HasPrefix(binary, "@") {
-		if c.Options.Mode == "keep" {
-			return c.Ce.ExecInContainer(
-				container.Id, true, binary[1:], workDir, extraArgs...)
-		} else {
-			return c.Ce.RunInContainer(
-				app.Id, true, binary[1:], workDir, extraArgs...)
-		}
+		command = append(command, binary[1:])
+		command = append(command, extraArgs...)
+		return c.ExecInContainer(container, command)
 	} else if strings.HasPrefix(binary, "/") {
 		binary = binary[strings.LastIndex(binary, "/")+1:]
 	}
@@ -62,10 +57,8 @@ func (c *Cpak) Run(origin string, version string, binary string, extraArgs ...st
 		return fmt.Errorf("no exported binaries found for application %s", app.Name)
 	}
 
-	if c.Options.Mode == "keep" {
-		err = c.Ce.ExecInContainer(container.Id, true, binary, workDir, extraArgs...)
-	} else {
-		err = c.Ce.RunInContainer(app.Id, true, binary, workDir, extraArgs...)
-	}
+	command = append(command, app.Binaries[0])
+	command = append(command, extraArgs...)
+	err = c.ExecInContainer(container, command)
 	return
 }

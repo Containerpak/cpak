@@ -1,23 +1,25 @@
 package cpak
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/linux-immutability-tools/containers-wrapper/pkg/cengine"
 	ceTypes "github.com/linux-immutability-tools/containers-wrapper/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
-//go:embed podman-launcher
-var podmanLauncherBytes []byte
+// //go:embed podman-launcher
+// var podmanLauncherBytes []byte
 
 type Cpak struct {
 	Ce      cengine.Ce
 	Options types.CpakOptions
+	Ctx     context.Context
 }
 
 func NewCpak() (cpak Cpak, err error) {
@@ -30,14 +32,13 @@ func NewCpak() (cpak Cpak, err error) {
 		ContainerEngine: cpak.Options.ContainerEngine,
 		Env:             []string{"PODMAN_STATIC_TARGET_DIR=" + cpak.Options.BinPath + "/podman"},
 	})
+
+	cpak.Ctx = context.Background()
 	return
 }
 
 // getCpakOptions returns the system-wide cpak options
 // it looks for them in the following order:
-// 1. environment variables: CPAK_ENGINE, CPAK_INSTALLATION_PATH or CPAK_OPTS_FILE
-// 2. mode: CPAK_MODE
-// 3. config file:
 //   - $HOME/.config/cpak/cpak.json
 //   - /etc/cpak/cpak.json
 //   - /usr/share/cpak/cpak.json
@@ -94,14 +95,9 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 		options.ContainerEngine = os.Getenv("CPAK_ENGINE")
 	}
 
-	if os.Getenv("CPAK_MODE") == "" {
-		options.Mode = "keep"
-	} else {
-		if os.Getenv("CPAK_MODE") != "keep" && os.Getenv("CPAK_MODE") != "drop" {
-			err = fmt.Errorf("invalid CPAK_MODE: %s. It must be either 'keep' or 'drop'", os.Getenv("CPAK_MODE"))
-			return
-		}
-		options.Mode = os.Getenv("CPAK_MODE")
+	err = tools.EnsureUnixDeps(options.BinPath, "rootlesskit")
+	if err != nil {
+		return
 	}
 
 	return
@@ -137,18 +133,4 @@ func createCpakDirs(options *types.CpakOptions) error {
 	}
 
 	return nil
-}
-
-func setupBuiltinContainerEngine(binPath string) (string, error) {
-	podmanLauncherPath := filepath.Join(binPath, "podman-launcher")
-	if _, err := os.Stat(podmanLauncherPath); err == nil {
-		return podmanLauncherPath, nil
-	}
-
-	err := os.WriteFile(podmanLauncherPath, podmanLauncherBytes, 0755)
-	if err != nil {
-		return "", err
-	}
-
-	return podmanLauncherPath, nil
 }

@@ -59,7 +59,9 @@ func (s *Store) initDb(dbPath string) (err error) {
 			Timestamp DATETIME,
 			Binaries TEXT,
 			DesktopEntries TEXT,
-			FutureDependencies TEXT
+			FutureDependencies TEXT,
+			Layers TEXT,
+			Config TEXT
 		)
 	`)
 
@@ -71,6 +73,7 @@ func (s *Store) initDb(dbPath string) (err error) {
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS Container (
 			Id TEXT PRIMARY KEY,
+			Pid INTEGER,
 			ApplicationId TEXT,
 			Timestamp DATETIME,
 			FOREIGN KEY(ApplicationId) REFERENCES Application(Id)
@@ -89,10 +92,11 @@ func (s *Store) NewApplication(app types.Application) (err error) {
 	binaries := strings.Join(app.Binaries, ",")
 	desktopEntries := strings.Join(app.DesktopEntries, ",")
 	futureDependencies := strings.Join(app.FutureDependencies, ",")
+	layers := strings.Join(app.Layers, ",")
 
 	_, err = s.db.Exec(
-		"INSERT INTO Application VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		app.Id, app.Name, app.Version, app.Origin, app.Timestamp, binaries, desktopEntries, futureDependencies,
+		"INSERT INTO Application VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		app.Id, app.Name, app.Version, app.Origin, app.Timestamp, binaries, desktopEntries, futureDependencies, layers, app.Config,
 	)
 	if err != nil {
 		err = fmt.Errorf("NewApplication: %s", err)
@@ -109,8 +113,8 @@ func (s *Store) NewContainer(container types.Container) (err error) {
 	}
 
 	_, err = s.db.Exec(
-		"INSERT INTO Container VALUES (?, ?, ?)",
-		container.Id, container.Application.Id, container.Timestamp,
+		"INSERT INTO Container VALUES (?, ?, ?, ?)",
+		container.Id, container.Pid, container.Application.Id, container.Timestamp,
 	)
 	if err != nil {
 		err = fmt.Errorf("NewContainer: %s", err)
@@ -197,7 +201,8 @@ func (s *Store) GetApplicationsByOrigin(origin, version string) (apps []types.Ap
 		var desktopEntries string
 		var futureDependencies string
 		var binaries string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies)
+		var layers string
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies, &layers, &app.Config)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationsByOrigin: %s", err)
 			return
@@ -206,6 +211,7 @@ func (s *Store) GetApplicationsByOrigin(origin, version string) (apps []types.Ap
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
 		app.FutureDependencies = strings.Split(futureDependencies, ",")
 		app.Binaries = strings.Split(binaries, ",")
+		app.Layers = strings.Split(layers, ",")
 		apps = append(apps, app)
 	}
 
@@ -243,7 +249,7 @@ func (s *Store) GetApplicationsByFutureDependencies(dependencies []string) (apps
 
 // GetApplicationContainers returns the containers associated with a specific application.
 func (s *Store) GetApplicationContainers(application types.Application) (containers []types.Container, err error) {
-	rows, err := s.db.Query("SELECT * FROM Container WHERE ApplicationId = ? ORDER BY Timestamp DESC", application.Id)
+	rows, err := s.db.Query("SELECT * FROM Container INNER JOIN Application ON Container.ApplicationId = Application.Id WHERE ApplicationId = ? ORDER BY Timestamp DESC", application.Id)
 	if err != nil {
 		err = fmt.Errorf("GetApplicationContainers: %s", err)
 		return
@@ -252,15 +258,25 @@ func (s *Store) GetApplicationContainers(application types.Application) (contain
 
 	for rows.Next() {
 		var container types.Container
-		err = rows.Scan(&container.Id, &container.Application.Id, &container.Timestamp)
+		var desktopEntries string
+		var futureDependencies string
+		var binaries string
+		var layers string
+		err = rows.Scan(&container.Id, &container.Pid, &container.Application.Id, &container.Timestamp, &container.Application.Id, &container.Application.Name, &container.Application.Version, &container.Application.Origin, &container.Application.Timestamp, &binaries, &desktopEntries, &futureDependencies, &layers, &container.Application.Config)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationContainers: %s", err)
 			return
 		}
+
+		container.Application.DesktopEntries = strings.Split(desktopEntries, ",")
+		container.Application.FutureDependencies = strings.Split(futureDependencies, ",")
+		container.Application.Binaries = strings.Split(binaries, ",")
+		container.Application.Layers = strings.Split(layers, ",")
 		containers = append(containers, container)
 	}
 
 	return
+
 }
 
 // RemoveApplicationById removes an application based on the ID provided as a parameter.
@@ -279,6 +295,28 @@ func (s *Store) RemoveContainerById(id string) (err error) {
 	_, err = s.db.Exec("DELETE FROM Container WHERE Id = ?", id)
 	if err != nil {
 		err = fmt.Errorf("RemoveContainerById: %s", err)
+		return
+	}
+
+	return
+}
+
+// SetContainerPid sets the PID of a container based on the ID provided as a parameter.
+func (s *Store) SetContainerPid(id string, pid int) (err error) {
+	_, err = s.db.Exec("UPDATE Container SET Pid = ? WHERE Id = ?", pid, id)
+	if err != nil {
+		err = fmt.Errorf("SetContainerPid: %s", err)
+		return
+	}
+
+	return
+}
+
+// RemoveContainer removes a container based on the ID provided as a parameter.
+func (s *Store) RemoveContainer(id string) (err error) {
+	_, err = s.db.Exec("DELETE FROM Container WHERE Id = ?", id)
+	if err != nil {
+		err = fmt.Errorf("RemoveContainer: %s", err)
 		return
 	}
 

@@ -1,11 +1,10 @@
 package cpak
 
 import (
+	"encoding/base64"
 	"fmt"
-	"strings"
 	"time"
 
-	ceTypes "github.com/linux-immutability-tools/containers-wrapper/pkg/types"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -46,32 +45,10 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) 
 		return
 	}
 
-	imageItems := strings.Split(manifest.Image, ":")
-	if len(imageItems) != 2 {
-		return fmt.Errorf("invalid image format: %s", manifest.Image)
-	}
-	base := imageItems[0]
-	tag := imageItems[1]
-	_, err = c.Ce.PullImage(base, tag, "", false, false)
+	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + manifest.Version))
+	layers, config, err := c.Pull(manifest.Image, imageId)
 	if err != nil {
 		return
-	}
-
-	images, err := c.Ce.Images(map[string][]string{})
-	if err != nil {
-		return
-	}
-
-	var image ceTypes.ImageInfo
-	for _, img := range images {
-		if img.Tag == tag {
-			_img, err := c.Ce.InspectImage(img.Id)
-			if err != nil {
-				return err
-			}
-			image = _img
-			break
-		}
 	}
 
 	store, err := NewStore(c.Options.StorePath)
@@ -79,8 +56,8 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) 
 		return
 	}
 
-	err = store.NewApplication(types.Application{
-		Id:                 image.Id,
+	app := types.Application{
+		Id:                 imageId,
 		Name:               manifest.Name,
 		Version:            manifest.Version,
 		Origin:             origin,
@@ -88,7 +65,12 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) 
 		Binaries:           manifest.Binaries,
 		DesktopEntries:     manifest.DesktopEntries,
 		FutureDependencies: manifest.FutureDependencies,
-	})
+		Layers:             layers,
+		Config:             config,
+	}
+	fmt.Println(app.Layers)
+
+	err = store.NewApplication(app)
 	if err != nil {
 		return
 	}

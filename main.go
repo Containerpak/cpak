@@ -24,6 +24,7 @@ func main() {
 	rootCmd.AddCommand(cmd.NewInstallCommand())
 	rootCmd.AddCommand(cmd.NewShellCommand())
 	rootCmd.AddCommand(cmd.NewRunCommand())
+	rootCmd.AddCommand(cmd.NewSpawnCommand())
 
 	// test command
 	rootCmd.AddCommand(&cobra.Command{
