@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/linux-immutability-tools/containers-wrapper/pkg/cengine"
-	ceTypes "github.com/linux-immutability-tools/containers-wrapper/pkg/types"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -17,7 +15,6 @@ import (
 // var podmanLauncherBytes []byte
 
 type Cpak struct {
-	Ce      cengine.Ce
 	Options types.CpakOptions
 	Ctx     context.Context
 }
@@ -27,11 +24,6 @@ func NewCpak() (cpak Cpak, err error) {
 	if err != nil {
 		return
 	}
-
-	cpak.Ce, err = cengine.NewCe(ceTypes.CeOptions{
-		ContainerEngine: cpak.Options.ContainerEngine,
-		Env:             []string{"PODMAN_STATIC_TARGET_DIR=" + cpak.Options.BinPath + "/podman"},
-	})
 
 	cpak.Ctx = context.Background()
 	return

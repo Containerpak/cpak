@@ -5,7 +5,6 @@ go 1.20
 require (
 	github.com/google/go-containerregistry v0.16.1
 	github.com/google/uuid v1.3.1
-	github.com/linux-immutability-tools/containers-wrapper v1.0.6
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/shirou/gopsutil v3.21.11+incompatible
