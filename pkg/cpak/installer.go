@@ -49,13 +49,23 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 		return
 	}
 
-	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + manifest.Version))
-	layers, config, err := c.Pull(manifest.Image, imageId)
+	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
 	}
 
-	store, err := NewStore(c.Options.StorePath)
+	var existingApp types.Application
+	existingApp, err = store.GetApplicationByOrigin(origin, manifest.Version)
+	if err != nil {
+		return
+	}
+
+	if existingApp.Id != "" {
+		return fmt.Errorf("application already installed, perform an Audit if this application is not working as expected")
+	}
+
+	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + manifest.Version))
+	layers, config, err := c.Pull(manifest.Image, imageId)
 	if err != nil {
 		return
 	}

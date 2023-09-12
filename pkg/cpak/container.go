@@ -95,7 +95,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerConfigFile) (pid int, err error) {
 	layers := ""
 	for _, layer := range container.Application.Layers {
-		layers += layer + ":"
+		layers += layer + "|"
 	}
 
 	layersPath := c.GetInStoreDir("layers")

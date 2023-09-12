@@ -2,13 +2,17 @@ package cpak
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/mirkobrombin/cpak/pkg/tools"
-	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/schollz/progressbar/v3"
 )
 
 // Pull pulls a remote image and unpacks it into the storage folder.
@@ -27,15 +31,26 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 		return
 	}
 
-	// saving the image to the cache (the actual download)
-	tarCachePath := c.GetInCacheDir(cpakImageId + ".tar")
-	err = crane.SaveLegacy(img, image, tarCachePath)
+	// getting the image config
+	ociConfigObj, err := img.ConfigFile()
 	if err != nil {
 		return
 	}
 
+	ociConfigBytes, err := json.Marshal(ociConfigObj)
+	if err != nil {
+		return
+	}
+
+	ociConfig = string(ociConfigBytes)
+
 	// unpacking the image layers into the storage/images folder
-	layers, ociConfig, err = c.unpackImageLayers(cpakImageId, img, tarCachePath)
+	layerObjs, err := img.Layers()
+	if err != nil {
+		return
+	}
+
+	layers, err = c.unpackImageLayers(cpakImageId, img, layerObjs)
 	if err != nil {
 		return
 	}
@@ -51,66 +66,107 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 // container, to setup the environment as the developer intended. It will be
 // stored as a field of the image struct in the store and marshalled back
 // to JSON when needed.
-func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath string) (layers []string, ociConfig string, err error) {
-	// create temporary directory for the image in the cpak cache
-	inCacheDir, err := c.GetInCacheDirMkdir(digest)
+func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.Layer) (layers []string, err error) {
+	availableLayers, err := c.GetAvailableLayers()
 	if err != nil {
 		return
 	}
 
-	// unpack image tarball into temporary directory
-	err = tools.TarUnpack(tarCachePath, inCacheDir)
+	for _, layer := range layerObjs {
+		layerDigest, err := layer.Digest()
+		if err != nil {
+			return layers, err
+		}
+
+		if _, ok := availableLayers[layerDigest.String()]; !ok {
+			err = c.downloadLayer(image, layer)
+			if err != nil {
+				return layers, err
+			}
+		}
+
+		layers = append(layers, layerDigest.String())
+	}
+
+	return
+}
+
+func (c *Cpak) GetAvailableLayers() (layers map[string]string, err error) {
+	layers = make(map[string]string)
+
+	err = filepath.Walk(c.Options.StoreLayersPath, func(path string, info fs.FileInfo, err error) error {
+		if info.IsDir() {
+			return nil
+		}
+
+		layerHash := filepath.Base(path)
+		layerHash = strings.TrimSuffix(layerHash, filepath.Ext(layerHash))
+		layers[layerHash] = path
+
+		return nil
+	})
+
+	return
+}
+
+func (c *Cpak) ensureApplicationLayers(layers []string) (err error) {
+	availableLayers, err := c.GetAvailableLayers()
 	if err != nil {
 		return
 	}
 
-	// read and decode the JSON manifest
-	manifestPath := filepath.Join(inCacheDir, "manifest.json")
-	manifestFile, err := os.Open(manifestPath)
-	if err != nil {
-		return
-	}
-	defer manifestFile.Close()
-
-	var manifestData []types.OciManifest
-	err = json.NewDecoder(manifestFile).Decode(&manifestData)
-	if err != nil {
-		return
-	}
-
-	manifest := manifestData[0]
-	layers = manifest.Layers
-
-	// unpack layers, each layer is a tarball so we have to unpack each one
-	// into different directories inside the layers directory, we use the
-	// following scheme: <layer-hash.ext>:<layer-files>
 	for _, layer := range layers {
-		layerPath := filepath.Join(inCacheDir, layer)
-		var layerFile *os.File
-		layerFile, err = os.Open(layerPath)
-		if err != nil {
-			return
-		}
-		defer layerFile.Close()
-
-		err = os.MkdirAll(filepath.Join(c.Options.StoreLayersPath, layer), 0755)
-		if err != nil {
-			return
-		}
-
-		err = tools.TarUnpack(layerPath, filepath.Join(c.Options.StoreLayersPath, layer))
-		if err != nil {
-			return
+		if _, ok := availableLayers[layer]; !ok {
+			return fmt.Errorf("layer %s not found", layer)
 		}
 	}
 
-	// get the image config
-	ociConfigPath := c.GetInCacheDir(digest, manifest.Config)
-	ociConfigBytes, err := os.ReadFile(ociConfigPath)
+	return
+}
+
+func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
+	digest, err := layer.Digest()
 	if err != nil {
 		return
 	}
 
-	ociConfig = string(ociConfigBytes)
+	layerInCacheDir := c.GetInCacheDir(digest.String())
+	layerContent, err := layer.Compressed()
+	if err != nil {
+		return
+	}
+
+	defer layerContent.Close()
+
+	layerFile, err := os.Create(layerInCacheDir)
+	if err != nil {
+		return
+	}
+
+	defer layerFile.Close()
+
+	layerSize, err := layer.Size()
+	if err != nil {
+		return
+	}
+
+	bar := progressbar.DefaultBytes(
+		layerSize,
+		"Downloading",
+	)
+
+	writer := io.MultiWriter(layerFile, bar)
+
+	_, err = io.Copy(writer, layerContent)
+	if err != nil {
+		return
+	}
+
+	layerInStoreDir, err := c.GetInStoreDirMkdir("layers", digest.String())
+	if err != nil {
+		return
+	}
+
+	err = tools.TarUnpack(layerInCacheDir, layerInStoreDir)
 	return
 }

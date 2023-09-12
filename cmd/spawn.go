@@ -86,7 +86,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	// mount layers
 	layersAsList := []string{}
 	if layers != "" {
-		for _, layer := range strings.Split(layers, ":") {
+		for _, layer := range strings.Split(layers, "|") {
 			if layer != "" {
 				layersAsList = append(layersAsList, layer)
 			}
