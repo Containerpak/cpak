@@ -93,6 +93,12 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 		}
 	}
 
+	// Other store paths are generated from the store path
+	options.StoreLayersPath = filepath.Join(options.StorePath, "layers")
+	options.StoreContainersPath = filepath.Join(options.StorePath, "containers")
+	options.StoreStatesPath = filepath.Join(options.StorePath, "states")
+	options.RotlesskitBinPath = filepath.Join(options.BinPath, "rootlesskit")
+
 	// Create the necessary directories if they don't exist
 	err = createCpakDirs(&options)
 	if err != nil {
@@ -129,6 +135,11 @@ func createCpakDirs(options *types.CpakOptions) error {
 		options.ExportsPath,
 		options.StorePath,
 		options.CachePath,
+
+		// Store subdirectories
+		options.StoreLayersPath,
+		options.StoreContainersPath,
+		options.StoreStatesPath,
 	}
 
 	for _, dir := range dirs {

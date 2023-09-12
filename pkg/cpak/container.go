@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 
 	"github.com/google/go-containerregistry/pkg/legacy"
@@ -48,7 +47,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	// If a container already exists, check if it is running
 	if len(containers) > 0 {
 		container = containers[0]
-		container.StatePath = filepath.Join(c.Options.StorePath, "states", container.Id)
+		container.StatePath = c.GetInStoreDir("states", container.Id)
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
 		if !c.IsContainerRunning(container.Pid) {
@@ -99,9 +98,8 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 		layers += layer + ":"
 	}
 
-	layersPath := filepath.Join(c.Options.StorePath, "layers")
-	rootfs := filepath.Join(c.Options.StorePath, "containers", container.Id, "rootfs")
-	rootlesskitBin := filepath.Join(c.Options.BinPath, "rootlesskit")
+	layersPath := c.GetInStoreDir("layers")
+	rootfs := c.GetInStoreDir("containers", container.Id, "rootfs")
 	cmds := []string{
 		"--debug", // TODO: move to a flag
 		//"--net=slirp4netns",
@@ -126,7 +124,7 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 	// following is where dependencies and future dependencies are exported
 	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, container.Application.Id)+":$PATH")
 
-	cmd := exec.Command(rootlesskitBin, cmds...)
+	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -166,14 +164,12 @@ type ContainerCreateOptions struct {
 func (c *Cpak) CreateContainer() (containerId string, statePath string, err error) {
 	containerId = uuid.New().String()
 
-	rootfs := filepath.Join(c.Options.StorePath, "containers", containerId, "rootfs")
-	err = os.MkdirAll(rootfs, 0755)
+	_, err = c.GetInStoreDirMkdir("containers", containerId, "rootfs")
 	if err != nil {
 		return
 	}
 
-	statePath = filepath.Join(c.Options.StorePath, "states", containerId)
-	err = os.MkdirAll(statePath, 0755)
+	statePath, err = c.GetInStoreDirMkdir("states", containerId)
 	if err != nil {
 		return
 	}
@@ -263,8 +259,8 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	// we don't care about the error here, we just want to make sure that
 	// the container filesystem is getting deleted
 	os.RemoveAll(container.StatePath)
-	os.RemoveAll(filepath.Join(c.Options.StorePath, "containers", container.Id))
-	os.RemoveAll(filepath.Join(c.Options.StorePath, "states", container.Id))
+	os.RemoveAll(c.GetInStoreDir("containers", container.Id))
+	os.RemoveAll(c.GetInStoreDir("states", container.Id))
 
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {

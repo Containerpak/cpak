@@ -26,4 +26,11 @@ type CpakOptions struct {
 	// Note: cache is intended to be used by the cpak pull function to store
 	// the downloaded images and unpacked layers.
 	CachePath string `json:"cache_path"`
+
+	// Following paths are not meant to be set by the user, they are set
+	// by cpak during its initialization.
+	StoreLayersPath     string `json:"store_layers_path"`
+	StoreStatesPath     string `json:"store_states_path"`
+	StoreContainersPath string `json:"store_containers_path"`
+	RotlesskitBinPath   string `json:"rootlesskit_bin_path"`
 }

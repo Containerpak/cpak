@@ -95,6 +95,10 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 
 	for _, layer := range layersAsList {
 		layerDir := filepath.Join(layersDir, layer)
+		fmt.Println("Mounting:layerDir: ", layerDir)
+		fmt.Println("Mounting:rootFs: ", rootFs)
+		fmt.Println("Mounting:stateDir: ", stateDir)
+		fmt.Println("Mounting:layer: ", layer)
 		err = syscall.Mount(
 			"overlay", rootFs, "overlay", 0,
 			fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", rootFs, layerDir, stateDir),

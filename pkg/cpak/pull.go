@@ -28,7 +28,7 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 	}
 
 	// saving the image to the cache (the actual download)
-	tarCachePath := filepath.Join(c.Options.CachePath, cpakImageId+".tar")
+	tarCachePath := c.GetInCacheDir(cpakImageId + ".tar")
 	err = crane.SaveLegacy(img, image, tarCachePath)
 	if err != nil {
 		return
@@ -53,21 +53,13 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 // to JSON when needed.
 func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath string) (layers []string, ociConfig string, err error) {
 	// create temporary directory for the image in the cpak cache
-	inCacheDir := filepath.Join(c.Options.CachePath, digest)
-	err = os.MkdirAll(inCacheDir, 0755)
+	inCacheDir, err := c.GetInCacheDirMkdir(digest)
 	if err != nil {
 		return
 	}
 
 	// unpack image tarball into temporary directory
 	err = tools.TarUnpack(tarCachePath, inCacheDir)
-	if err != nil {
-		return
-	}
-
-	// create layers directory in cpak storage
-	layersPath := filepath.Join(c.Options.StorePath, "layers")
-	err = os.MkdirAll(layersPath, 0755)
 	if err != nil {
 		return
 	}
@@ -101,19 +93,19 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath str
 		}
 		defer layerFile.Close()
 
-		err = os.MkdirAll(filepath.Join(layersPath, layer), 0755)
+		err = os.MkdirAll(filepath.Join(c.Options.StoreLayersPath, layer), 0755)
 		if err != nil {
 			return
 		}
 
-		err = tools.TarUnpack(layerPath, filepath.Join(layersPath, layer))
+		err = tools.TarUnpack(layerPath, filepath.Join(c.Options.StoreLayersPath, layer))
 		if err != nil {
 			return
 		}
 	}
 
 	// get the image config
-	ociConfigPath := filepath.Join(c.Options.CachePath, digest, manifest.Config)
+	ociConfigPath := c.GetInCacheDir(digest, manifest.Config)
 	ociConfigBytes, err := os.ReadFile(ociConfigPath)
 	if err != nil {
 		return
