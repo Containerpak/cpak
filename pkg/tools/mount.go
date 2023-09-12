@@ -52,3 +52,12 @@ func Mount(src, dest string, mode uintptr) error {
 func MountBind(src, dest string) error {
 	return Mount(src, dest, syscall.MS_BIND|syscall.MS_REC|syscall.MS_PRIVATE)
 }
+
+// MountOverlay mounts the given lower, upper and work directories in the
+// given destination path as an overlay filesystem.
+func MountOverlay(lowerDir, upperDir, workDir string) error {
+	return syscall.Mount(
+		"overlay", lowerDir, "overlay", 0,
+		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir),
+	)
+}

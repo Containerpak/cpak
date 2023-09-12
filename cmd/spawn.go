@@ -99,10 +99,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		fmt.Println("Mounting:rootFs: ", rootFs)
 		fmt.Println("Mounting:stateDir: ", stateDir)
 		fmt.Println("Mounting:layer: ", layer)
-		err = syscall.Mount(
-			"overlay", rootFs, "overlay", 0,
-			fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", rootFs, layerDir, stateDir),
-		)
+		err = tools.MountOverlay(rootFs, layerDir, stateDir)
 		if err != nil {
 			return spawnError("mount:layer"+layer, err)
 		}
