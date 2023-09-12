@@ -11,7 +11,7 @@ import (
 
 // ValidateManifest validates a manifest file, by ensuring all
 // required fields are present.
-func (c *Cpak) ValidateManifest(manifest *types.Manifest) (err error) {
+func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if manifest.Name == "" {
 		return errors.New("name is mandatory and must be populated")
 	}
@@ -31,14 +31,14 @@ func (c *Cpak) ValidateManifest(manifest *types.Manifest) (err error) {
 }
 
 // fetchManifest fetches the manifest file from the given origin.
-func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *types.Manifest, err error) {
+func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *types.CpakManifest, err error) {
 	// remove trailing .git if present
 	if origin[len(origin)-4:] == ".git" {
 		origin = origin[:len(origin)-4]
 	}
 
 	// if any protocol is specified, we release a failuer since we force
-	// the use of https and the user should learn about it
+	// the use of https and the user should not specify any protocol
 	if strings.Contains(origin, "://") {
 		return nil, fmt.Errorf("do not specify any protocol in the origin repository URL")
 	}
@@ -69,7 +69,7 @@ func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *
 		return nil, fmt.Errorf("no branch, release or commit specified")
 	}
 
-	manifest = &types.Manifest{}
+	manifest = &types.CpakManifest{}
 	err = json.Unmarshal(manifestContent, manifest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal manifest file: %w", err)

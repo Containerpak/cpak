@@ -8,6 +8,15 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+// Run runs the given binary from the given application. The binary can be
+// specified as a path or as a name. If the binary is specified as a name,
+// the first binary matching the given name will be executed. To execute a
+// unexported binary, the binary name must be prefixed with a "@".
+//
+// Note: binaries specified with the "@" prefix are not guaranteed to be
+// available in required applications, so it is recommended to use them only
+// for debugging purposes and handle the error case when the binary is not
+// available, e.g. in shell scripts.
 func (c *Cpak) Run(origin string, version string, binary string, extraArgs ...string) (err error) {
 	workDir := os.Getenv("PWD")
 	if !strings.HasPrefix(workDir, "/home") {

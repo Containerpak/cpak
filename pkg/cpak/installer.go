@@ -26,6 +26,7 @@ func (c *Cpak) Install(origin, branch, release, commit string) (err error) {
 	}
 
 	// if all version parameters are empty, we default to the main branch
+	// assuming it is the default branch of the repository
 	if versionParamsCount == 0 {
 		branch = "main"
 	}
@@ -39,7 +40,10 @@ func (c *Cpak) Install(origin, branch, release, commit string) (err error) {
 }
 
 // InstallCpak installs a package from a given manifest file.
-func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) {
+//
+// Note: this function can be used to install packages from a local manifest
+// but this behaviour is not fully supported yet.
+func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err error) {
 	err = c.ValidateManifest(manifest)
 	if err != nil {
 		return
@@ -87,7 +91,9 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.Manifest) (err error) 
 	return nil
 }
 
-// Remove removes a package from the local store.
+// Remove removes a package from the local store, including all the containers
+// and exports associated with it. It also removes the application and
+// container files from the cpak data directory.
 func (c *Cpak) Remove(name string) (err error) {
 	panic("not implemented")
 }

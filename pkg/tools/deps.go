@@ -14,6 +14,14 @@ import (
 //go:embed rootlesskit.tar.gz
 var rootlesskit []byte
 
+// EnsureUnixDeps ensures that the required dependencies are available in the
+// host system.
+//
+// Note: in the case of rootlesskit, the binary is embedded in the cpak binary
+// and extracted to the specified binPath if it is not already present. If
+// rootlesskit is already present in the system, it is not used, cpak will
+// always use the embedded one, this is to ensure that the rootlesskit version
+// used by cpak is always the expected one.
 func EnsureUnixDeps(binPath string, rootlessImplementation string) error {
 	err := os.MkdirAll(binPath, 0755)
 	if err != nil {

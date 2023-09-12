@@ -11,6 +11,10 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+// Pull pulls a remote image and unpacks it into the storage folder.
+//
+// Note: cpak does not offer a standard containers storage, it uses a custom
+// storage based on the image layers.
 func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfig string, err error) {
 	err = tools.ValidateImageName(image)
 	if err != nil {
@@ -39,7 +43,19 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 	return
 }
 
+// unpackImageLayers unpacks the image layers into the storage/images folder
+// and returns the list of layers and the image config.
+//
+// Note: the image config is returned as a string because it is not used
+// during the unpacking process, it is used only when creating a new cpak
+// container, to setup the environment as the developer intended. It will be
+// stored as a field of the image struct in the store and marshalled back
+// to JSON when needed.
 func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath string) (layers []string, imagePath string, ociConfig string, err error) {
+	// TODO: rework layers storage using storage/layers instead of storage/images
+	// so that we can store multiple images with the same layers and achieve
+	// better storage efficiency aka deduplication
+
 	// create temporary directory for the image in the cpak cache
 	inCacheDir := filepath.Join(c.Options.CachePath, digest)
 	err = os.MkdirAll(inCacheDir, 0755)

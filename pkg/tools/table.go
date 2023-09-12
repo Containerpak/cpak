@@ -7,6 +7,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 )
 
+// ShowTable prints a table to stdout.
 func ShowTable(header []string, data [][]string) {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader(header)

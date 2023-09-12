@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
+// GetSubIDRanges returns the subuid and subgid ranges for the current user.
+// It does so by calling the getsubids command.
 func GetSubIDRanges() ([]string, []string, error) {
+	// TODO: check if there are more efficient ways to do this, e.g.
+	// by not relying on external commands
 	user, err := user.Current()
 	if err != nil {
 		return nil, nil, fmt.Errorf("error getting current user: %w", err)

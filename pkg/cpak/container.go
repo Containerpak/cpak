@@ -14,14 +14,25 @@ import (
 	"github.com/shirou/gopsutil/process"
 )
 
-// PrepareContainer prepares a container for the given application.
-// It returns an existing one if it exists, otherwise it creates a new one.
+// PrepareContainer dispatches the creation of a new container for the given
+// application. If a container for the given application already exists in
+// the store, it checks if it is running and, if not, it cleans it up and
+// creates a new one, otherwise it attaches to it.
+//
+// Note: in cpak, the container's lifecycle is based on the process lifecycle,
+// so if the process dies, the container cannot be attached to anymore. This
+// is why we need to check if the container is running before attaching to it.
+// There are no plans to change this behaviour since cpak is meant for running
+// applications that never store any data on its directories, developers should
+// use the user's home directory for that or expose other system directories
+// where data can be stored.
 func (c *Cpak) PrepareContainer(app types.Application) (container types.Container, err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
 	}
 
+	// Check if a container already exists for the given application
 	containers, err := store.GetApplicationContainers(app)
 	if err != nil {
 		return
@@ -35,9 +46,12 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 		return
 	}
 
+	// If a container already exists, check if it is running
 	if len(containers) > 0 {
 		container = containers[0]
 		container.StatePath = filepath.Join(c.Options.StorePath, "states", container.Id)
+		// If the container is not running, we clean it up and create a new one
+		// by escaping the if statement
 		if !c.IsContainerRunning(container.Pid) {
 			err = c.CleanupContainer(container)
 			if err != nil {
@@ -49,6 +63,9 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 		}
 	}
 
+	// If no container exists, create a new one and store it
+	// Note: the container's pid is not set here, it will be set when the
+	// container is started by the StartContainer function
 	container.Id, container.StatePath, err = c.CreateContainer()
 	if err != nil {
 		return
@@ -61,6 +78,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 
 	fmt.Println("Container created:", container.Id)
 
+	// Start the container and return the pid
 	container.Pid, err = c.StartContainer(container, config, imagePath)
 	if err != nil {
 		return
@@ -70,15 +88,22 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	return
 }
 
+// StartContainer starts the container with the given config and image.
+// The config is used to set the environment the way the developer wants.
+// The container is started by calling our spawn function, which is the
+// responsible for setting up the pivot root, mounting the layers and
+// starting the init process, this via the rootlesskit binary which creates
+// a new namespace for the container.
 func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerConfigFile, imagePath string) (pid int, err error) {
 	layers := ""
 	for _, layer := range container.Application.Layers {
 		layers += layer + ":"
 	}
 
+	rootfs := filepath.Join(c.Options.StorePath, "containers", container.Id, "rootfs")
 	rootlesskitBin := filepath.Join(c.Options.BinPath, "rootlesskit")
 	cmds := []string{
-		"--debug",
+		"--debug", // TODO: move to a flag
 		//"--net=slirp4netns",
 		"--mtu=1500",
 		"--cgroupns=true",
@@ -90,7 +115,7 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 		"spawn",
 	}
 	cmds = append(cmds, "--container-id", container.Id)
-	cmds = append(cmds, "--rootfs", filepath.Join(c.Options.StorePath, "containers", container.Id, "rootfs"))
+	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--image-dir", imagePath)
@@ -102,8 +127,6 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, container.Application.Id)+":$PATH")
 
 	cmd := exec.Command(rootlesskitBin, cmds...)
-	fmt.Println(cmd.String())
-	fmt.Println(cmd.Args)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -118,6 +141,8 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 		return
 	}
 
+	// The pid of the container is the pid of the init process
+	// and it is stored so that we can attach to it later
 	pid = cmd.Process.Pid
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
