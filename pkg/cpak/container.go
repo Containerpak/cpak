@@ -47,10 +47,13 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	// If a container already exists, check if it is running
 	if len(containers) > 0 {
 		container = containers[0]
+		fmt.Println("Container found:", container.Id)
 		container.StatePath = c.GetInStoreDir("states", container.Id)
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		if !c.IsContainerRunning(container.Pid) {
+		container.Pid, err = getPidFromEnvSpawn(container.Id)
+		if err != nil {
+			fmt.Println("Container not running, cleaning it up:", container.Id)
 			err = c.CleanupContainer(container)
 			if err != nil {
 				return
@@ -242,16 +245,6 @@ func getPidFromEnvSpawn(containerId string) (pid int, err error) {
 	}
 
 	return
-}
-
-// IsContainerRunning returns true if the container with the given pid is
-// running, false otherwise.
-func (c *Cpak) IsContainerRunning(pid int) bool {
-	proc, _ := os.FindProcess(pid)
-	// On Unix systems, FindProcess always succeeds and returns a Process
-	// for the given pid, regardless of whether the process exists.
-	err := proc.Signal(syscall.SIGCONT)
-	return err == nil
 }
 
 // CleanupContainer removes the container with the given id.
