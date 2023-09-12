@@ -38,7 +38,6 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 		return
 	}
 
-	imagePath := filepath.Join(c.Options.StorePath, "images", app.Id)
 	container.Application = app
 	config := &legacy.LayerConfigFile{}
 	err = json.Unmarshal([]byte(app.Config), config)
@@ -79,7 +78,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	fmt.Println("Container created:", container.Id)
 
 	// Start the container and return the pid
-	container.Pid, err = c.StartContainer(container, config, imagePath)
+	container.Pid, err = c.StartContainer(container, config)
 	if err != nil {
 		return
 	}
@@ -94,12 +93,13 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 // responsible for setting up the pivot root, mounting the layers and
 // starting the init process, this via the rootlesskit binary which creates
 // a new namespace for the container.
-func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerConfigFile, imagePath string) (pid int, err error) {
+func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerConfigFile) (pid int, err error) {
 	layers := ""
 	for _, layer := range container.Application.Layers {
 		layers += layer + ":"
 	}
 
+	layersPath := filepath.Join(c.Options.StorePath, "layers")
 	rootfs := filepath.Join(c.Options.StorePath, "containers", container.Id, "rootfs")
 	rootlesskitBin := filepath.Join(c.Options.BinPath, "rootlesskit")
 	cmds := []string{
@@ -118,7 +118,7 @@ func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerCon
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
-	cmds = append(cmds, "--image-dir", imagePath)
+	cmds = append(cmds, "--layers-dir", layersPath)
 	for _, env := range config.Config.Env {
 		cmds = append(cmds, "--env", env)
 	}

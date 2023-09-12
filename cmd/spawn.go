@@ -1,7 +1,7 @@
 package cmd
 
 /*
-cpak spawn -c <container-id> -r <rootfs> -e <env> -l <layers> -s <state-dir> -i <image-dir>
+cpak spawn -c <container-id> -r <rootfs> -e <env> -l <layers> -s <state-dir> -d <layers-dir>
 */
 
 import (
@@ -29,6 +29,7 @@ func NewSpawnCommand() *cobra.Command {
 	cmd.Flags().String("layers", "l", "set the layers")
 	cmd.Flags().String("state-dir", "s", "set the state directory")
 	cmd.Flags().String("image-dir", "i", "set the image directory")
+	cmd.Flags().String("layers-dir", "d", "set the layers directory")
 
 	return cmd
 }
@@ -62,7 +63,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return spawnError("", err)
 	}
-	imageDir, err := cmd.Flags().GetString("image-dir")
+	layersDir, err := cmd.Flags().GetString("layers-dir")
 	if err != nil {
 		return spawnError("", err)
 	}
@@ -73,14 +74,14 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+containerId)
 	envVars = append(envVars, "CPAK_ROOTFS="+rootFs)
 	envVars = append(envVars, "CPAK_STATE_DIR="+stateDir)
-	envVars = append(envVars, "CPAK_IMAGE_DIR="+imageDir)
+	envVars = append(envVars, "CPAK_LAYERS_DIR="+layersDir)
 	envVars = append(envVars, "CPAK_LAYERS="+layers)
 
 	fmt.Println("Rootfs:", rootFs)
 	fmt.Println("Env:", envVars)
 	fmt.Println("Layers:", layers)
 	fmt.Println("State dir:", stateDir)
-	fmt.Println("Image dir:", imageDir)
+	fmt.Println("Layers dir:", layersDir)
 
 	// mount layers
 	layersAsList := []string{}
@@ -93,7 +94,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	for _, layer := range layersAsList {
-		layerDir := filepath.Join(imageDir, layer)
+		layerDir := filepath.Join(layersDir, layer)
 		err = syscall.Mount(
 			"overlay", rootFs, "overlay", 0,
 			fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", rootFs, layerDir, stateDir),

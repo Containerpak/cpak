@@ -35,7 +35,7 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 	}
 
 	// unpacking the image layers into the storage/images folder
-	layers, _, ociConfig, err = c.unpackImageLayers(cpakImageId, img, tarCachePath)
+	layers, ociConfig, err = c.unpackImageLayers(cpakImageId, img, tarCachePath)
 	if err != nil {
 		return
 	}
@@ -51,11 +51,7 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 // container, to setup the environment as the developer intended. It will be
 // stored as a field of the image struct in the store and marshalled back
 // to JSON when needed.
-func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath string) (layers []string, imagePath string, ociConfig string, err error) {
-	// TODO: rework layers storage using storage/layers instead of storage/images
-	// so that we can store multiple images with the same layers and achieve
-	// better storage efficiency aka deduplication
-
+func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath string) (layers []string, ociConfig string, err error) {
 	// create temporary directory for the image in the cpak cache
 	inCacheDir := filepath.Join(c.Options.CachePath, digest)
 	err = os.MkdirAll(inCacheDir, 0755)
@@ -69,9 +65,9 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath str
 		return
 	}
 
-	// create image directory in cpak storage
-	imagePath = filepath.Join(c.Options.StorePath, "images", digest)
-	err = os.MkdirAll(imagePath, 0755)
+	// create layers directory in cpak storage
+	layersPath := filepath.Join(c.Options.StorePath, "layers")
+	err = os.MkdirAll(layersPath, 0755)
 	if err != nil {
 		return
 	}
@@ -94,8 +90,8 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath str
 	layers = manifest.Layers
 
 	// unpack layers, each layer is a tarball so we have to unpack each one
-	// into different directories inside the image directory, we use the
-	// following scheme: <image-name>:<layer-hash.ext>:<layer-files>
+	// into different directories inside the layers directory, we use the
+	// following scheme: <layer-hash.ext>:<layer-files>
 	for _, layer := range layers {
 		layerPath := filepath.Join(inCacheDir, layer)
 		var layerFile *os.File
@@ -105,12 +101,12 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, tarCachePath str
 		}
 		defer layerFile.Close()
 
-		err = os.MkdirAll(filepath.Join(imagePath, layer), 0755)
+		err = os.MkdirAll(filepath.Join(layersPath, layer), 0755)
 		if err != nil {
 			return
 		}
 
-		err = tools.TarUnpack(layerPath, filepath.Join(imagePath, layer))
+		err = tools.TarUnpack(layerPath, filepath.Join(layersPath, layer))
 		if err != nil {
 			return
 		}
