@@ -10,8 +10,8 @@ import (
 )
 
 type RepoProvider struct {
-	Origin      string
-	GitCacheDir string
+	Origin string
+	GitDir string
 }
 
 // NewRepoProvider creates a new RepoProvider instance. This is used to
@@ -19,31 +19,31 @@ type RepoProvider struct {
 // library here, as we need to fetch files from a remote repository without
 // cloning the entire repository. Imagine a repository with a single file
 // that is 1GB in size, kek.
-func NewRepoProvider(origin, cacheDir string) (repoProvider *RepoProvider, err error) {
-	gitCacheDir, err := generateGitCacheDir(origin, cacheDir)
+func NewRepoProvider(origin, gitDir string) (repoProvider *RepoProvider, err error) {
+	GitDir, err := generateGitDir(origin, gitDir)
 	if err != nil {
 		return repoProvider, fmt.Errorf("failed to generate git path: %w", err)
 	}
 
 	return &RepoProvider{
-		Origin:      origin,
-		GitCacheDir: gitCacheDir,
+		Origin: origin,
+		GitDir: GitDir,
 	}, nil
 }
 
-// generateGitCacheDir generates the local path for the given git repository.
+// generateGitDir generates the local path for the given git repository.
 // Cache is stored in the following format (Go-like):
 //
 //	<cache-dir>/<host>/<user>/<repo>/<branch|release|commit>
-func generateGitCacheDir(gitURL string, cacheDir string) (gitPath string, err error) {
-	cacheDir = strings.TrimRight(cacheDir, "/")
+func generateGitDir(gitURL string, gitDir string) (gitPath string, err error) {
+	gitDir = strings.TrimRight(gitDir, "/")
 	parts := strings.Split(gitURL, "/")
 
 	if len(parts) != 3 {
 		return "", fmt.Errorf("invalid git url: %s", gitURL)
 	}
 
-	localPath := filepath.Join(append([]string{cacheDir}, parts...)...)
+	localPath := filepath.Join(append([]string{gitDir}, parts...)...)
 	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
 		return "", fmt.Errorf("failed to create local path: %w", err)
 	}
@@ -54,7 +54,7 @@ func generateGitCacheDir(gitURL string, cacheDir string) (gitPath string, err er
 // fetchFileContent fetches the content of a file from a remote URL and
 // stores it in the given cache directory, returning the file content as
 // a byte slice.
-func (r *RepoProvider) fetchFileContent(url, cacheDir string) (fileContent []byte, err error) {
+func (r *RepoProvider) fetchFileContent(url, gitDir string) (fileContent []byte, err error) {
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return nil
@@ -76,7 +76,7 @@ func (r *RepoProvider) fetchFileContent(url, cacheDir string) (fileContent []byt
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	filePath := filepath.Join(cacheDir, filepath.Base(url))
+	filePath := filepath.Join(gitDir, filepath.Base(url))
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file: %w", err)
@@ -95,13 +95,13 @@ func (r *RepoProvider) fetchFileContent(url, cacheDir string) (fileContent []byt
 // given directory. The directory can be either a branch, a release, or a
 // commit.
 // I am not really happy with this implementation, but it works for now.
-func (r *RepoProvider) getFileInDirectory(filePath, reference, cacheDir string) (fileContent []byte, err error) {
+func (r *RepoProvider) getFileInDirectory(filePath, reference, gitDir string) (fileContent []byte, err error) {
 	// Generate URLs for the file in both GitHub and GitLab formats
 	githubURL := fmt.Sprintf("https://%s/raw/%s/%s", r.Origin, reference, filePath)
 	gitlabURL := fmt.Sprintf("https://%s/-/raw/%s/%s", r.Origin, reference, filePath)
 
 	// Generate the local path for the given directory
-	dirPath := filepath.Join(r.GitCacheDir, cacheDir)
+	dirPath := filepath.Join(r.GitDir, gitDir)
 	err = os.MkdirAll(dirPath, os.ModePerm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
