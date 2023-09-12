@@ -150,11 +150,28 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
 		return
 	}
 
-	bar := progressbar.DefaultBytes(
-		layerSize,
-		"Downloading",
-	)
+	hash := digest.String()
+	if strings.Contains(hash, ":") {
+		hash = hash[strings.Index(hash, ":")+1:]
+	}
+	hash = hash[:12]
 
+	bar := progressbar.NewOptions(int(layerSize),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "━",
+			SaucerHead:    "╸",
+			SaucerPadding: " ",
+			BarStart:      "",
+			BarEnd:        "",
+		}),
+		// the following add a new line after the progress bar
+		progressbar.OptionSetWriter(io.MultiWriter(os.Stderr, os.Stderr)),
+		progressbar.OptionSetDescription("Downloading "+hash),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionFullWidth(),
+	)
 	writer := io.MultiWriter(layerFile, bar)
 
 	_, err = io.Copy(writer, layerContent)

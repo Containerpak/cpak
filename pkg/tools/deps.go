@@ -34,6 +34,9 @@ func EnsureUnixDeps(binPath string, rootlessImplementation string) error {
 		if err == nil {
 			return nil
 		}
+
+		fmt.Println("rootlesskit not found, installing it from embedded binary")
+
 		gzipReader, err := gzip.NewReader(bytes.NewReader(rootlesskit))
 		if err != nil {
 			return fmt.Errorf("error creating gzip reader: %w", err)
