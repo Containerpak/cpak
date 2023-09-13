@@ -29,7 +29,7 @@ func (c *Cpak) Run(origin string, version string, binary string, extraArgs ...st
 	}
 
 	app, err := store.GetApplicationByOrigin(origin, version)
-	if err != nil {
+	if err != nil || app.Id == "" {
 		return fmt.Errorf("no application found for origin %s and version %s: %s", origin, version, err)
 	}
 
