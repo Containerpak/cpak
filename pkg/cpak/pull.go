@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,13 +58,10 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 }
 
 // unpackImageLayers unpacks the image layers into the storage/images folder
-// and returns the list of layers and the image config.
+// and returns the list of layers.
 //
-// Note: the image config is returned as a string because it is not used
-// during the unpacking process, it is used only when creating a new cpak
-// container, to setup the environment as the developer intended. It will be
-// stored as a field of the image struct in the store and marshalled back
-// to JSON when needed.
+// Note: only the layers that are not already present in the storage are
+// downloaded and unpacked.
 func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.Layer) (layers []string, err error) {
 	availableLayers, err := c.GetAvailableLayers()
 	if err != nil {
@@ -78,11 +74,25 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 			return layers, err
 		}
 
-		if _, ok := availableLayers[layerDigest.String()]; !ok {
-			err = c.downloadLayer(image, layer)
-			if err != nil {
-				return layers, err
+		found := false
+		for _, a := range availableLayers {
+			if strings.Contains(a, layerDigest.String()) {
+				layers = append(layers, layerDigest.String())
+				found = true
+				break
 			}
+		}
+
+		if found {
+			hash := layerDigest.String()
+			hash = hash[strings.Index(hash, ":")+1:][:12]
+			fmt.Printf("Layer %s already present in the store, skipping..\n", hash)
+			continue
+		}
+
+		err = c.downloadLayer(image, layer)
+		if err != nil {
+			return layers, err
 		}
 
 		layers = append(layers, layerDigest.String())
@@ -91,22 +101,26 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 	return
 }
 
-func (c *Cpak) GetAvailableLayers() (layers map[string]string, err error) {
-	layers = make(map[string]string)
+func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
+	layersDir := c.GetInStoreDir("layers")
 
-	err = filepath.Walk(c.Options.StoreLayersPath, func(path string, info fs.FileInfo, err error) error {
-		if info.IsDir() {
-			return nil
+	_, err = os.Stat(layersDir)
+	if err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(layersDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			layers = append(layers, filepath.Join(layersDir, file.Name()))
 		}
+	}
 
-		layerHash := filepath.Base(path)
-		layerHash = strings.TrimSuffix(layerHash, filepath.Ext(layerHash))
-		layers[layerHash] = path
-
-		return nil
-	})
-
-	return
+	return layers, nil
 }
 
 func (c *Cpak) ensureApplicationLayers(layers []string) (err error) {
@@ -116,7 +130,15 @@ func (c *Cpak) ensureApplicationLayers(layers []string) (err error) {
 	}
 
 	for _, layer := range layers {
-		if _, ok := availableLayers[layer]; !ok {
+		found := false
+		for _, a := range availableLayers {
+			if strings.Contains(a, layer) {
+				found = true
+				break
+			}
+		}
+
+		if !found {
 			return fmt.Errorf("layer %s not found", layer)
 		}
 	}
@@ -151,10 +173,7 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
 	}
 
 	hash := digest.String()
-	if strings.Contains(hash, ":") {
-		hash = hash[strings.Index(hash, ":")+1:]
-	}
-	hash = hash[:12]
+	hash = hash[strings.Index(hash, ":")+1:][:12]
 
 	bar := progressbar.NewOptions(int(layerSize),
 		progressbar.OptionSetTheme(progressbar.Theme{
