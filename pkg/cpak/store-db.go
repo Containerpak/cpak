@@ -138,7 +138,8 @@ func (s *Store) GetApplications() (apps []types.Application, err error) {
 		var desktopEntries string
 		var futureDependencies string
 		var binaries string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies)
+		var layers string
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies, &layers, &app.Config)
 		if err != nil {
 			err = fmt.Errorf("GetApplications: %s", err)
 			return
@@ -146,6 +147,7 @@ func (s *Store) GetApplications() (apps []types.Application, err error) {
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
 		app.FutureDependencies = strings.Split(futureDependencies, ",")
 		app.Binaries = strings.Split(binaries, ",")
+		app.Layers = strings.Split(layers, ",")
 		apps = append(apps, app)
 	}
 
