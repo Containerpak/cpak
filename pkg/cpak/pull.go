@@ -123,28 +123,28 @@ func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
 	return layers, nil
 }
 
-func (c *Cpak) ensureApplicationLayers(layers []string) (err error) {
-	availableLayers, err := c.GetAvailableLayers()
-	if err != nil {
-		return
-	}
+// func (c *Cpak) ensureApplicationLayers(layers []string) (err error) {
+// 	availableLayers, err := c.GetAvailableLayers()
+// 	if err != nil {
+// 		return
+// 	}
 
-	for _, layer := range layers {
-		found := false
-		for _, a := range availableLayers {
-			if strings.Contains(a, layer) {
-				found = true
-				break
-			}
-		}
+// 	for _, layer := range layers {
+// 		found := false
+// 		for _, a := range availableLayers {
+// 			if strings.Contains(a, layer) {
+// 				found = true
+// 				break
+// 			}
+// 		}
 
-		if !found {
-			return fmt.Errorf("layer %s not found", layer)
-		}
-	}
+// 		if !found {
+// 			return fmt.Errorf("layer %s not found", layer)
+// 		}
+// 	}
 
-	return
-}
+// 	return
+// }
 
 func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
 	digest, err := layer.Digest()
