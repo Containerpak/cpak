@@ -3,6 +3,7 @@ package cpak
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -61,7 +62,21 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 	}
 
 	if existingApp.Id != "" {
-		return fmt.Errorf("application already installed, perform an Audit if this application is not working as expected")
+		fmt.Println("application already installed, perform an Audit if this application is not working as expected")
+		return
+	}
+
+	// first we resolve its dependencies
+	for _, dependency := range manifest.Dependencies {
+		if !isURL(dependency) {
+			fmt.Printf("dependency %s is not a valid cpak url, assuming it comes from the same origin\n", dependency)
+			parentOrigin := origin[:strings.LastIndex(origin, "/")]
+			dependency = parentOrigin + "/" + dependency
+		}
+		err = c.Install(dependency, "main", "", "")
+		if err != nil {
+			return
+		}
 	}
 
 	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + manifest.Version))
@@ -99,6 +114,10 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 	// }
 
 	return nil
+}
+
+func isURL(s string) bool {
+	return len(s) > 3 && (strings.HasPrefix(s, "http") || strings.Contains(s, "/"))
 }
 
 // Remove removes a package from the local store, including all the containers
