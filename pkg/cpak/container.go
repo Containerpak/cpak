@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/google/go-containerregistry/pkg/legacy"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/shirou/gopsutil/process"
@@ -38,7 +38,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	}
 
 	container.Application = app
-	config := &legacy.LayerConfigFile{}
+	config := &v1.ConfigFile{}
 	err = json.Unmarshal([]byte(app.Config), config)
 	if err != nil {
 		return
@@ -95,7 +95,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 // responsible for setting up the pivot root, mounting the layers and
 // starting the init process, this via the rootlesskit binary which creates
 // a new namespace for the container.
-func (c *Cpak) StartContainer(container types.Container, config *legacy.LayerConfigFile) (pid int, err error) {
+func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile) (pid int, err error) {
 	layers := ""
 	for _, layer := range container.Application.Layers {
 		layers += layer + "|"
