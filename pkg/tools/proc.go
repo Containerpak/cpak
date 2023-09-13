@@ -2,45 +2,83 @@ package tools
 
 import (
 	"bufio"
-	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"strings"
 )
 
 // GetSubIDRanges returns the subuid and subgid ranges for the current user.
-func GetSubIDRanges() ([]string, []string, error) {
-	user, err := user.Current()
+func GetSubIDRanges() (subUIDSlice []string, subGIDSlice []string, err error) {
+	var curUser *user.User
+	curUser, err = user.Current()
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting current user: %w", err)
+		return
 	}
 
-	subUIDSlice, err := readSubIDFile("/etc/subuid", user.Username)
+	if _, err = os.Stat("/etc/subuid"); err == nil {
+		return GetSubIDRangesNative(curUser)
+	}
+	return GetSubIDRangesCmd(curUser)
+}
+
+// GetSubIDRangesNative returns the subuid and subgid ranges for the current
+// user by reading the /etc/subuid and /etc/subgid files.
+func GetSubIDRangesNative(curUser *user.User) (subUIDSlice []string, subGIDSlice []string, err error) {
+	subUIDSlice, err = readSubIDFile("/etc/subuid", curUser.Username)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting subuids: %w", err)
+		return
 	}
 
-	subGIDSlice, err := readSubIDFile("/etc/subgid", user.Username)
+	subGIDSlice, err = readSubIDFile("/etc/subgid", curUser.Username)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error getting subgids: %w", err)
+		return
 	}
 
-	subUIDSlice = append([]string{user.Uid}, subUIDSlice...)
-	subGIDSlice = append([]string{user.Gid}, subGIDSlice...)
+	subUIDSlice = append([]string{curUser.Uid}, subUIDSlice...)
+	subGIDSlice = append([]string{curUser.Gid}, subGIDSlice...)
 
 	return subUIDSlice, subGIDSlice, nil
 }
 
+// GetSubIDRangesCmd returns the subuid and subgid ranges for the current user
+// by running the getsubids command.
+func GetSubIDRangesCmd(curUser *user.User) (subUIDSlice []string, subGIDSlice []string, err error) {
+	var subUIDout, subGIDout []byte
+	subUIDout, err = exec.Command("getsubids", curUser.Username).Output()
+	if err != nil {
+		return
+	}
+
+	subUIDSlice = strings.Split(
+		strings.Trim(string(subUIDout), "\n"),
+		" ")[2:]
+
+	subGIDout, err = exec.Command("getsubids", "-g", curUser.Username).Output()
+	if err != nil {
+		return
+	}
+
+	subGIDSlice = strings.Split(
+		strings.Trim(string(subGIDout), "\n"),
+		" ")[2:]
+
+	subUIDSlice = append([]string{curUser.Uid}, subUIDSlice...)
+	subGIDSlice = append([]string{curUser.Gid}, subGIDSlice...)
+
+	return
+}
+
 // readSubIDFile reads the subuid or subgid file and returns the slice of subids
 // for the given username.
-func readSubIDFile(filename, username string) ([]string, error) {
-	file, err := os.Open(filename)
+func readSubIDFile(filename, username string) (subIDSlice []string, err error) {
+	var file *os.File
+	file, err = os.Open(filename)
 	if err != nil {
-		return nil, err
+		return
 	}
 	defer file.Close()
 
-	var subIDSlice []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -51,9 +89,9 @@ func readSubIDFile(filename, username string) ([]string, error) {
 		subIDSlice = append(subIDSlice, parts[2])
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	if err = scanner.Err(); err != nil {
+		return
 	}
 
-	return subIDSlice, nil
+	return
 }
