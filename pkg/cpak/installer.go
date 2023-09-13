@@ -14,6 +14,11 @@ import (
 // The branch, release and commit parameters are used to select the version of
 // the package to install. Note that those parameters are mutually exclusive,
 // the installation will fail if more than one of them is specified.
+//
+// Note: this function is not meant to be used by final clients, which should
+// likely implement their own installers, calling the FetchManifest and
+// InstallCpak functions instead, that way they can implement their own
+// installation logic, by showing more detailed information to the user.
 func (c *Cpak) Install(origin, branch, release, commit string) (err error) {
 	versionParams := []string{branch, release, commit}
 	versionParamsCount := 0

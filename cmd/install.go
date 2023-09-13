@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -48,11 +49,53 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 		return installError(err)
 	}
 
-	err = cpak.Install(remote, branch, release, commit)
-	if err != nil {
-		return installError(err)
+	versionParams := []string{branch, release, commit}
+	versionParamsCount := 0
+	for _, versionParam := range versionParams {
+		if versionParam != "" {
+			versionParamsCount++
+		}
+	}
+	if versionParamsCount > 1 {
+		return fmt.Errorf("more than one version parameter specified")
 	}
 
-	fmt.Println("cpak installed successfully!")
-	return nil
+	// if all version parameters are empty, we default to the main branch
+	// assuming it is the default branch of the repository
+	if versionParamsCount == 0 {
+		fmt.Println("No version specified, using main branch if available")
+		branch = "main"
+	}
+
+	manifest, err := cpak.FetchManifest(remote, branch, release, commit)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("\nThe following cpak(s) will be installed:")
+	fmt.Printf("  - %s: %s\n", manifest.Name, manifest.Description)
+	fmt.Println()
+
+	fmt.Println("The following will be exported:")
+	for _, binary := range manifest.Binaries {
+		fmt.Printf("  - (binary) %s\n", binary)
+	}
+	for _, dependency := range manifest.DesktopEntries {
+		fmt.Printf("  - (desktop entry) %s\n", dependency)
+	}
+	fmt.Println()
+
+	fmt.Println("The following dependencies will be installed:")
+	for _, dependency := range manifest.Dependencies {
+		fmt.Printf("  - %s\n", dependency)
+	}
+	fmt.Println()
+
+	confirm := tools.ConfirmOperation("Do you want to continue?")
+	if !confirm {
+		return
+	}
+
+	return cpak.InstallCpak(remote, manifest)
+
 }
