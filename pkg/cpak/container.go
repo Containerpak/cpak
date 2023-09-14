@@ -52,7 +52,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
 		container.Pid, err = getPidFromEnvSpawn(container.Id)
-		if err != nil {
+		if err != nil || container.Pid == 0 {
 			fmt.Println("Container not running, cleaning it up:", container.Id)
 			err = c.CleanupContainer(container)
 			if err != nil {
