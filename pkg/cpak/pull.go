@@ -69,33 +69,32 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 	}
 
 	for _, layer := range layerObjs {
-		layerDigest, err := layer.Digest()
+		layerv1Hash, err := layer.Digest()
 		if err != nil {
 			return layers, err
 		}
+		layerDigest := strings.Split(layerv1Hash.String(), ":")[1]
 
 		found := false
 		for _, a := range availableLayers {
-			if strings.Contains(a, layerDigest.String()) {
-				layers = append(layers, layerDigest.String())
+			if strings.Contains(a, layerDigest) {
+				layers = append(layers, layerDigest)
 				found = true
 				break
 			}
 		}
 
 		if found {
-			hash := layerDigest.String()
-			hash = hash[strings.Index(hash, ":")+1:][:12]
-			fmt.Printf("Layer %s already present in the store, skipping..\n", hash)
+			fmt.Printf("Layer %s already present in the store, skipping..\n", layerDigest)
 			continue
 		}
 
-		err = c.downloadLayer(image, layer)
+		err = c.downloadLayer(image, layer, layerDigest)
 		if err != nil {
 			return layers, err
 		}
 
-		layers = append(layers, layerDigest.String())
+		layers = append(layers, layerDigest)
 	}
 
 	return
@@ -146,13 +145,8 @@ func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
 // 	return
 // }
 
-func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
-	digest, err := layer.Digest()
-	if err != nil {
-		return
-	}
-
-	layerInCacheDir := c.GetInCacheDir(digest.String())
+func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err error) {
+	layerInCacheDir := c.GetInCacheDir(digest)
 	layerContent, err := layer.Compressed()
 	if err != nil {
 		return
@@ -172,8 +166,7 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
 		return
 	}
 
-	hash := digest.String()
-	hash = hash[strings.Index(hash, ":")+1:][:12]
+	hash := digest[strings.Index(digest, ":")+1:][:12]
 
 	bar := progressbar.NewOptions(int(layerSize),
 		progressbar.OptionSetTheme(progressbar.Theme{
@@ -198,7 +191,7 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer) (err error) {
 		return
 	}
 
-	layerInStoreDir, err := c.GetInStoreDirMkdir("layers", digest.String())
+	layerInStoreDir, err := c.GetInStoreDirMkdir("layers", digest)
 	if err != nil {
 		return
 	}
