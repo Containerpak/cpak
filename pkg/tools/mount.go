@@ -61,3 +61,10 @@ func MountOverlay(lowerDir, upperDir, workDir string) error {
 		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir),
 	)
 }
+
+func MountFuseOverlayfs(lowerDir, upperDir, workDir string) (err error) {
+	return syscall.Mount(
+		"fuse-overlayfs", lowerDir, "fuse-overlayfs", 0,
+		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir),
+	)
+}
