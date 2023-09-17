@@ -106,7 +106,6 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile) 
 	cmds := []string{
 		"--debug", // TODO: move to a flag
 		//"--net=slirp4netns",
-		"--mtu=1500",
 		"--cgroupns=true",
 		"--utsns=true",
 		"--ipcns=true",

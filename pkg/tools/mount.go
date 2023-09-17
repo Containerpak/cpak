@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 )
@@ -63,8 +64,8 @@ func MountOverlay(lowerDir, upperDir, workDir string) error {
 }
 
 func MountFuseOverlayfs(lowerDir, upperDir, workDir string) (err error) {
-	return syscall.Mount(
-		"fuse-overlayfs", lowerDir, "fuse-overlayfs", 0,
-		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir),
-	)
+	c := exec.Command("fuse-overlayfs", lowerDir, "-o", fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir))
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
 }

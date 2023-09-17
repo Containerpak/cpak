@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/spf13/cobra"
 )
@@ -115,6 +116,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return spawnError("eval", err)
 	}
+
 	mounts := []string{
 		"/proc",
 		"/sys",
@@ -123,8 +125,9 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		"/dev/shm",
 		"/tmp",
 		"/run",
-		homeDir,
+		// homeDir,
 	}
+
 	for _, mount := range mounts {
 		err = os.MkdirAll(filepath.Join(rootFs, mount), 0755)
 		if err != nil {
@@ -141,12 +144,20 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
-	// inject some configuration files, e.g. for networking
-	confs := []string{
+	// inject some configuration files, e.g. for networking and the
+	// NVIDIA stuff
+	nvidiaLibs, err := cpak.GetNvidiaLibs()
+	if err != nil {
+		return spawnError("", err)
+	}
+
+	files := []string{
 		"/etc/resolv.conf",
 		"/etc/hosts",
 	}
-	for _, conf := range confs {
+	files = append(files, nvidiaLibs...)
+
+	for _, conf := range files {
 		parentDir := filepath.Dir(conf)
 		err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 		if err != nil {
