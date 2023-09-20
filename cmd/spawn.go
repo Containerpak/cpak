@@ -201,7 +201,7 @@ func injectConfigurationFiles(rootFs string) error {
 			return spawnError("mkdir:"+parentDir, err)
 		}
 
-		fmt.Println("Mounting", conf)
+		fmt.Println("Mounting: ", conf)
 		err = tools.MountBind(conf, filepath.Join(rootFs, conf))
 		if err != nil {
 			return spawnError("mount:"+conf, err)
@@ -230,7 +230,7 @@ func pivotRoot(rootFs string) error {
 }
 
 func setHostname(containerId string) error {
-	err := syscall.Sethostname([]byte(fmt.Sprintf("📦%s", containerId[:12])))
+	err := syscall.Sethostname([]byte(fmt.Sprintf("cpak-%s", containerId[:12])))
 	if err != nil {
 		return spawnError("sethostname", err)
 	}
