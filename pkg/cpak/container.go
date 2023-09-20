@@ -202,6 +202,12 @@ func (c *Cpak) ExecInContainer(container types.Container, command []string) (err
 		"-t",
 		fmt.Sprintf("%d", pid),
 		"--",
+		"unshare",
+		"-U",
+		"--map-user=1000",
+		"--map-group=1000",
+		"--",
+
 	}
 	cmds = append(cmds, command...)
 
