@@ -69,22 +69,54 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return spawnError("", err)
 	}
 
-	// as a convenience, we set the environment variables for the container
-	// in the current process, so that we can use them to resolve the
-	// process id of the container
+	layersAsList := parseLayers(layers)
+
+	for _, layer := range layersAsList {
+		err = mountLayer(rootFs, layersDir, stateDir, layer)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = setupMountPoints(rootFs)
+	if err != nil {
+		return err
+	}
+
+	err = injectConfigurationFiles(rootFs)
+	if err != nil {
+		return err
+	}
+
+	err = pivotRoot(rootFs)
+	if err != nil {
+		return err
+	}
+
+	err = setHostname(containerId)
+	if err != nil {
+		return err
+	}
+
+	envVars = setEnvironmentVariables(containerId, rootFs, envVars, stateDir, layersDir, layers)
+	err = startSleepProcess(envVars)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func setEnvironmentVariables(containerId, rootFs string, envVars []string, stateDir, layersDir, layers string) []string {
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+containerId)
 	envVars = append(envVars, "CPAK_ROOTFS="+rootFs)
 	envVars = append(envVars, "CPAK_STATE_DIR="+stateDir)
 	envVars = append(envVars, "CPAK_LAYERS_DIR="+layersDir)
 	envVars = append(envVars, "CPAK_LAYERS="+layers)
+	return envVars
+}
 
-	fmt.Println("Rootfs:", rootFs)
-	fmt.Println("Env:", envVars)
-	fmt.Println("Layers:", layers)
-	fmt.Println("State dir:", stateDir)
-	fmt.Println("Layers dir:", layersDir)
-
-	// mount layers
+func parseLayers(layers string) []string {
 	layersAsList := []string{}
 	if layers != "" {
 		for _, layer := range strings.Split(layers, "|") {
@@ -93,26 +125,29 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 			}
 		}
 	}
+	return layersAsList
+}
 
-	for _, layer := range layersAsList {
-		layerDir := filepath.Join(layersDir, layer)
-		fmt.Println("Mounting:layerDir: ", layerDir)
-		fmt.Println("Mounting:rootFs: ", rootFs)
-		fmt.Println("Mounting:stateDir: ", stateDir)
-		fmt.Println("Mounting:layer: ", layer)
-		err = tools.MountOverlay(rootFs, layerDir, stateDir)
+func mountLayer(rootFs, layersDir, stateDir, layer string) error {
+	layerDir := filepath.Join(layersDir, layer)
+	fmt.Println("Mounting:layerDir: ", layerDir)
+	fmt.Println("Mounting:rootFs: ", rootFs)
+	fmt.Println("Mounting:stateDir: ", stateDir)
+	fmt.Println("Mounting:layer: ", layer)
+	err := tools.MountOverlay(rootFs, layerDir, stateDir)
+	if err != nil {
+		fmt.Println("OverlayFS mount failed, trying with FUSE OverlayFS")
+		err = tools.MountFuseOverlayfs(rootFs, layerDir, stateDir)
 		if err != nil {
-			fmt.Println("OverlayFS mount failed, trying with FUSE OverlayFS")
-			err = tools.MountFuseOverlayfs(rootFs, layerDir, stateDir)
-			if err != nil {
-				return spawnError("mount:layer"+layer, err)
-			}
+			return spawnError("mount:layer"+layer, err)
 		}
 	}
+	return nil
+}
 
-	// setup mount points
+func setupMountPoints(rootFs string) error {
 	homeDir := os.Getenv("HOME")
-	homeDir, err = filepath.EvalSymlinks(homeDir)
+	homeDir, err := filepath.EvalSymlinks(homeDir)
 	if err != nil {
 		return spawnError("eval", err)
 	}
@@ -143,9 +178,10 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 			return spawnError("mount:"+mount, err)
 		}
 	}
+	return nil
+}
 
-	// inject some configuration files, e.g. for networking and the
-	// NVIDIA stuff
+func injectConfigurationFiles(rootFs string) error {
 	nvidiaLibs, err := cpak.GetNvidiaLibs()
 	if err != nil {
 		return spawnError("", err)
@@ -171,10 +207,12 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 			return spawnError("mount:"+conf, err)
 		}
 	}
+	return nil
+}
 
-	// pivot root
+func pivotRoot(rootFs string) error {
 	pivotDir := filepath.Join(rootFs, ".pivot_root")
-	err = os.MkdirAll(pivotDir, 0755)
+	err := os.MkdirAll(pivotDir, 0755)
 	if err != nil {
 		return spawnError("mkdir:"+pivotDir, err)
 	}
@@ -188,23 +226,27 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return spawnError("chdir", err)
 	}
+	return nil
+}
 
-	// set hostname
-	err = syscall.Sethostname([]byte(fmt.Sprintf("📦%s", containerId[:12])))
+func setHostname(containerId string) error {
+	err := syscall.Sethostname([]byte(fmt.Sprintf("📦%s", containerId[:12])))
 	if err != nil {
 		return spawnError("sethostname", err)
 	}
+	return nil
+}
 
+func startSleepProcess(envVars []string) error {
 	envv := append(os.Environ(), envVars...)
 	c := exec.Command("sleep", "infinity")
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	c.Env = envv
-	err = c.Start()
+	err := c.Start()
 	if err != nil {
 		return spawnError("start", err)
 	}
-
-	return
+	return nil
 }
