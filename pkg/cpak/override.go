@@ -29,6 +29,8 @@ type Override struct {
 	Env     []string `json:"env"`
 	Network bool     `json:"network"`
 	Process bool     `json:"process"`
+
+	AsRoot bool `json:"asRoot"`
 }
 
 // Mounts returns the list of paths to be mounted on the new namespace
