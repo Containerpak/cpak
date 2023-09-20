@@ -125,7 +125,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		"/dev/shm",
 		"/tmp",
 		"/run",
-		// homeDir,
+		homeDir,
 	}
 
 	for _, mount := range mounts {
@@ -154,6 +154,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	files := []string{
 		"/etc/resolv.conf",
 		"/etc/hosts",
+		"/etc/passwd",
 	}
 	files = append(files, nvidiaLibs...)
 
