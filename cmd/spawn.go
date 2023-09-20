@@ -189,6 +189,12 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return spawnError("chdir", err)
 	}
 
+	// set hostname
+	err = syscall.Sethostname([]byte(fmt.Sprintf("📦%s", containerId[:12])))
+	if err != nil {
+		return spawnError("sethostname", err)
+	}
+
 	envv := append(os.Environ(), envVars...)
 	c := exec.Command("sleep", "infinity")
 	c.Stdin = os.Stdin
