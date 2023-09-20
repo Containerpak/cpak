@@ -109,7 +109,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile) 
 		"--cgroupns=true",
 		"--utsns=true",
 		"--ipcns=true",
-		"--copy-up=/etc",
+		//"--copy-up=/etc",
 		"--propagation=rslave",
 		os.Args[0],
 		"spawn",
@@ -187,6 +187,9 @@ func (c *Cpak) ExecInContainer(container types.Container, command []string) (err
 		return
 	}
 
+	uid := fmt.Sprintf("%d", os.Getuid())
+	gid := fmt.Sprintf("%d", os.Getgid())
+
 	//nsenterBin := filepath.Join(c.Options.BinPath, "nsenter") TODO: use from busybox
 	nsenterBin := "nsenter"
 	cmds := []string{
@@ -197,17 +200,16 @@ func (c *Cpak) ExecInContainer(container types.Container, command []string) (err
 		"-i",
 		//"-n",
 		// "-p",
-		//"-S", strconv.FormatInt(int64(os.Getuid()), 10),
-		//"-G", strconv.FormatInt(int64(os.Getgid()), 10),
+		// "-S", strconv.FormatInt(int64(os.Getuid()), 10),
+		// "-G", strconv.FormatInt(int64(os.Getgid()), 10),
 		"-t",
 		fmt.Sprintf("%d", pid),
 		"--",
 		"unshare",
 		"-U",
-		"--map-user=1000",
-		"--map-group=1000",
+		"--map-user=" + uid,
+		"--map-group=" + gid,
 		"--",
-
 	}
 	cmds = append(cmds, command...)
 
