@@ -30,10 +30,15 @@ func GetOverrideMounts(o types.Override) []string {
 		mounts = append(mounts, "/run/user/"+curUid+"/wayland-0")
 	}
 
-	if o.SocketX11 || o.SocketWayland {
-		files, err := filepath.Glob("/run/user/" + curUid + "/.mutter-Xwaylandauth.*")
-		if err == nil {
-			mounts = append(mounts, files...)
+	if o.SocketX11 && o.SocketWayland {
+		xauthority := os.Getenv("XAUTHORITY")
+		if xauthority != "" {
+			mounts = append(mounts, xauthority)
+		} else {
+			files, err := filepath.Glob("/run/user/" + curUid + "/.*-Xwaylandauth.*")
+			if err == nil {
+				mounts = append(mounts, files...)
+			}
 		}
 	}
 
