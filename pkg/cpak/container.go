@@ -80,7 +80,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	fmt.Println("Container created:", container.Id)
 
 	// Start the container and return the pid
-	container.Pid, err = c.StartContainer(container, config)
+	container.Pid, err = c.StartContainer(container, config, app.Override)
 	if err != nil {
 		return
 	}
@@ -95,7 +95,7 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 // responsible for setting up the pivot root, mounting the layers and
 // starting the init process, this via the rootlesskit binary which creates
 // a new namespace for the container.
-func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile) (pid int, err error) {
+func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, override types.Override) (pid int, err error) {
 	layers := ""
 	for _, layer := range container.Application.Layers {
 		layers += layer + "|"
@@ -103,6 +103,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile) 
 
 	layersPath := c.GetInStoreDir("layers")
 	rootfs := c.GetInStoreDir("containers", container.Id, "rootfs")
+	overrideMounts := GetOverrideMounts(override)
 	cmds := []string{
 		"--debug", // TODO: move to a flag
 		//"--net=slirp4netns",
@@ -119,8 +120,13 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile) 
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", layersPath)
+
 	for _, env := range config.Config.Env {
 		cmds = append(cmds, "--env", env)
+	}
+
+	for _, override := range overrideMounts {
+		cmds = append(cmds, "--mount-overrides", override)
 	}
 
 	// following is where dependencies and future dependencies are exported

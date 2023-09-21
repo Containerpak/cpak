@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -17,10 +19,22 @@ func GetOverrideMounts(o types.Override) []string {
 
 	if o.SocketX11 {
 		mounts = append(mounts, "/tmp/.X11-unix")
+		mounts = append(mounts, "/tmp/.ICE-unix")
+		mounts = append(mounts, "/tmp/.XIM-unix")
+		mounts = append(mounts, "/tmp/.font-unix")
+		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus") // TODO: move to a dedicated option
+		mounts = append(mounts, "/run/user/"+curUid+"/ICEauthority")
 	}
 
 	if o.SocketWayland {
 		mounts = append(mounts, "/run/user/"+curUid+"/wayland-0")
+	}
+
+	if o.SocketX11 || o.SocketWayland {
+		files, err := filepath.Glob("/run/user/" + curUid + "/.mutter-Xwaylandauth.*")
+		if err == nil {
+			mounts = append(mounts, files...)
+		}
 	}
 
 	if o.SocketPulseAudio {
@@ -48,18 +62,18 @@ func GetOverrideMounts(o types.Override) []string {
 	}
 
 	if o.DeviceAll {
-		mounts = append(mounts, "/dev")
+		mounts = append(mounts, "/dev/")
 	} else {
 		if o.DeviceDri {
-			mounts = append(mounts, "/dev/dri")
+			mounts = append(mounts, "/dev/dri/")
 		}
 
 		if o.DeviceKvm {
-			mounts = append(mounts, "/dev/kvm")
+			mounts = append(mounts, "/dev/kvm/")
 		}
 
 		if o.DeviceShm {
-			mounts = append(mounts, "/dev/shm")
+			mounts = append(mounts, "/dev/shm/")
 		}
 	}
 
@@ -68,15 +82,22 @@ func GetOverrideMounts(o types.Override) []string {
 	}
 
 	if o.FsHostEtc {
-		mounts = append(mounts, "/etc")
+		mounts = append(mounts, "/etc/")
 	}
 
 	if o.FsHostHome {
-		mounts = append(mounts, "/home")
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = os.Getenv("HOME")
+		}
+		if !strings.HasSuffix(homeDir, "/") {
+			homeDir += "/"
+		}
+		mounts = append(mounts, homeDir)
 	}
 
 	if o.Process {
-		mounts = append(mounts, "/proc")
+		mounts = append(mounts, "/proc/")
 	}
 
 	mounts = append(mounts, o.FsExtra...)
@@ -179,5 +200,24 @@ func DeleteOverride(o types.Override, name string) (err error) {
 		return
 	}
 
+	return
+}
+
+// ParseOverride parses the given string and returns an override.
+func ParseOverride(override string) (o types.Override) {
+	err := json.Unmarshal([]byte(override), &o)
+	if err != nil {
+		return NewOverride()
+	}
+	return
+}
+
+// StringOverride returns the string representation of the given override.
+func StringOverride(o types.Override) (override string) {
+	b, err := json.Marshal(o)
+	if err != nil {
+		return ""
+	}
+	override = string(b)
 	return
 }

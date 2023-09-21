@@ -89,7 +89,6 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 	if err != nil {
 		return
 	}
-
 	app := types.Application{
 		Id:                 imageId,
 		Name:               manifest.Name,
@@ -101,6 +100,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 		FutureDependencies: manifest.FutureDependencies,
 		Layers:             layers,
 		Config:             config,
+		Override:           manifest.Override,
 	}
 
 	err = store.NewApplication(app)

@@ -51,7 +51,8 @@ func Mount(src, dest string, mode uintptr) error {
 // MountBind mounts bind the given source path in the given destination path.
 // It is just a wrapper around Mount, for convenience.
 func MountBind(src, dest string) error {
-	return Mount(src, dest, syscall.MS_BIND|syscall.MS_REC|syscall.MS_PRIVATE)
+	return Mount(src, dest, syscall.MS_BIND|syscall.MS_REC|syscall.MS_RDONLY|syscall.MS_NOSUID|
+		syscall.MS_NOEXEC|syscall.MS_NODEV|syscall.MS_PRIVATE)
 }
 
 // MountOverlay mounts the given lower, upper and work directories in the

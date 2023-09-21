@@ -31,6 +31,7 @@ func NewSpawnCommand() *cobra.Command {
 	cmd.Flags().String("state-dir", "s", "set the state directory")
 	cmd.Flags().String("image-dir", "i", "set the image directory")
 	cmd.Flags().String("layers-dir", "d", "set the layers directory")
+	cmd.Flags().StringArrayP("mount-overrides", "m", []string{}, "set the mount overrides")
 
 	return cmd
 }
@@ -68,6 +69,10 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return spawnError("", err)
 	}
+	overrideMounts, err := cmd.Flags().GetStringArray("mount-overrides")
+	if err != nil {
+		return spawnError("", err)
+	}
 
 	layersAsList := parseLayers(layers)
 
@@ -78,7 +83,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
-	err = setupMountPoints(rootFs)
+	err = setupMountPoints(rootFs, overrideMounts)
 	if err != nil {
 		return err
 	}
@@ -145,35 +150,65 @@ func mountLayer(rootFs, layersDir, stateDir, layer string) error {
 	return nil
 }
 
-func setupMountPoints(rootFs string) error {
-	homeDir := os.Getenv("HOME")
-	homeDir, err := filepath.EvalSymlinks(homeDir)
-	if err != nil {
-		return spawnError("eval", err)
-	}
-
+func setupMountPoints(rootFs string, overrideMounts []string) error {
 	mounts := []string{
-		"/proc",
-		"/sys",
-		"/dev",
-		"/dev/pts",
-		"/dev/shm",
-		"/tmp",
-		"/run",
-		homeDir,
+		"/proc/", // TODO: there is a problem with spawning processes without /proc
+		"/sys/",
+		//"/dev",
+		//"/dev/pts",
+		//"/dev/shm",
+		"/tmp/",
+		//"/run",
+		//homeDir,
 	}
+	mounts = append(mounts, overrideMounts...)
 
 	for _, mount := range mounts {
-		err = os.MkdirAll(filepath.Join(rootFs, mount), 0755)
-		if err != nil {
-			return spawnError("mkdir:"+mount, err)
+		fmt.Println("(override) Mounting: ", mount)
+
+		info, err := os.Stat(filepath.Join(rootFs, mount))
+		if os.IsNotExist(err) {
+			fmt.Println("does not exist", mount)
+			if strings.HasSuffix(mount, "/") {
+				fmt.Println("is dir, creating", mount)
+				err = os.MkdirAll(filepath.Join(rootFs, mount), 0755)
+				if err != nil {
+					return spawnError("mkdir:"+mount, err)
+				}
+			} else {
+				fmt.Println("is file, creating", mount)
+				parentDir := filepath.Dir(mount)
+				fmt.Println("parentDir", parentDir)
+				err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
+				if err != nil {
+					return spawnError("mkdir:"+parentDir, err)
+				}
+				fmt.Println("creating file", mount)
+				file, err := os.Create(filepath.Join(rootFs, mount))
+				if err != nil {
+					return spawnError("create:"+mount, err)
+				}
+				err = file.Close()
+				if err != nil {
+					return spawnError("close:"+mount, err)
+				}
+			}
+		} else if err == nil {
+			fmt.Println("exists", mount)
+			if !info.IsDir() {
+				fmt.Println("is file, creating", mount)
+				file, err := os.Create(filepath.Join(rootFs, mount))
+				if err != nil {
+					return spawnError("create:"+mount, err)
+				}
+				err = file.Close()
+				if err != nil {
+					return spawnError("close:"+mount, err)
+				}
+			}
 		}
 
-		flags := syscall.MS_BIND | syscall.MS_REC | syscall.MS_PRIVATE
-		if mount == "/sys" || mount == "/dev" || mount == homeDir {
-			flags |= syscall.MS_REC
-		}
-		err = tools.Mount(mount, filepath.Join(rootFs, mount), uintptr(flags))
+		err = tools.MountBind(mount, filepath.Join(rootFs, mount))
 		if err != nil {
 			return spawnError("mount:"+mount, err)
 		}
@@ -211,6 +246,7 @@ func injectConfigurationFiles(rootFs string) error {
 }
 
 func pivotRoot(rootFs string) error {
+	fmt.Println("Pivoting: ", rootFs)
 	pivotDir := filepath.Join(rootFs, ".pivot_root")
 	err := os.MkdirAll(pivotDir, 0755)
 	if err != nil {
@@ -230,6 +266,7 @@ func pivotRoot(rootFs string) error {
 }
 
 func setHostname(containerId string) error {
+	fmt.Println("Setting hostname: ", containerId)
 	err := syscall.Sethostname([]byte(fmt.Sprintf("cpak-%s", containerId[:12])))
 	if err != nil {
 		return spawnError("sethostname", err)
@@ -238,15 +275,23 @@ func setHostname(containerId string) error {
 }
 
 func startSleepProcess(envVars []string) error {
+	fmt.Println("Starting sleep process")
 	envv := append(os.Environ(), envVars...)
 	c := exec.Command("sleep", "infinity")
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	c.Env = envv
+
 	err := c.Start()
 	if err != nil {
 		return spawnError("start", err)
 	}
+
+	err = c.Process.Release()
+	if err != nil {
+		return spawnError("release", err)
+	}
+
 	return nil
 }

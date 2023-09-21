@@ -40,4 +40,7 @@ type Application struct {
 
 	// Config is the configuration of the application.
 	Config string
+
+	// Override is a set of permissions
+	Override Override
 }
