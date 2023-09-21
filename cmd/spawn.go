@@ -74,8 +74,13 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return spawnError("", err)
 	}
 
-	layersAsList := parseLayers(layers)
+	fmt.Println("Remounting as private")
+	err = syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
+	if err != nil {
+		return spawnError("mount", err)
+	}
 
+	layersAsList := parseLayers(layers)
 	for _, layer := range layersAsList {
 		err = mountLayer(rootFs, layersDir, stateDir, layer)
 		if err != nil {
