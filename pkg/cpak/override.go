@@ -4,38 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
-
-type Override struct {
-	SocketX11        bool `json:"socketX11"`
-	SocketWayland    bool `json:"socketWayland"`
-	SocketPulseAudio bool `json:"socketPulseAudio"`
-	SocketSessionBus bool `json:"socketSessionBus"`
-	SocketSystemBus  bool `json:"socketSystemBus"`
-	SocketSshAgent   bool `json:"socketSshAgent"`
-	SocketCups       bool `json:"socketCups"`
-	SocketGpgAgent   bool `json:"socketGpgAgent"`
-
-	DeviceDri bool `json:"deviceDri"`
-	DeviceKvm bool `json:"deviceKvm"`
-	DeviceShm bool `json:"deviceShm"`
-	DeviceAll bool `json:"deviceAll"`
-
-	FsHost     bool     `json:"fsHost"`
-	FsHostEtc  bool     `json:"fsHostEtc"`
-	FsHostHome bool     `json:"fsHostHome"`
-	FsExtra    []string `json:"fsExtra"`
-
-	Env     []string `json:"env"`
-	Network bool     `json:"network"`
-	Process bool     `json:"process"`
-
-	AsRoot bool `json:"asRoot"`
-}
 
 // Mounts returns the list of paths to be mounted on the new namespace
 // to achieve the desired override.
-func (o *Override) Mounts() []string {
+func GetOverrideMounts(o types.Override) []string {
 	var mounts []string
 
 	curUid := fmt.Sprintf("%d", os.Getuid())
@@ -110,8 +85,8 @@ func (o *Override) Mounts() []string {
 }
 
 // NewOverride returns a new override with default values.
-func NewOverride() *Override {
-	return &Override{
+func NewOverride() types.Override {
+	return types.Override{
 		SocketX11:        true,
 		SocketWayland:    true,
 		SocketPulseAudio: true,
@@ -138,7 +113,7 @@ func NewOverride() *Override {
 }
 
 // LoadOverride loads an override from its name.
-func LoadOverride(name string) (override Override, err error) {
+func LoadOverride(name string) (override types.Override, err error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -164,7 +139,7 @@ func LoadOverride(name string) (override Override, err error) {
 }
 
 // Save saves the override in the user's home directory.
-func (o *Override) Save(name string) (err error) {
+func SaveOverride(override types.Override, name string) (err error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -183,11 +158,11 @@ func (o *Override) Save(name string) (err error) {
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(o)
+	return encoder.Encode(override)
 }
 
 // Delete deletes the override from the user's home directory.
-func (o *Override) Delete(name string) (err error) {
+func DeleteOverride(o types.Override, name string) (err error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return

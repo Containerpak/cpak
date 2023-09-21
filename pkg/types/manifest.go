@@ -47,4 +47,9 @@ type CpakManifest struct {
 	//
 	// Note: this is not used yet.
 	IdleTime int `json:"idle_time"` // non mandatory, idle time in minutes, after which to destroy the container
+
+	// Override is a set of permissions that the user can grant to the
+	// application, even if this is called "override", it is also used to
+	// set the default permissions.
+	Override Override `json:"override"`
 }
