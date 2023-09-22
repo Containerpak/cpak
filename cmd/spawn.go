@@ -103,10 +103,13 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	err = setHostname(containerId)
-	if err != nil {
-		return err
-	}
+	// hostname is not set because it will raise problems with the StartUpWMClass
+	// in the exported desktop file(s), resulting in a new icon for each container
+	// instead of grouping them, e.g. in the GNOME shell dock
+	// err = setHostname(containerId)
+	// if err != nil {
+	// 	return err
+	// }
 
 	envVars = setEnvironmentVariables(containerId, rootFs, envVars, stateDir, layersDir, layers)
 	err = startSleepProcess(envVars)
@@ -270,14 +273,14 @@ func pivotRoot(rootFs string) error {
 	return nil
 }
 
-func setHostname(containerId string) error {
-	fmt.Println("Setting hostname: ", containerId)
-	err := syscall.Sethostname([]byte(fmt.Sprintf("cpak-%s", containerId[:12])))
-	if err != nil {
-		return spawnError("sethostname", err)
-	}
-	return nil
-}
+// func setHostname(containerId string) error {
+// 	fmt.Println("Setting hostname: ", containerId)
+// 	err := syscall.Sethostname([]byte(fmt.Sprintf("cpak-%s", containerId[:12])))
+// 	if err != nil {
+// 		return spawnError("sethostname", err)
+// 	}
+// 	return nil
+// }
 
 func startSleepProcess(envVars []string) error {
 	fmt.Println("Starting sleep process")
