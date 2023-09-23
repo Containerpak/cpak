@@ -33,4 +33,5 @@ type CpakOptions struct {
 	StoreStatesPath     string `json:"store_states_path"`
 	StoreContainersPath string `json:"store_containers_path"`
 	RotlesskitBinPath   string `json:"rootlesskit_bin_path"`
+	HostSpawnBinPath    string `json:"host_spawn_bin_path"`
 }

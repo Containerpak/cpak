@@ -14,6 +14,9 @@ import (
 //go:embed rootlesskit.tar.gz
 var rootlesskit []byte
 
+//go:embed host-spawn
+var hostSpawn []byte
+
 // EnsureUnixDeps ensures that the required dependencies are available in the
 // host system.
 //
@@ -26,6 +29,17 @@ func EnsureUnixDeps(binPath string, rootlessImplementation string) error {
 	err := os.MkdirAll(binPath, 0755)
 	if err != nil {
 		return fmt.Errorf("error creating bin directory: %w", err)
+	}
+
+	_, err = os.Stat(filepath.Join(binPath, "host-spawn"))
+	if err == nil {
+		return nil
+	} else {
+		fmt.Println("host-spawn not found, installing it from embedded binary")
+		err = os.WriteFile(filepath.Join(binPath, "host-spawn"), hostSpawn, 0755)
+		if err != nil {
+			return fmt.Errorf("error writing host-spawn: %w", err)
+		}
 	}
 
 	switch rootlessImplementation {

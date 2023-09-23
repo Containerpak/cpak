@@ -6,3 +6,4 @@ rootlesskit
 rootlesskit.tar.gz
 go.work
 go.work.sum
+tools/host-spawn
