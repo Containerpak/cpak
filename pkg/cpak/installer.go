@@ -131,39 +131,13 @@ func isURL(s string) bool {
 
 // createExports creates the exports for a given application.
 func (c *Cpak) createExports(app types.Application) (err error) {
-	tempDir, err := os.MkdirTemp("", "cpak-exports")
-	if err != nil {
-		return
-	}
-
-	defer os.RemoveAll(tempDir)
-
-	rootFs := tempDir + "/rootfs"
-	err = os.MkdirAll(rootFs, 0755)
-	if err != nil {
-		return
-	}
-
-	stateDir := tempDir + "/state"
-	err = os.MkdirAll(stateDir, 0755)
-	if err != nil {
-		return
-	}
-
-	for _, layer := range app.Layers {
-		fmt.Println("mounting layer", layer)
-		layerDir := c.GetInStoreDir("layers", layer)
-		//err = tools.MountFuseOverlayfs(rootFs, layerDir, stateDir)
-		err = tools.CopyDirContent(layerDir, rootFs)
-		if err != nil {
-			return
-		}
-	}
-
 	for _, entry := range app.DesktopEntries {
-		err = c.exportDesktopEntry(rootFs, app, entry)
-		if err != nil {
-			return
+		for _, layer := range app.Layers {
+			layerDir := c.GetInStoreDir("layers", layer)
+			err = c.exportDesktopEntry(layerDir, app, entry)
+			if err == nil {
+				break
+			}
 		}
 	}
 
@@ -241,7 +215,6 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 			}
 
 			if !filepath.IsAbs(iconPath) {
-				fmt.Printf("icon %s not found in the common directories, no desktop entries will be exported\n", iconPath)
 				return nil
 			}
 
