@@ -32,6 +32,7 @@ func NewSpawnCommand() *cobra.Command {
 	cmd.Flags().String("image-dir", "i", "set the image directory")
 	cmd.Flags().String("layers-dir", "d", "set the layers directory")
 	cmd.Flags().StringArrayP("mount-overrides", "m", []string{}, "set the mount overrides")
+	cmd.Flags().StringArrayP("extra-links", "x", []string{}, "set the extra links")
 
 	return cmd
 }
@@ -73,6 +74,10 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return spawnError("", err)
 	}
+	extraLinks, err := cmd.Flags().GetStringArray("extra-links")
+	if err != nil {
+		return spawnError("", err)
+	}
 
 	fmt.Println("Remounting as private")
 	err = syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
@@ -94,6 +99,11 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	err = injectConfigurationFiles(rootFs)
+	if err != nil {
+		return err
+	}
+
+	err = setupExtraLinks(rootFs, extraLinks)
 	if err != nil {
 		return err
 	}
@@ -248,6 +258,22 @@ func injectConfigurationFiles(rootFs string) error {
 		err = tools.MountBind(conf, filepath.Join(rootFs, conf))
 		if err != nil {
 			return spawnError("mount:"+conf, err)
+		}
+	}
+	return nil
+}
+
+func setupExtraLinks(rootFs string, extraLinks []string) error {
+	for _, link := range extraLinks {
+		linkParts := strings.Split(link, ":")
+		if len(linkParts) != 2 {
+			return spawnError("invalid link format", nil)
+		}
+
+		fmt.Println("Linking: ", linkParts[0], linkParts[1])
+		err := tools.MountBind(linkParts[0], filepath.Join(rootFs, linkParts[1]))
+		if err != nil {
+			return spawnError("mount:"+linkParts[0]+":"+linkParts[1], err)
 		}
 	}
 	return nil
