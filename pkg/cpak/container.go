@@ -120,7 +120,14 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", layersPath)
+	// exposing the host-spawn in xdg-open is needed for the browser to
+	// be able to open the host's default browser, this is absolutely not
+	// secure and should be changed in the future
+	// TODO: help me dudo
 	cmds = append(cmds, "--extra-links", c.Options.HostSpawnBinPath+":/usr/bin/xdg-open")
+	if override.FsHost {
+		cmds = append(cmds, "--extra-links", c.Options.HostSpawnBinPath+":/usr/bin/host-spawn")
+	}
 
 	for _, env := range config.Config.Env {
 		cmds = append(cmds, "--env", env)
