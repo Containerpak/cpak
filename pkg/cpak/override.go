@@ -82,9 +82,10 @@ func GetOverrideMounts(o types.Override) []string {
 		}
 	}
 
-	if o.FsHost {
-		mounts = append(mounts, "/")
-	}
+	// TODO: currently unsupported
+	// if o.FsHost {
+	// 	mounts = append(mounts, "/")
+	// }
 
 	if o.FsHostEtc {
 		mounts = append(mounts, "/etc/")
@@ -101,9 +102,10 @@ func GetOverrideMounts(o types.Override) []string {
 		mounts = append(mounts, homeDir)
 	}
 
-	if o.Process {
-		mounts = append(mounts, "/proc/")
-	}
+	// TODO: currently always exposed, refer to cmd/spawn.go
+	// if o.Process {
+	// 	mounts = append(mounts, "/proc/")
+	// }
 
 	mounts = append(mounts, o.FsExtra...)
 

@@ -45,14 +45,14 @@ func (c *Cpak) Install(origin, branch, release, commit string) (err error) {
 		return err
 	}
 
-	return c.InstallCpak(origin, manifest)
+	return c.InstallCpak(origin, manifest, branch, commit, release)
 }
 
 // InstallCpak installs a package from a given manifest file.
 //
 // Note: this function can be used to install packages from a local manifest
 // but this behaviour is not fully supported yet.
-func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err error) {
+func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch string, commit string, release string) (err error) {
 	err = c.ValidateManifest(manifest)
 	if err != nil {
 		return
@@ -64,7 +64,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 	}
 
 	var existingApp types.Application
-	existingApp, err = store.GetApplicationByOrigin(origin, manifest.Version)
+	existingApp, err = store.GetApplicationByOrigin(origin, manifest.Version, branch, commit, release)
 	if err != nil {
 		return
 	}
@@ -98,6 +98,9 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest) (err err
 		Name:               manifest.Name,
 		Version:            manifest.Version,
 		Origin:             origin,
+		Branch:             branch,
+		Release:            release,
+		Commit:             commit,
 		Timestamp:          time.Now(),
 		Binaries:           manifest.Binaries,
 		DesktopEntries:     manifest.DesktopEntries,
@@ -268,6 +271,31 @@ func (c *Cpak) exportBinary(app types.Application, binary string) error {
 // Remove removes a package from the local store, including all the containers
 // and exports associated with it. It also removes the application and
 // container files from the cpak data directory.
-func (c *Cpak) Remove(name string) (err error) {
-	panic("not implemented")
+func (c *Cpak) Remove(origin string, branch string, commit string, release string) (err error) {
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return
+	}
+
+	switch {
+	case branch != "":
+		err = store.RemoveApplicationByOriginAndBranch(origin, branch)
+	case commit != "":
+		err = store.RemoveApplicationByOriginAndCommit(origin, commit)
+	case release != "":
+		err = store.RemoveApplicationByOriginAndRelease(origin, commit)
+	default:
+		return fmt.Errorf("no remote (branch, commit or release) specified")
+	}
+
+	if err != nil {
+		return
+	}
+
+	err = store.db.Close()
+	if err != nil {
+		return
+	}
+
+	return
 }

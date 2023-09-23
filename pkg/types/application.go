@@ -18,6 +18,12 @@ type Application struct {
 	// there are no checks for its uniqueness.
 	Version string
 
+	// Followings are the remote (branch, release, commit) that the application
+	// was installed from.
+	Branch  string
+	Release string
+	Commit  string
+
 	// Origin is the origin of the application. It is expected to be unique
 	// for each application's version, and should be a git repository URL
 	// without the protocol and the trailing .git.

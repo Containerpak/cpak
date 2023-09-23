@@ -119,6 +119,6 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 		return
 	}
 
-	return cpak.InstallCpak(remote, manifest)
+	return cpak.InstallCpak(remote, manifest, branch, commit, release)
 
 }

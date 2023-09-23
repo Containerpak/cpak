@@ -1,7 +1,7 @@
 package cmd
 
 /*
-cpak remove <remote> <branch>
+cpak remove <remote> <version>
 */
 
 import (
@@ -12,7 +12,7 @@ import (
 
 func NewRemoveCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove <remote> <branch>",
+		Use:   "remove <remote> <version>",
 		Short: "Remove a package installed from a remote Git repository",
 		Args:  cobra.ExactArgs(2),
 		RunE:  RemovePackage,

@@ -49,10 +49,21 @@ func ListPackages(cmd *cobra.Command, args []string) error {
 	}
 
 	if !jsonFlag {
-		header := []string{"Name", "Version", "Timestamp", "Origin"}
+		header := []string{"Name", "Version", "Timestamp", "Origin", "Remote"}
 		data := [][]string{}
 		for _, app := range apps {
-			data = append(data, []string{app.Name, app.Version, app.Timestamp.Format(time.RFC3339), app.Origin})
+			remote := ""
+			switch {
+			case app.Branch != "":
+				remote = app.Branch
+			case app.Release != "":
+				remote = app.Release
+			case app.Commit != "":
+				remote = app.Commit
+			default:
+				remote = "unknown"
+			}
+			data = append(data, []string{app.Name, app.Version, app.Timestamp.Format(time.RFC3339), app.Origin, remote})
 		}
 		tools.ShowTable(header, data)
 	} else {

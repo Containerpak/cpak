@@ -13,6 +13,9 @@ import (
 
 func NewRunCommand() *cobra.Command {
 	var version string
+	var branch string
+	var release string
+	var commit string
 
 	// we have to accept also unhandled flags which will be passed to the binary
 	cmd := &cobra.Command{
@@ -26,6 +29,9 @@ use the @ prefix to specify a binary that's not exported by the package.`,
 		RunE: RunPackage,
 	}
 	cmd.Flags().StringVarP(&version, "version", "v", "", "Specify a version")
+	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Specify a branch")
+	cmd.Flags().StringVarP(&commit, "commit", "c", "", "Specify a commit")
+	cmd.Flags().StringVarP(&release, "release", "r", "", "Specify a release")
 
 	return cmd
 }
@@ -37,8 +43,14 @@ func runError(iErr error) (err error) {
 
 func RunPackage(cmd *cobra.Command, args []string) (err error) {
 	remote := args[0]
+
+	branch, _ := cmd.Flags().GetString("branch")
+	commit, _ := cmd.Flags().GetString("commit")
+	release, _ := cmd.Flags().GetString("release")
+
 	binary := args[1]
 	extraArgs := args[2:]
+
 	fmt.Println("Running cpak from remote:", remote)
 
 	version, _ := cmd.Flags().GetString("branch")
@@ -48,7 +60,7 @@ func RunPackage(cmd *cobra.Command, args []string) (err error) {
 		return runError(err)
 	}
 
-	err = cpak.Run(remote, version, binary, extraArgs...)
+	err = cpak.Run(remote, version, branch, commit, release, binary, extraArgs...)
 	if err != nil {
 		return runError(err)
 	}

@@ -17,7 +17,7 @@ import (
 // available in required applications, so it is recommended to use them only
 // for debugging purposes and handle the error case when the binary is not
 // available, e.g. in shell scripts.
-func (c *Cpak) Run(origin string, version string, binary string, extraArgs ...string) (err error) {
+func (c *Cpak) Run(origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
 	workDir := os.Getenv("PWD")
 	if !strings.HasPrefix(workDir, "/home") {
 		workDir = "/"
@@ -28,7 +28,7 @@ func (c *Cpak) Run(origin string, version string, binary string, extraArgs ...st
 		return
 	}
 
-	app, err := store.GetApplicationByOrigin(origin, version)
+	app, err := store.GetApplicationByOrigin(origin, version, branch, commit, release)
 	if err != nil || app.Id == "" {
 		return fmt.Errorf("no application found for origin %s and version %s: %s", origin, version, err)
 	}
