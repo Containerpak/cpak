@@ -184,6 +184,16 @@ func setupMountPoints(rootFs string, overrideMounts []string) error {
 	for _, mount := range mounts {
 		fmt.Println("(override) Mounting: ", mount)
 
+		// we skip mounts that do not exist on the host, this should be
+		// safe because those mounts come from the overrides list which
+		// are expected to be dbus and other sockets, this will just disable
+		// the feature of the container to use those sockets
+		_, err := os.Stat(mount)
+		if os.IsNotExist(err) {
+			fmt.Println(mount, "does not exist, that's probably unsupported by the host, ignoring")
+			continue
+		}
+
 		info, err := os.Stat(filepath.Join(rootFs, mount))
 		if os.IsNotExist(err) {
 			fmt.Println("does not exist", mount)
