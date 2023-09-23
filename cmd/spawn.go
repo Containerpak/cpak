@@ -86,11 +86,9 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	layersAsList := parseLayers(layers)
-	for _, layer := range layersAsList {
-		err = mountLayer(rootFs, layersDir, stateDir, layer)
-		if err != nil {
-			return err
-		}
+	err = mountLayers(rootFs, layersDir, stateDir, layersAsList)
+	if err != nil {
+		return err
 	}
 
 	err = setupMountPoints(rootFs, overrideMounts)
@@ -151,19 +149,22 @@ func parseLayers(layers string) []string {
 	return layersAsList
 }
 
-func mountLayer(rootFs, layersDir, stateDir, layer string) error {
-	layerDir := filepath.Join(layersDir, layer)
-	fmt.Println("Mounting:layerDir: ", layerDir)
-	fmt.Println("Mounting:rootFs: ", rootFs)
-	fmt.Println("Mounting:stateDir: ", stateDir)
-	fmt.Println("Mounting:layer: ", layer)
-	err := tools.MountOverlay(rootFs, layerDir, stateDir)
-	if err != nil {
-		fmt.Println("OverlayFS mount failed, trying with FUSE OverlayFS")
-		err = tools.MountFuseOverlayfs(rootFs, layerDir, stateDir)
-		if err != nil {
-			return spawnError("mount:layer"+layer, err)
+func mountLayers(rootFs, layersDir string, stateDir string, layersList []string) error {
+	layersDirs := ""
+	latestLayer := filepath.Join(layersDir, layersList[len(layersList)-1])
+
+	for index, layer := range layersList {
+		layerDir := filepath.Join(layersDir, layer)
+		layersDirs = layersDirs + ":" + layerDir
+
+		if index == len(layersList)-1 {
+			continue
 		}
+	}
+
+	err := tools.MountFuseOverlayfs(rootFs, layersDirs, latestLayer, stateDir)
+	if err != nil {
+		return spawnError("mount:layers "+layersDirs, err)
 	}
 	return nil
 }

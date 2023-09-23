@@ -60,13 +60,14 @@ func MountBind(src, dest string) error {
 func MountOverlay(lowerDir, upperDir, workDir string) error {
 	return syscall.Mount(
 		"overlay", lowerDir, "overlay", 0,
-		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir),
+		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s,userxattr", lowerDir, upperDir, workDir),
 	)
 }
 
-func MountFuseOverlayfs(lowerDir, upperDir, workDir string) (err error) {
-	c := exec.Command("fuse-overlayfs", lowerDir, "-o", fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir))
+func MountFuseOverlayfs(targetDir, lowerDir, upperDir, workDir string) (err error) {
+	c := exec.Command("fuse-overlayfs", targetDir, "-o", fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir))
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
+	fmt.Println("cmd was:", c.String())
 	return c.Run()
 }
