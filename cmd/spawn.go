@@ -256,7 +256,6 @@ func injectConfigurationFiles(rootFs string) error {
 		"/etc/hosts",
 		"/etc/passwd",
 	}
-	files = append(files, nvidiaLibs...)
 
 	for _, conf := range files {
 		parentDir := filepath.Dir(conf)
@@ -271,6 +270,21 @@ func injectConfigurationFiles(rootFs string) error {
 			return spawnError("mount:"+conf, err)
 		}
 	}
+
+	for _, lib := range nvidiaLibs {
+		fmt.Println("Mounting: ", lib)
+		err = tools.MountBind(lib, filepath.Join(rootFs, lib))
+		if err != nil {
+			return spawnError("mount:"+lib, err)
+		}
+	}
+
+	// host root is mounted in /run/host for debugging purposes
+	err = tools.MountBind("/", filepath.Join(rootFs, "/run/host"))
+	if err != nil {
+		return spawnError("mount:/", err)
+	}
+
 	return nil
 }
 

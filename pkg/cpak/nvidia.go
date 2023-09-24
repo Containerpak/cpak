@@ -1,7 +1,9 @@
 package cpak
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 )
 
 // GetNvidiaLibs finds the paths of the libraries needed by the
@@ -12,46 +14,100 @@ import (
 // https://github.com/89luca89/distrobox/blob/9bea9498c58e367cea2f106492b5b5cbd8e6b713/distrobox-init#L1256
 func GetNvidiaLibs() ([]string, error) {
 	var nvidiaLibs []string
-
-	// Looking for NVIDIA stuff in /etc
-	nvidiaEtc, err := filepath.Glob("/etc/*nvidia*")
-	if err != nil {
-		return nil, err
+	directories := []string{
+		"/etc",
+		"/usr",
 	}
 
-	nvidiaLibs = append(nvidiaLibs, nvidiaEtc...)
-
-	// Looking for NVIDIA stuff in /usr
-	nvidiaUsr, err := filepath.Glob("/usr/*/*nvidia*")
-	if err != nil {
-		return nil, err
+	for _, directory := range directories {
+		nvidiaLibs = append(nvidiaLibs, getNvidiaLibsFromDir(directory)...)
 	}
 
-	nvidiaLibs = append(nvidiaLibs, nvidiaUsr...)
+	// Remove duplicates and hidden files.
+	var cleanedNvidiaLibs []string
+	for _, nvidiaLib := range nvidiaLibs {
+		// if any of the components of the path starts with a dot, skip it.
+		components := strings.Split(nvidiaLib, "/")
+		isHidden := false
+		for _, component := range components {
+			if strings.HasPrefix(component, ".") {
+				isHidden = true
+				continue
+			}
+		}
 
-	// LookinShareg for NVIDIA stuff in /usr/share
-	nvidiaUsrShare, err := filepath.Glob("/usr/share/*/*nvidia*")
-	if err != nil {
-		return nil, err
+		if isHidden {
+			continue
+		}
+
+		// if any of the components of the path is already in the list,
+		// skip it.
+		var skip bool
+		for _, cleanedNvidiaLib := range cleanedNvidiaLibs {
+			if strings.HasPrefix(nvidiaLib, cleanedNvidiaLib) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		cleanedNvidiaLibs = append(cleanedNvidiaLibs, nvidiaLib)
 	}
 
-	nvidiaLibs = append(nvidiaLibs, nvidiaUsrShare...)
+	return cleanedNvidiaLibs, nil
+}
 
-	// LookinShareg for NVIDIA stuff in /usr/share/vulkan/icd.d
-	nvidiaUsrShareVkIcd, err := filepath.Glob("/usr/share/vulkan/icd.d/*nvidia*")
-	if err != nil {
-		return nil, err
+// getNvidiaLibsFromDir finds every file and directory in the given
+// directory, which name contains the string "nvidia".
+//
+// Note: this is recursive, it calls itself for every directory
+// found so it can find nvidia libraries in subdirectories.
+func getNvidiaLibsFromDir(dir string) []string {
+	var nvidiaLibs []string
+
+	excludedDirs := []string{
+		"/usr/src",
 	}
 
-	nvidiaLibs = append(nvidiaLibs, nvidiaUsrShareVkIcd...)
-
-	// Looking for NVIDIA stuff in /usr/lib*
-	nvidiaUsrLib, err := filepath.Glob("/usr/lib*/**/*nvidia*.so*")
+	// Open the directory.
+	directory, err := os.Open(dir)
 	if err != nil {
-		return nil, err
+		return nvidiaLibs
 	}
 
-	nvidiaLibs = append(nvidiaLibs, nvidiaUsrLib...)
+	// Read the directory.
+	files, err := directory.Readdir(0)
+	if err != nil {
+		return nvidiaLibs
+	}
 
-	return nvidiaLibs, nil
+	// For every file in the directory.
+	for _, file := range files {
+		// If the file is in the excluded directories, skip it.
+		var skip bool
+		for _, excludedDir := range excludedDirs {
+			if strings.HasPrefix(dir, excludedDir) {
+				skip = true
+				break
+			}
+		}
+
+		if skip {
+			continue
+		}
+
+		// If the file is a directory, call this function recursively.
+		if file.IsDir() {
+			nvidiaLibs = append(nvidiaLibs, getNvidiaLibsFromDir(filepath.Join(dir, file.Name()))...)
+		}
+
+		// If the file name contains the string "nvidia", add it to the list.
+		if strings.Contains(file.Name(), "nvidia") {
+			nvidiaLibs = append(nvidiaLibs, filepath.Join(dir, file.Name()))
+		}
+	}
+
+	return nvidiaLibs
 }
