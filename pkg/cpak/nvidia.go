@@ -22,12 +22,28 @@ func GetNvidiaLibs() ([]string, error) {
 	nvidiaLibs = append(nvidiaLibs, nvidiaEtc...)
 
 	// Looking for NVIDIA stuff in /usr
-	nvidiaUsr, err := filepath.Glob("/usr/*nvidia*")
+	nvidiaUsr, err := filepath.Glob("/usr/*/*nvidia*")
 	if err != nil {
 		return nil, err
 	}
 
 	nvidiaLibs = append(nvidiaLibs, nvidiaUsr...)
+
+	// LookinShareg for NVIDIA stuff in /usr/share
+	nvidiaUsrShare, err := filepath.Glob("/usr/share/*/*nvidia*")
+	if err != nil {
+		return nil, err
+	}
+
+	nvidiaLibs = append(nvidiaLibs, nvidiaUsrShare...)
+
+	// LookinShareg for NVIDIA stuff in /usr/share/vulkan/icd.d
+	nvidiaUsrShareVkIcd, err := filepath.Glob("/usr/share/vulkan/icd.d/*nvidia*")
+	if err != nil {
+		return nil, err
+	}
+
+	nvidiaLibs = append(nvidiaLibs, nvidiaUsrShareVkIcd...)
 
 	// Looking for NVIDIA stuff in /usr/lib*
 	nvidiaUsrLib, err := filepath.Glob("/usr/lib*/**/*nvidia*.so*")
