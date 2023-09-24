@@ -273,10 +273,9 @@ func injectConfigurationFiles(rootFs string) error {
 
 	for _, lib := range nvidiaLibs {
 		fmt.Println("Mounting: ", lib)
-		err = tools.MountBind(lib, filepath.Join(rootFs, lib))
-		if err != nil {
-			return spawnError("mount:"+lib, err)
-		}
+		// TODO: errors are ignored since also temp directories are returned
+		//	   so they could not exist at the time of the mount
+		tools.MountBind(lib, filepath.Join(rootFs, lib))
 	}
 
 	// host root is mounted in /run/host for debugging purposes
