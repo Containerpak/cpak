@@ -9,7 +9,7 @@ import (
 //
 // Note: this follows the same logic as the one used in the
 // distrobox utility to find the nvidia libraries, see:
-// https://github.com/mirkobrombin/distrobox/blob/9bea9498c58e367cea2f106492b5b5cbd8e6b713/distrobox-init#L1256
+// https://github.com/89luca89/distrobox/blob/9bea9498c58e367cea2f106492b5b5cbd8e6b713/distrobox-init#L1256
 func GetNvidiaLibs() ([]string, error) {
 	var nvidiaLibs []string
 

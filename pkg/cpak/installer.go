@@ -292,6 +292,13 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		return
 	}
 
+	// an Audit is needed to remove resources (containers, exports, etc.)
+	// which are not used anymore
+	err = c.Audit(true)
+	if err != nil {
+		return
+	}
+
 	err = store.db.Close()
 	if err != nil {
 		return

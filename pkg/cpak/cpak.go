@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -159,5 +160,6 @@ func createCpakDirs(options *types.CpakOptions) error {
 // If the repair flag is set to true, the function will try to repair the
 // store, by removing inactivated containers and missing applications.
 func (c *Cpak) Audit(repair bool) (err error) {
+	fmt.Println("TODO: implement audit")
 	return
 }
