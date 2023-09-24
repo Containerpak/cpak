@@ -253,7 +253,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 
 func (c *Cpak) exportBinary(app types.Application, binary string) error {
 	destinationPath := filepath.Join(
-		c.Options.BinPath,
+		c.Options.ExportsPath,
 		"bin",
 		filepath.Base(binary),
 	)
