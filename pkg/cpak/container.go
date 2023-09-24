@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -101,6 +102,23 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		layers += layer + "|"
 	}
 
+	// the cpakBinary is the path to the cpak binary, it is used to re-execute
+	// the cpak with the spawn command to start the container
+	cpakBinary := os.Args[0]
+	// if the cpak binary is not a full path, we need to find it
+	if !filepath.IsAbs(cpakBinary) {
+		// first we check in the user's home directory
+		cpakBinary = filepath.Join(os.Getenv("HOME"), ".local", "bin", "cpak")
+		// if it is not there, we check in the system's bin directory using
+		// the LookPath function
+		if _, err = os.Stat(cpakBinary); os.IsNotExist(err) {
+			cpakBinary, err = exec.LookPath("cpak")
+			if err != nil {
+				return
+			}
+		}
+	}
+
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.Id, "rootfs")
 	overrideMounts := GetOverrideMounts(override)
@@ -112,7 +130,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		"--ipcns=true",
 		"--copy-up=/etc",
 		"--propagation=rslave",
-		os.Args[0],
+		cpakBinary,
 		"spawn",
 	}
 	cmds = append(cmds, "--container-id", container.Id)
