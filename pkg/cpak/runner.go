@@ -33,8 +33,16 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 		return fmt.Errorf("no application found for origin %s and version %s: %s", origin, version, err)
 	}
 
+	// Get the override for the given application, we try to load the user
+	// override first, if it does not exist, we use the application's one
+	var override types.Override
+	override, err = LoadOverride(app.Origin)
+	if err != nil {
+		override = app.Override
+	}
+
 	var container types.Container
-	container, err = c.PrepareContainer(app)
+	container, err = c.PrepareContainer(app, override)
 	if err != nil {
 		return
 	}
@@ -43,7 +51,7 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 	if strings.HasPrefix(binary, "@") {
 		command = append(command, binary[1:])
 		command = append(command, extraArgs...)
-		return c.ExecInContainer(container, command)
+		return c.ExecInContainer(override, container, command)
 	} else if strings.HasPrefix(binary, "/") {
 		binary = binary[strings.LastIndex(binary, "/")+1:]
 	}
@@ -68,6 +76,6 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 
 	command = append(command, app.Binaries[0])
 	command = append(command, extraArgs...)
-	err = c.ExecInContainer(container, command)
+	err = c.ExecInContainer(override, container, command)
 	return
 }

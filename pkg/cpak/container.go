@@ -25,7 +25,7 @@ import (
 // applications that never store any data on its directories, developers should
 // use the user's home directory for that or expose other system directories
 // where data can be stored.
-func (c *Cpak) PrepareContainer(app types.Application) (container types.Container, err error) {
+func (c *Cpak) PrepareContainer(app types.Application, override types.Override) (container types.Container, err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
@@ -78,14 +78,6 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 	}
 
 	fmt.Println("Container created:", container.Id)
-
-	// Get the override for the given application, we try to load the user
-	// override first, if it does not exist, we use the application's one
-	var override types.Override
-	override, err = LoadOverride(app.Origin)
-	if err != nil {
-		override = app.Override
-	}
 
 	// Start the container and return the pid
 	_, container.Pid, err = c.StartContainer(container, config, override)
@@ -203,7 +195,7 @@ func (c *Cpak) CreateContainer() (containerId string, statePath string, err erro
 
 // ExecInContainer uses nsenter to enter the pid namespace of the given
 // ontainer and execute the given command.
-func (c *Cpak) ExecInContainer(container types.Container, command []string) (err error) {
+func (c *Cpak) ExecInContainer(override types.Override, container types.Container, command []string) (err error) {
 	pid, err := getPidFromEnvSpawn(container.Id)
 	if err != nil {
 		return
@@ -227,11 +219,17 @@ func (c *Cpak) ExecInContainer(container types.Container, command []string) (err
 		"-t",
 		fmt.Sprintf("%d", pid),
 		"--",
-		"unshare",
-		"-U",
-		"--map-user=" + uid,
-		"--map-group=" + gid,
-		"--",
+	}
+
+	if !override.AsRoot {
+		cmds = append(
+			cmds,
+			"unshare",
+			"-U",
+			"--map-user="+uid,
+			"--map-group="+gid,
+			"--",
+		)
 	}
 	cmds = append(cmds, command...)
 
