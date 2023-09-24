@@ -153,7 +153,7 @@ func LoadOverride(name string) (override types.Override, err error) {
 		return
 	}
 
-	file, err := os.Create(overridesPath + "/" + name + ".json")
+	file, err := os.Open(overridesPath + "/" + name + ".json")
 	if err != nil {
 		return
 	}

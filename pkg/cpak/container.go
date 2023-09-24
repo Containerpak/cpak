@@ -79,8 +79,16 @@ func (c *Cpak) PrepareContainer(app types.Application) (container types.Containe
 
 	fmt.Println("Container created:", container.Id)
 
+	// Get the override for the given application, we try to load the user
+	// override first, if it does not exist, we use the application's one
+	var override types.Override
+	override, err = LoadOverride(app.Origin)
+	if err != nil {
+		override = app.Override
+	}
+
 	// Start the container and return the pid
-	_, container.Pid, err = c.StartContainer(container, config, app.Override)
+	_, container.Pid, err = c.StartContainer(container, config, override)
 	if err != nil {
 		return
 	}
