@@ -333,6 +333,13 @@ func pivotRoot(rootFs string) error {
 // }
 
 func startSleepProcess(envVars []string) error {
+	fmt.Println("Reconfiguring dynamic linker run-time bindings")
+	l := exec.Command("ldconfig")
+	err := l.Run()
+	if err != nil {
+		return spawnError("ldconfig", err)
+	}
+
 	fmt.Println("Starting sleep process")
 	envv := append(os.Environ(), envVars...)
 	c := exec.Command("sleep", "infinity")
@@ -341,7 +348,7 @@ func startSleepProcess(envVars []string) error {
 	c.Stderr = os.Stderr
 	c.Env = envv
 
-	err := c.Start()
+	err = c.Start()
 	if err != nil {
 		return spawnError("start", err)
 	}
