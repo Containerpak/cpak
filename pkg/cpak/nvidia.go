@@ -94,6 +94,15 @@ func getNvidiaLibsFromDir(dir string) []string {
 			}
 		}
 
+		// if one of the components of the path starts with a dot, skip it.
+		components := strings.Split(dir, "/")
+		for _, component := range components {
+			if strings.HasPrefix(component, ".") {
+				skip = true
+				break
+			}
+		}
+
 		if skip {
 			continue
 		}
