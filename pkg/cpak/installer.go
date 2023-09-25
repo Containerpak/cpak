@@ -23,6 +23,8 @@ import (
 // InstallCpak functions instead, that way they can implement their own
 // installation logic, by showing more detailed information to the user.
 func (c *Cpak) Install(origin, branch, release, commit string) (err error) {
+	origin = strings.ToLower(origin)
+
 	versionParams := []string{branch, release, commit}
 	versionParamsCount := 0
 	for _, versionParam := range versionParams {
