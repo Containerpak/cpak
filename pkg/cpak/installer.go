@@ -254,11 +254,10 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 }
 
 func (c *Cpak) exportBinary(app types.Application, binary string) error {
-	destinationPath := filepath.Join(
-		c.Options.ExportsPath,
-		"bin",
-		filepath.Base(binary),
-	)
+	destinationItems := []string{c.Options.ExportsPath}
+	destinationItems = append(destinationItems, strings.Split(app.Origin, "/")...)
+	destinationItems = append(destinationItems, filepath.Base(binary))
+	destinationPath := filepath.Join(destinationItems...)
 
 	err := os.MkdirAll(filepath.Dir(destinationPath), 0755)
 	if err != nil {
