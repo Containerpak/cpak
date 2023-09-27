@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"os/user"
 	"strings"
+
+	"github.com/shirou/gopsutil/process"
 )
 
 // GetSubIDRanges returns the subuid and subgid ranges for the current user.
@@ -91,6 +93,31 @@ func readSubIDFile(filename, username string) (subIDSlice []string, err error) {
 
 	if err = scanner.Err(); err != nil {
 		return
+	}
+
+	return
+}
+
+func GetPidFromEnv(envVar string) (pids []int, err error) {
+	procs, err := process.Processes()
+	if err != nil {
+		return
+	}
+
+	for _, proc := range procs {
+		var env []string
+		env, err = proc.Environ()
+		if err != nil {
+			continue
+		}
+
+		for _, e := range env {
+			if e == envVar {
+				pids = append(pids, int(proc.Pid))
+				return
+			}
+		}
+
 	}
 
 	return

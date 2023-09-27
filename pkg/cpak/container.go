@@ -10,8 +10,8 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
+	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
-	"github.com/shirou/gopsutil/process"
 )
 
 // PrepareContainer dispatches the creation of a new container for the given
@@ -52,7 +52,7 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 		container.StatePath = c.GetInStoreDir("states", container.Id)
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		container.Pid, err = getPidFromEnvSpawn(container.Id)
+		container.Pid, err = getPidFromEnvContainerId(container.Id)
 		if err != nil || container.Pid == 0 {
 			fmt.Println("Container not running, cleaning it up:", container.Id)
 			err = c.CleanupContainer(container)
@@ -104,19 +104,9 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 
 	// the cpakBinary is the path to the cpak binary, it is used to re-execute
 	// the cpak with the spawn command to start the container
-	cpakBinary := os.Args[0]
-	// if the cpak binary is not a full path, we need to find it
-	if !filepath.IsAbs(cpakBinary) {
-		// first we check in the user's home directory
-		cpakBinary = filepath.Join(os.Getenv("HOME"), ".local", "bin", "cpak")
-		// if it is not there, we check in the system's bin directory using
-		// the LookPath function
-		if _, err = os.Stat(cpakBinary); os.IsNotExist(err) {
-			cpakBinary, err = exec.LookPath("cpak")
-			if err != nil {
-				return
-			}
-		}
+	cpakBinary, err := getCpakBinary()
+	if err != nil {
+		return
 	}
 
 	layersPath := c.GetInStoreDir("layers")
@@ -214,7 +204,7 @@ func (c *Cpak) CreateContainer() (containerId string, statePath string, err erro
 // ExecInContainer uses nsenter to enter the pid namespace of the given
 // ontainer and execute the given command.
 func (c *Cpak) ExecInContainer(override types.Override, container types.Container, command []string) (err error) {
-	pid, err := getPidFromEnvSpawn(container.Id)
+	pid, err := getPidFromEnvContainerId(container.Id)
 	if err != nil {
 		return
 	}
@@ -251,11 +241,14 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 	}
 	cmds = append(cmds, command...)
 
+	envVars := os.Environ()
+	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.Id)
+
 	cmd := exec.Command(nsenterBin, cmds...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = envVars
 
 	err = cmd.Run()
 	if err != nil {
@@ -265,31 +258,20 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 	return
 }
 
-// getPidFromEnvSpawn returns the pid of the process with the given containerId
+// getPidFromEnvContainerId returns the pid of the process with the given containerId
 // by looking at the environment variables of all the processes.
-func getPidFromEnvSpawn(containerId string) (pid int, err error) {
-	procs, err := process.Processes()
+func getPidFromEnvContainerId(containerId string) (pid int, err error) {
+	env := "CPAK_CONTAINER_ID=" + containerId
+	pids, err := tools.GetPidFromEnv(env)
 	if err != nil {
 		return
 	}
-
-	for _, proc := range procs {
-		var env []string
-		env, err = proc.Environ()
-		if err != nil {
-			continue
-		}
-
-		for _, envVar := range env {
-			if envVar == "CPAK_CONTAINER_ID="+containerId {
-				pid = int(proc.Pid)
-				return
-			}
-		}
-
+	if len(pids) == 0 {
+		err = fmt.Errorf("no process with containerId %s found", containerId)
+		return
 	}
 
-	return
+	return pids[0], nil
 }
 
 // CleanupContainer removes the container with the given id.
@@ -312,3 +294,31 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 
 	return
 }
+
+// getCpakBinary returns the path to the cpak binary.
+func getCpakBinary() (cpakBinary string, err error) {
+	cpakBinary = os.Args[0]
+	// if the cpak binary is not a full path, we need to find it
+	if !filepath.IsAbs(cpakBinary) {
+		// first we check in the user's home directory
+		cpakBinary = filepath.Join(os.Getenv("HOME"), ".local", "bin", "cpak")
+		// if it is not there, we check in the system's bin directory using
+		// the LookPath function
+		if _, err = os.Stat(cpakBinary); os.IsNotExist(err) {
+			cpakBinary, err = exec.LookPath("cpak")
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	return
+}
+
+// func getNested() (nested bool) {
+// 	if _, err := os.Stat("/tmp/.cpak"); err == nil {
+// 		nested = true
+// 	}
+
+// 	return
+// }

@@ -111,6 +111,11 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
+	err = createCpakFile(rootFs)
+	if err != nil {
+		return err
+	}
+
 	// hostname is not set because it will raise problems with the StartUpWMClass
 	// in the exported desktop file(s), resulting in a new icon for each container
 	// instead of grouping them, e.g. in the GNOME shell dock
@@ -135,6 +140,18 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 	envVars = append(envVars, "CPAK_LAYERS_DIR="+layersDir)
 	envVars = append(envVars, "CPAK_LAYERS="+layers)
 	return envVars
+}
+
+// the .cpak file is used to check if we are inside a cpak container
+func createCpakFile(rootFs string) error {
+	fmt.Println("Creating cpak file")
+	file, err := os.Create(filepath.Join(rootFs, "/tmp", ".cpak"))
+	if err != nil {
+		return spawnError("create", err)
+	}
+	defer file.Close()
+
+	return nil
 }
 
 func parseLayers(layers string) []string {
