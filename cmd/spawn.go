@@ -125,7 +125,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	// }
 
 	envVars = setEnvironmentVariables(containerId, rootFs, envVars, stateDir, layersDir, layers)
-	err = startSleepProcess(envVars)
+	err = startSleepProcess(args, envVars)
 	if err != nil {
 		return err
 	}
@@ -349,7 +349,7 @@ func pivotRoot(rootFs string) error {
 // 	return nil
 // }
 
-func startSleepProcess(envVars []string) error {
+func startSleepProcess(cmdArgs []string, envVars []string) error {
 	fmt.Println("Reconfiguring dynamic linker run-time bindings")
 	l := exec.Command("ldconfig")
 	err := l.Run()
@@ -358,8 +358,16 @@ func startSleepProcess(envVars []string) error {
 	}
 
 	fmt.Println("Starting sleep process")
+	args := []string{}
+	if len(cmdArgs) > 0 {
+		args = append(args, cmdArgs...)
+	} else {
+		args = append(args, "/usr/bin/sleep")
+		args = append(args, "infinity")
+	}
+
 	envv := append(os.Environ(), envVars...)
-	c := exec.Command("sleep", "infinity")
+	c := exec.Command(args[0], args[1:]...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
