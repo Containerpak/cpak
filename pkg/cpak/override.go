@@ -18,10 +18,10 @@ func GetOverrideMounts(o types.Override) []string {
 	curUid := fmt.Sprintf("%d", os.Getuid())
 
 	if o.SocketX11 {
-		mounts = append(mounts, "/tmp/.X11-unix")
-		mounts = append(mounts, "/tmp/.ICE-unix")
-		mounts = append(mounts, "/tmp/.XIM-unix")
-		mounts = append(mounts, "/tmp/.font-unix")
+		mounts = append(mounts, "/tmp/.X11-unix/")
+		mounts = append(mounts, "/tmp/.ICE-unix/")
+		mounts = append(mounts, "/tmp/.XIM-unix/")
+		mounts = append(mounts, "/tmp/.font-unix/")
 		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus") // TODO: move to a dedicated option
 		mounts = append(mounts, "/run/user/"+curUid+"/ICEauthority")
 	}
