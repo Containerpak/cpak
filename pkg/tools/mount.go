@@ -71,3 +71,11 @@ func MountFuseOverlayfs(targetDir, lowerDir, upperDir, workDir string) (err erro
 	fmt.Println("cmd was:", c.String())
 	return c.Run()
 }
+
+func MountTmpfs(targetDir string) (err error) {
+	c := exec.Command("mount", "-t", "tmpfs", "tmpfs", targetDir)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	fmt.Println("cmd was:", c.String())
+	return c.Run()
+}
