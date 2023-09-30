@@ -109,6 +109,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		return
 	}
 
+	uid := fmt.Sprintf("%d", os.Getuid())
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.Id, "rootfs")
 	overrideMounts := GetOverrideMounts(override)
@@ -123,6 +124,8 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		cpakBinary,
 		"spawn",
 	}
+	cmds = append(cmds, "--user-uid", uid)
+	cmds = append(cmds, "--app-id", container.Application.Id)
 	cmds = append(cmds, "--container-id", container.Id)
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
@@ -315,10 +318,24 @@ func getCpakBinary() (cpakBinary string, err error) {
 	return
 }
 
-// func getNested() (nested bool) {
-// 	if _, err := os.Stat("/tmp/.cpak"); err == nil {
-// 		nested = true
-// 	}
+// getNested checks if the /tmp/.cpak file exists and returns the parent
+// application id from it.
+func getNested() (parentAppId string, nested bool) {
+	nested = false
+	parentAppId = ""
+	if _, err := os.Stat("/tmp/.cpak"); err == nil {
+		nested = true
+		file, err := os.Open("/tmp/.cpak")
+		if err != nil {
+			return
+		}
+		defer file.Close()
 
-// 	return
-// }
+		_, err = fmt.Fscanln(file, &parentAppId)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}

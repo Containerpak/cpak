@@ -24,6 +24,8 @@ func NewSpawnCommand() *cobra.Command {
 		RunE:  SpawnPackage,
 	}
 
+	cmd.Flags().Int("user-uid", 0, "set the user uid")
+	cmd.Flags().String("app-id", "a", "set the app id")
 	cmd.Flags().String("container-id", "c", "set the container id")
 	cmd.Flags().String("rootfs", "r", "set the rootfs")
 	cmd.Flags().StringArrayP("env", "e", []string{}, "set environment variables")
@@ -46,6 +48,14 @@ func spawnError(prefix string, iErr error) (err error) {
 }
 
 func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
+	userUid, err := cmd.Flags().GetInt("user-uid")
+	if err != nil {
+		return spawnError("", err)
+	}
+	appId, err := cmd.Flags().GetString("app-id")
+	if err != nil {
+		return spawnError("", err)
+	}
 	containerId, err := cmd.Flags().GetString("container-id")
 	if err != nil {
 		return spawnError("", err)
@@ -91,7 +101,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	err = setupMountPoints(rootFs, overrideMounts)
+	err = setupMountPoints(userUid, rootFs, overrideMounts)
 	if err != nil {
 		return err
 	}
@@ -111,7 +121,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	err = createCpakFile(rootFs)
+	err = createCpakFile(appId, rootFs)
 	if err != nil {
 		return err
 	}
@@ -143,13 +153,18 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 }
 
 // the .cpak file is used to check if we are inside a cpak container
-func createCpakFile(rootFs string) error {
+func createCpakFile(appId string, rootFs string) error {
 	fmt.Println("Creating cpak file")
 	file, err := os.Create(filepath.Join(rootFs, "/tmp", ".cpak"))
 	if err != nil {
 		return spawnError("create", err)
 	}
 	defer file.Close()
+
+	_, err = file.WriteString(appId)
+	if err != nil {
+		return spawnError("write", err)
+	}
 
 	return nil
 }
@@ -186,14 +201,21 @@ func mountLayers(rootFs, layersDir string, stateDir string, layersList []string)
 	return nil
 }
 
-func setupMountPoints(rootFs string, overrideMounts []string) error {
+func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error {
+	// /tmp is mounted as a new one
+	fmt.Println("Mounting: /tmp")
+	err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp"))
+	if err != nil {
+		return spawnError("mount:/tmp", err)
+	}
+
 	mounts := []string{
 		"/proc/", // TODO: there is a problem with spawning processes without /proc
 		"/sys/",
 		//"/dev",
 		//"/dev/pts",
 		//"/dev/shm",
-		"/tmp/",
+		//"/tmp/",
 		//"/run",
 		//homeDir,
 	}
@@ -212,7 +234,7 @@ func setupMountPoints(rootFs string, overrideMounts []string) error {
 			continue
 		}
 
-		info, err := os.Stat(filepath.Join(rootFs, mount))
+		_, err = os.Stat(filepath.Join(rootFs, mount))
 		if os.IsNotExist(err) {
 			fmt.Println("does not exist", mount)
 			if strings.HasSuffix(mount, "/") {
@@ -241,7 +263,7 @@ func setupMountPoints(rootFs string, overrideMounts []string) error {
 			}
 		} else if err == nil {
 			fmt.Println("exists", mount)
-			if !info.IsDir() {
+			if !strings.HasSuffix(mount, "/") {
 				fmt.Println("is file, creating", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
@@ -259,6 +281,24 @@ func setupMountPoints(rootFs string, overrideMounts []string) error {
 			return spawnError("mount:"+mount, err)
 		}
 	}
+
+	// the cpak socket is mounted as last because it is created by another
+	// process and we need to wait for it to be available. However, it should
+	// be available at this point
+	cpakSockPath := fmt.Sprintf("/run/user/%d/cpak.sock", userUid)
+	fmt.Println("Waiting for: ", cpakSockPath, "to be available...")
+	for {
+		_, err := os.Stat(cpakSockPath)
+		if err == nil {
+			fmt.Println("Mounting: ", cpakSockPath)
+			err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath))
+			if err != nil {
+				return spawnError("mount:"+cpakSockPath, err)
+			}
+			break
+		}
+	}
+
 	return nil
 }
 
