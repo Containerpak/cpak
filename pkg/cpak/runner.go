@@ -31,13 +31,9 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 		return c.RunNested(parentAppId, origin, version, branch, commit, release, binary, extraArgs...)
 	}
 
-	if os.Getenv("CPAK_DEBUG_SOCKET") != "" {
-		fmt.Println("CPAK_DEBUG_SOCKET is set, skipping socket listener preparation, start it manually with 'cpak start-service'")
-	} else {
-		err = c.prepareSocketListener()
-		if err != nil {
-			return
-		}
+	err = c.prepareSocketListener()
+	if err != nil {
+		return
 	}
 
 	workDir := os.Getenv("PWD")
@@ -242,6 +238,12 @@ func (c *Cpak) StartSocketListener() (err error) {
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
+			// setting up a goroutine to wait for the shell process to exit
+			go func() {
+				cmd.Wait()
+				ptySlave.Close()
+			}()
+
 			// a goroutine to handle termination signals
 			go func() {
 				<-sigCh
@@ -325,28 +327,24 @@ func (c *Cpak) RunNested(parentAppId string, origin string, version string, bran
 	}
 
 	// set up the channels to communicate with the host
-	input := make([]byte, 4096)
-	fmt.Println("Configuring channels...")
+	doneCh := make(chan struct{})
+
 	go func() {
-		io.Copy(conn, os.Stdin)
+		_, err := io.Copy(conn, os.Stdin)
+		if err != nil {
+			fmt.Println("Error copying data to the server:", err)
+		}
+		close(doneCh)
 	}()
 	go func() {
-		io.Copy(os.Stdout, conn)
+		_, err := io.Copy(os.Stdout, conn)
+		if err != nil {
+			fmt.Println("Error copying data from the server:", err)
+		}
+		close(doneCh)
 	}()
 
-	// bidirectional communication with the host
-	fmt.Println("Reading input...")
-	for {
-		var n int
-		n, err = os.Stdin.Read(input)
-		if err != nil {
-			fmt.Println("Error reading input:", err)
-			return
-		}
-		_, err = conn.Write(input[:n])
-		if err != nil {
-			fmt.Println("Error sending data to the server:", err)
-			return
-		}
-	}
+	// wait for the channels to be closed
+	<-doneCh
+	return
 }
