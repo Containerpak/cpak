@@ -18,9 +18,6 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if manifest.Description == "" {
 		return errors.New("description is mandatory and must be populated")
 	}
-	if manifest.Version == "" {
-		return errors.New("version is mandatory and must be populated")
-	}
 	if manifest.Image == "" {
 		return errors.New("image is mandatory and must be populated")
 	}

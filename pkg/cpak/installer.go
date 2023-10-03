@@ -65,8 +65,26 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		return
 	}
 
+	var version string
+	var sourceType string
+	switch {
+	case branch != "":
+		sourceType = "branch"
+		if commit != "" {
+			version = commit
+		} else {
+			version = branch
+		}
+	case release != "":
+		sourceType = "release"
+		version = release
+	case commit != "":
+		sourceType = "commit"
+		version = commit
+	}
+
 	var existingApp types.Application
-	existingApp, err = store.GetApplicationByOrigin(origin, manifest.Version, branch, commit, release)
+	existingApp, err = store.GetApplicationByOrigin(origin, version, branch, commit, release)
 	if err != nil {
 		return
 	}
@@ -78,18 +96,18 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 
 	// first we resolve its dependencies
 	for _, dependency := range manifest.Dependencies {
-		if !isURL(dependency) {
+		if !isURL(dependency.Origin) {
 			fmt.Printf("dependency %s is not a valid cpak url, assuming it comes from the same origin\n", dependency)
 			parentOrigin := origin[:strings.LastIndex(origin, "/")]
-			dependency = parentOrigin + "/" + dependency
+			dependency.Origin = parentOrigin + "/" + dependency.Origin
 		}
-		err = c.Install(dependency, "main", "", "")
+		err = c.Install(dependency.Origin, "main", "", "")
 		if err != nil {
 			return
 		}
 	}
 
-	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + manifest.Version))
+	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + sourceType + version))
 	layers, config, err := c.Pull(manifest.Image, imageId)
 	if err != nil {
 		return
@@ -98,7 +116,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 	app := types.Application{
 		Id:             imageId,
 		Name:           manifest.Name,
-		Version:        manifest.Version,
+		Version:        version,
 		Origin:         origin,
 		Branch:         branch,
 		Release:        release,

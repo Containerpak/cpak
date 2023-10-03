@@ -38,6 +38,10 @@ type Application struct {
 	// DesktopEntries is the list of exported desktop entries of the application.
 	DesktopEntries []string
 
+	// Dependencies is the list of cpak dependencies needed by the application
+	// to work properly.
+	Dependencies []Dependency
+
 	// Addons is the list of additional applications which it supports.
 	Addons []string
 
@@ -49,4 +53,26 @@ type Application struct {
 
 	// Override is a set of permissions
 	Override Override
+}
+
+// SourceType returns the type of the application's source.
+func (a Application) SourceType() string {
+	switch {
+	case a.Branch != "":
+		return "branch"
+	case a.Release != "":
+		return "release"
+	case a.Commit != "":
+		return "commit"
+	}
+	return "unknown"
+}
+
+// Dependency is the struct that represents a dependency of an application.
+type Dependency struct {
+	Id      string
+	Origin  string
+	Branch  string
+	Release string
+	Commit  string
 }

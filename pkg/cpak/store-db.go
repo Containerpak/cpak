@@ -62,6 +62,7 @@ func (s *Store) initDb(dbPath string) (err error) {
 			Timestamp DATETIME,
 			Binaries TEXT,
 			DesktopEntries TEXT,
+			Dependencies TEXT,
 			Addons TEXT,
 			Layers TEXT,
 			Config TEXT,
@@ -95,13 +96,18 @@ func (s *Store) initDb(dbPath string) (err error) {
 func (s *Store) NewApplication(app types.Application) (err error) {
 	binaries := strings.Join(app.Binaries, ",")
 	desktopEntries := strings.Join(app.DesktopEntries, ",")
+	dependenciesList := []string{}
+	for _, dependency := range app.Dependencies {
+		dependenciesList = append(dependenciesList, dependency.Id)
+	}
+	dependencies := strings.Join(dependenciesList, ",")
 	addons := strings.Join(app.Addons, ",")
 	layers := strings.Join(app.Layers, ",")
 	override := StringOverride(app.Override)
 
 	_, err = s.db.Exec(
-		"INSERT INTO Application VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		app.Id, app.Name, app.Version, app.Branch, app.Commit, app.Release, app.Origin, app.Timestamp, binaries, desktopEntries, addons, layers, app.Config, override,
+		"INSERT INTO Application VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		app.Id, app.Name, app.Version, app.Branch, app.Commit, app.Release, app.Origin, app.Timestamp, binaries, desktopEntries, dependencies, addons, layers, app.Config, override,
 	)
 	if err != nil {
 		err = fmt.Errorf("NewApplication: %s", err)
@@ -141,16 +147,22 @@ func (s *Store) GetApplications() (apps []types.Application, err error) {
 	for rows.Next() {
 		var app types.Application
 		var desktopEntries string
+		var dependencies string
 		var addons string
 		var binaries string
 		var layers string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &layers, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &layers, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplications: %s", err)
 			return
 		}
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
+		app.Dependencies, err = s.ParseDependencies(dependencies)
+		if err != nil {
+			err = fmt.Errorf("GetApplicationContainers: %s", err)
+			return
+		}
 		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Layers = strings.Split(layers, ",")
@@ -172,16 +184,22 @@ func (s *Store) GetApplicationById(id string) (app types.Application, err error)
 
 	if rows.Next() {
 		var desktopEntries string
+		var dependencies string
 		var addons string
 		var binaries string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationById: %s", err)
 			return
 		}
 
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
+		app.Dependencies, err = s.ParseDependencies(dependencies)
+		if err != nil {
+			err = fmt.Errorf("GetApplicationContainers: %s", err)
+			return
+		}
 		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Override = ParseOverride(override)
@@ -210,17 +228,23 @@ func (s *Store) GetApplicationsByOrigin(origin, version string, branch string, c
 	for rows.Next() {
 		var app types.Application
 		var desktopEntries string
+		var dependencies string
 		var addons string
 		var binaries string
 		var layers string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &layers, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &layers, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationsByOrigin: %s", err)
 			return
 		}
 
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
+		app.Dependencies, err = s.ParseDependencies(dependencies)
+		if err != nil {
+			err = fmt.Errorf("GetApplicationContainers: %s", err)
+			return
+		}
 		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Layers = strings.Split(layers, ",")
@@ -243,16 +267,22 @@ func (s *Store) GetApplicationsByAddons(dependencies []string) (apps []types.App
 	for rows.Next() {
 		var app types.Application
 		var desktopEntries string
+		var dependencies string
 		var addons string
 		var binaries string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationsByAddons: %s", err)
 			return
 		}
 
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
+		app.Dependencies, err = s.ParseDependencies(dependencies)
+		if err != nil {
+			err = fmt.Errorf("GetApplicationContainers: %s", err)
+			return
+		}
 		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Override = ParseOverride(override)
@@ -274,17 +304,23 @@ func (s *Store) GetApplicationContainers(application types.Application) (contain
 	for rows.Next() {
 		var container types.Container
 		var desktopEntries string
+		var dependencies string
 		var addons string
 		var binaries string
 		var layers string
 		var override string
-		err = rows.Scan(&container.Id, &container.Pid, &container.Application.Id, &container.Timestamp, &container.Application.Id, &container.Application.Name, &container.Application.Version, &container.Application.Branch, &container.Application.Commit, &container.Application.Release, &container.Application.Origin, &container.Application.Timestamp, &binaries, &desktopEntries, &addons, &layers, &container.Application.Config, &override)
+		err = rows.Scan(&container.Id, &container.Pid, &container.Application.Id, &container.Timestamp, &container.Application.Id, &container.Application.Name, &container.Application.Version, &container.Application.Branch, &container.Application.Commit, &container.Application.Release, &container.Application.Origin, &container.Application.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &layers, &container.Application.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationContainers: %s", err)
 			return
 		}
 
 		container.Application.DesktopEntries = strings.Split(desktopEntries, ",")
+		container.Application.Dependencies, err = s.ParseDependencies(dependencies)
+		if err != nil {
+			err = fmt.Errorf("GetApplicationContainers: %s", err)
+			return
+		}
 		container.Application.Addons = strings.Split(addons, ",")
 		container.Application.Binaries = strings.Split(binaries, ",")
 		container.Application.Layers = strings.Split(layers, ",")
@@ -450,6 +486,29 @@ func (s *Store) GetApplicationByBinary(binary string) (app types.Application, er
 			if _binary == binary {
 				app = _app
 				return
+			}
+		}
+	}
+
+	return
+}
+
+// ParseDependencies parses a string of dependencies into a slice of Dependency.
+//
+// Note: dependencies are references to other cpaaks, so they are expected to be
+// the id of the application.
+func (s *Store) ParseDependencies(dependencies string) (deps []types.Dependency, err error) {
+	for _, dependency := range strings.Split(dependencies, ",") {
+		if dependency != "" {
+			app, err := s.GetApplicationById(dependency)
+			if err == nil {
+				deps = append(deps, types.Dependency{
+					Id:      app.Id,
+					Branch:  app.Branch,
+					Release: app.Release,
+					Commit:  app.Commit,
+					Origin:  app.Origin,
+				})
 			}
 		}
 	}

@@ -9,16 +9,6 @@ type CpakManifest struct {
 	// as concise as possible.
 	Description string `json:"description"`
 
-	// Version is the version of the application in the cpak context. It is
-	// not required to be in a specific format.
-	//
-	// Note: the application version can be different from the version of the
-	// origin repository. It doesn't matter which version the image is using,
-	// this version is the one cpak will use and display to the user. It is
-	// the responsibility of whoever packages the application to respect the
-	// software developer's versioning.
-	Version string `json:"version"`
-
 	// Image is the image of the application. It is expected to be a valid
 	// OCI image (full image reference).
 	Image string `json:"image"`
@@ -33,7 +23,7 @@ type CpakManifest struct {
 	// expected to be a list of origin repositories.
 	//
 	// Note: versions are not supported yet.
-	Dependencies []string `json:"dependencies"`
+	Dependencies []Dependency `json:"dependencies"`
 
 	// Addons is the list of additional applications which it supports.
 	Addons []string `json:"addons"`
