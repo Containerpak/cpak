@@ -35,12 +35,8 @@ type CpakManifest struct {
 	// Note: versions are not supported yet.
 	Dependencies []string `json:"dependencies"`
 
-	// FutureDependencies is the list of future dependencies of the application.
-	// These are dependencies that could be exported in the future and that
-	// are not required at the moment. For example, a game engine could specify
-	// a future dependency for one or more IDEs, so that when the user installs
-	// one of these IDEs, the game engine will automatically see it and use it.
-	FutureDependencies []string `json:"future_dependencies"`
+	// Addons is the list of additional applications which it supports.
+	Addons []string `json:"addons"`
 
 	// IdleTime is the idle time in minutes, after which to destroy the
 	// container.

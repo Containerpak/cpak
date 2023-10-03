@@ -96,20 +96,20 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 	}
 
 	app := types.Application{
-		Id:                 imageId,
-		Name:               manifest.Name,
-		Version:            manifest.Version,
-		Origin:             origin,
-		Branch:             branch,
-		Release:            release,
-		Commit:             commit,
-		Timestamp:          time.Now(),
-		Binaries:           manifest.Binaries,
-		DesktopEntries:     manifest.DesktopEntries,
-		FutureDependencies: manifest.FutureDependencies,
-		Layers:             layers,
-		Config:             config,
-		Override:           manifest.Override,
+		Id:             imageId,
+		Name:           manifest.Name,
+		Version:        manifest.Version,
+		Origin:         origin,
+		Branch:         branch,
+		Release:        release,
+		Commit:         commit,
+		Timestamp:      time.Now(),
+		Binaries:       manifest.Binaries,
+		DesktopEntries: manifest.DesktopEntries,
+		Addons:         manifest.Addons,
+		Layers:         layers,
+		Config:         config,
+		Override:       manifest.Override,
 	}
 
 	err = c.createExports(app)

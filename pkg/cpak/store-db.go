@@ -62,7 +62,7 @@ func (s *Store) initDb(dbPath string) (err error) {
 			Timestamp DATETIME,
 			Binaries TEXT,
 			DesktopEntries TEXT,
-			FutureDependencies TEXT,
+			Addons TEXT,
 			Layers TEXT,
 			Config TEXT,
 			Override TEXT
@@ -95,13 +95,13 @@ func (s *Store) initDb(dbPath string) (err error) {
 func (s *Store) NewApplication(app types.Application) (err error) {
 	binaries := strings.Join(app.Binaries, ",")
 	desktopEntries := strings.Join(app.DesktopEntries, ",")
-	futureDependencies := strings.Join(app.FutureDependencies, ",")
+	addons := strings.Join(app.Addons, ",")
 	layers := strings.Join(app.Layers, ",")
 	override := StringOverride(app.Override)
 
 	_, err = s.db.Exec(
 		"INSERT INTO Application VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		app.Id, app.Name, app.Version, app.Branch, app.Commit, app.Release, app.Origin, app.Timestamp, binaries, desktopEntries, futureDependencies, layers, app.Config, override,
+		app.Id, app.Name, app.Version, app.Branch, app.Commit, app.Release, app.Origin, app.Timestamp, binaries, desktopEntries, addons, layers, app.Config, override,
 	)
 	if err != nil {
 		err = fmt.Errorf("NewApplication: %s", err)
@@ -141,17 +141,17 @@ func (s *Store) GetApplications() (apps []types.Application, err error) {
 	for rows.Next() {
 		var app types.Application
 		var desktopEntries string
-		var futureDependencies string
+		var addons string
 		var binaries string
 		var layers string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies, &layers, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &layers, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplications: %s", err)
 			return
 		}
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.FutureDependencies = strings.Split(futureDependencies, ",")
+		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Layers = strings.Split(layers, ",")
 		app.Override = ParseOverride(override)
@@ -172,17 +172,17 @@ func (s *Store) GetApplicationById(id string) (app types.Application, err error)
 
 	if rows.Next() {
 		var desktopEntries string
-		var futureDependencies string
+		var addons string
 		var binaries string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationById: %s", err)
 			return
 		}
 
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.FutureDependencies = strings.Split(futureDependencies, ",")
+		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Override = ParseOverride(override)
 	} else {
@@ -210,18 +210,18 @@ func (s *Store) GetApplicationsByOrigin(origin, version string, branch string, c
 	for rows.Next() {
 		var app types.Application
 		var desktopEntries string
-		var futureDependencies string
+		var addons string
 		var binaries string
 		var layers string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies, &layers, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &layers, &app.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationsByOrigin: %s", err)
 			return
 		}
 
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.FutureDependencies = strings.Split(futureDependencies, ",")
+		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Layers = strings.Split(layers, ",")
 		app.Override = ParseOverride(override)
@@ -231,11 +231,11 @@ func (s *Store) GetApplicationsByOrigin(origin, version string, branch string, c
 	return
 }
 
-// GetApplicationsByFutureDependencies returns an Application instance based on its FutureDependencies.
-func (s *Store) GetApplicationsByFutureDependencies(dependencies []string) (apps []types.Application, err error) {
-	rows, err := s.db.Query("SELECT * FROM Application WHERE FutureDependencies = ? ORDER BY Timestamp DESC", strings.Join(dependencies, ","))
+// GetApplicationsByAddons returns an Application instance based on its Addons.
+func (s *Store) GetApplicationsByAddons(dependencies []string) (apps []types.Application, err error) {
+	rows, err := s.db.Query("SELECT * FROM Application WHERE Addons = ? ORDER BY Timestamp DESC", strings.Join(dependencies, ","))
 	if err != nil {
-		err = fmt.Errorf("GetApplicationsByFutureDependencies: %s", err)
+		err = fmt.Errorf("GetApplicationsByAddons: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -243,17 +243,17 @@ func (s *Store) GetApplicationsByFutureDependencies(dependencies []string) (apps
 	for rows.Next() {
 		var app types.Application
 		var desktopEntries string
-		var futureDependencies string
+		var addons string
 		var binaries string
 		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &futureDependencies, &app.Config, &override)
+		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &addons, &app.Config, &override)
 		if err != nil {
-			err = fmt.Errorf("GetApplicationsByFutureDependencies: %s", err)
+			err = fmt.Errorf("GetApplicationsByAddons: %s", err)
 			return
 		}
 
 		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.FutureDependencies = strings.Split(futureDependencies, ",")
+		app.Addons = strings.Split(addons, ",")
 		app.Binaries = strings.Split(binaries, ",")
 		app.Override = ParseOverride(override)
 		apps = append(apps, app)
@@ -274,18 +274,18 @@ func (s *Store) GetApplicationContainers(application types.Application) (contain
 	for rows.Next() {
 		var container types.Container
 		var desktopEntries string
-		var futureDependencies string
+		var addons string
 		var binaries string
 		var layers string
 		var override string
-		err = rows.Scan(&container.Id, &container.Pid, &container.Application.Id, &container.Timestamp, &container.Application.Id, &container.Application.Name, &container.Application.Version, &container.Application.Branch, &container.Application.Commit, &container.Application.Release, &container.Application.Origin, &container.Application.Timestamp, &binaries, &desktopEntries, &futureDependencies, &layers, &container.Application.Config, &override)
+		err = rows.Scan(&container.Id, &container.Pid, &container.Application.Id, &container.Timestamp, &container.Application.Id, &container.Application.Name, &container.Application.Version, &container.Application.Branch, &container.Application.Commit, &container.Application.Release, &container.Application.Origin, &container.Application.Timestamp, &binaries, &desktopEntries, &addons, &layers, &container.Application.Config, &override)
 		if err != nil {
 			err = fmt.Errorf("GetApplicationContainers: %s", err)
 			return
 		}
 
 		container.Application.DesktopEntries = strings.Split(desktopEntries, ",")
-		container.Application.FutureDependencies = strings.Split(futureDependencies, ",")
+		container.Application.Addons = strings.Split(addons, ",")
 		container.Application.Binaries = strings.Split(binaries, ",")
 		container.Application.Layers = strings.Split(layers, ",")
 		container.Application.Override = ParseOverride(override)
@@ -402,11 +402,11 @@ func (s *Store) GetApplicationByOrigin(origin, version string, branch string, co
 	return
 }
 
-// GetApplicationByFutureDependencies returns an Application instance based on its FutureDependencies.
-func (s *Store) GetApplicationByFutureDependencies(dependencies []string) (app types.Application, err error) {
-	apps, err := s.GetApplicationsByFutureDependencies(dependencies)
+// GetApplicationByAddons returns an Application instance based on its Addons.
+func (s *Store) GetApplicationByAddons(dependencies []string) (app types.Application, err error) {
+	apps, err := s.GetApplicationsByAddons(dependencies)
 	if err != nil {
-		err = fmt.Errorf("GetApplicationByFutureDependencies: %s", err)
+		err = fmt.Errorf("GetApplicationByAddons: %s", err)
 		return
 	}
 

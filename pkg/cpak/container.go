@@ -148,7 +148,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		cmds = append(cmds, "--mount-overrides", override)
 	}
 
-	// following is where dependencies and future dependencies are exported
+	// following is where dependencies and addons are exported
 	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, container.Application.Id)+":$PATH")
 
 	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)

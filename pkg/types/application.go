@@ -38,8 +38,8 @@ type Application struct {
 	// DesktopEntries is the list of exported desktop entries of the application.
 	DesktopEntries []string
 
-	// FutureDependencies is the list of future dependencies of the application.
-	FutureDependencies []string
+	// Addons is the list of additional applications which it supports.
+	Addons []string
 
 	// Layers is the list of layers of the application.
 	Layers []string

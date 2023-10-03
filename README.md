@@ -123,7 +123,7 @@ about the application:
   "binaries": ["/usr/bin/my-app"],
   "desktop_entries": ["/usr/share/applications/my-app.desktop"],
   "dependencies": ["my-dependency"],
-  "future_dependencies": ["my-future-dependency"],
+  "addons": ["my-addition"],
 }
 ```
 
@@ -136,8 +136,7 @@ The manifest contains the following fields:
 - `binaries`: a list of binaries that the application provides
 - `desktop_entries`: a list of desktop entries that the application provides
 - `dependencies`: a list of applications that the application depends on
-- `future_dependencies`: a list of applications that the application will
-  depend on in the future
+- `addons`: a list of addons that the application supports
 
 ##### Dependencies
 
@@ -153,13 +152,13 @@ repository URL (origin) in the manifest.
 Dependencies' exports (binaries and desktop entries) are then made available to
 the application, so that it can use them.
 
-##### Future dependencies
+##### Addons
 
-Future dependencies are applications that the application could depend on in
-the future, but that are not required at the moment. Future dependencies are
-not installed, but are listed in the manifest so that the user can install
-them manually if needed.
+Addons are optional features that the application supports, and that can be
+installed alongside the application. Those are other cpak applications that
+provide additional features to the application, and that can be installed
+separately.
 
 For example, if an application depends on an IDE, but the user does not want
-to install it, the IDE can be listed as a future dependency, so that the user
+to install it, the IDE can be listed as an addition, so that the user
 can install it later if needed, and choose which one to install.
