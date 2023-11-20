@@ -202,63 +202,72 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 		}
 	}
 
-	if iconPath != "" {
-		// if the path to icon is not an absolute path, we look for it in the
-		// common directories, preferring the one with the highest resolution
+	if iconPath != "" && !filepath.IsAbs(iconPath) {
+		// Try to find the icon in /usr/share/icons
+		commonIconDirs := []string{"scalable", "512x512", "256x256", "128x128", "64x64", "48x48", "32x32"}
+		for _, commonIconDir := range commonIconDirs {
+			inRootFsIconPath := filepath.Join(rootFs, "usr", "share", "icons", "hicolor", commonIconDir, "apps", iconPath)
+
+			_, err := os.Stat(inRootFsIconPath)
+			if err == nil {
+				iconPath = inRootFsIconPath
+				break
+			}
+
+			_, err = os.Stat(inRootFsIconPath + ".svg")
+			if err == nil {
+				iconPath = inRootFsIconPath + ".svg"
+				break
+			}
+
+			_, err = os.Stat(inRootFsIconPath + ".png")
+			if err == nil {
+				iconPath = inRootFsIconPath + ".png"
+				break
+			}
+		}
+
+		// If not found in /usr/share/icons, try /usr/share/pixmaps
 		if !filepath.IsAbs(iconPath) {
-			commonIconDirs := []string{
-				"scalable",
-				"512x512",
-				"256x256",
-				"128x128",
-				"64x64",
-				"48x48",
-				"32x32",
-			}
-			for _, commonIconDir := range commonIconDirs {
-				inRootFsIconPath := filepath.Join(rootFs, "usr", "share", "icons", "hicolor", commonIconDir, "apps", iconPath)
+			inRootFsPixmapPath := filepath.Join(rootFs, "usr", "share", "pixmaps", iconPath)
 
-				_, err := os.Stat(inRootFsIconPath)
-				if err == nil {
-					iconPath = inRootFsIconPath
-					break
-				}
-
-				_, err = os.Stat(inRootFsIconPath + ".svg")
-				if err == nil {
-					iconPath = inRootFsIconPath + ".svg"
-					break
-				}
-
-				_, err = os.Stat(inRootFsIconPath + ".png")
-				if err == nil {
-					iconPath = inRootFsIconPath + ".png"
-					break
-				}
+			_, err := os.Stat(inRootFsPixmapPath)
+			if err == nil {
+				iconPath = inRootFsPixmapPath
 			}
 
-			if !filepath.IsAbs(iconPath) {
-				return nil
+			_, err = os.Stat(inRootFsPixmapPath + ".png")
+			if err == nil {
+				iconPath = inRootFsPixmapPath + ".png"
 			}
 
-			// if we have the icon, we copy it to the home directory
-			destinationIconPath := filepath.Join(
-				os.Getenv("HOME"),
-				".local",
-				"share",
-				"icons",
-				filepath.Base(iconPath),
-			)
-
-			err = os.MkdirAll(filepath.Dir(destinationIconPath), 0755)
-			if err != nil {
-				return err
+			_, err = os.Stat(inRootFsPixmapPath + ".svg")
+			if err == nil {
+				iconPath = inRootFsPixmapPath + ".svg"
 			}
+		}
 
-			err = tools.CopyFile(iconPath, destinationIconPath)
-			if err != nil {
-				return err
-			}
+		if !filepath.IsAbs(iconPath) {
+			return nil
+		}
+
+		// Copy the icon to the home directory
+		destinationIconPath := filepath.Join(
+			os.Getenv("HOME"),
+			".local",
+			"share",
+			"icons",
+			filepath.Base(iconPath),
+		)
+
+		err = os.MkdirAll(filepath.Dir(destinationIconPath), 0755)
+		if err != nil {
+			return err
+		}
+
+		err = tools.CopyFile(iconPath, destinationIconPath)
+		if err != nil {
+			return err
 		}
 	}
 
