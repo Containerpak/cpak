@@ -48,7 +48,6 @@ Available Commands:
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command
   install     Install a package from a remote Git repository
-  install     Install a package from a remote Git repository
   list        List all installed packages
   remove      Remove a package installed from a remote Git repository
   run         Run a package from a remote Git repository
@@ -109,7 +108,7 @@ version's branch, tag or commit.
 The application's manifest is a JSON file that contains all the information
 about the application:
 
-> **Note:** 
+> **Note:**
 > the manifest is still in early development, and is subject to change
 > when [this issue](https://github.com/Containerpak/cpak/issues/1) will be
 > resolved.
@@ -123,7 +122,7 @@ about the application:
   "binaries": ["/usr/bin/my-app"],
   "desktop_entries": ["/usr/share/applications/my-app.desktop"],
   "dependencies": ["my-dependency"],
-  "addons": ["my-addition"],
+  "addons": ["my-addition"]
 }
 ```
 
