@@ -54,7 +54,7 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 	// Get the override for the given application, we try to load the user
 	// override first, if it does not exist, we use the application's one
 	var override types.Override
-	override, err = LoadOverride(app.Origin)
+	override, err = LoadOverride(app.Origin, app.Version)
 	if err != nil {
 		override = app.Override
 	}

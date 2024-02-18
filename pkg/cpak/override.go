@@ -141,7 +141,7 @@ func NewOverride() types.Override {
 }
 
 // LoadOverride loads an override from its name.
-func LoadOverride(name string) (override types.Override, err error) {
+func LoadOverride(origin, version string) (override types.Override, err error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -153,7 +153,7 @@ func LoadOverride(name string) (override types.Override, err error) {
 		return
 	}
 
-	file, err := os.Open(overridesPath + "/" + name + ".json")
+	file, err := os.Open(overridesPath + "/" + origin + version + "/cpak.json")
 	if err != nil {
 		return
 	}
