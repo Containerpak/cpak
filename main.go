@@ -20,7 +20,6 @@ func main() {
 	rootCmd.AddCommand(cmd.NewInstallCommand())
 	rootCmd.AddCommand(cmd.NewRemoveCommand())
 	rootCmd.AddCommand(cmd.NewListCommand())
-	rootCmd.AddCommand(cmd.NewInstallCommand())
 	rootCmd.AddCommand(cmd.NewShellCommand())
 	rootCmd.AddCommand(cmd.NewRunCommand())
 	rootCmd.AddCommand(cmd.NewSpawnCommand())
