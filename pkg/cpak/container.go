@@ -113,9 +113,12 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.Id, "rootfs")
 	overrideMounts := GetOverrideMounts(override)
-	cmds := []string{
-		"--debug", // TODO: move to a flag
-		//"--net=slirp4netns",
+	cmds := []string{}
+	if isVerbose {
+		cmds = append(cmds, "--debug")
+	}
+	//"--net=slirp4netns",
+	cmds = append(cmds, []string{
 		"--cgroupns=true",
 		"--utsns=true",
 		"--ipcns=true",
@@ -123,6 +126,9 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		"--propagation=rslave",
 		cpakBinary,
 		"spawn",
+	}...)
+	if isVerbose {
+		cmds = append(cmds, "--verbose")
 	}
 	cmds = append(cmds, "--user-uid", uid)
 	cmds = append(cmds, "--app-id", container.Application.Id)
@@ -131,10 +137,9 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", layersPath)
-	// exposing the host-spawn in xdg-open is needed for the browser to
+	// FIXME: exposing the host-spawn in xdg-open is needed for the browser to
 	// be able to open the host's default browser, this is absolutely not
 	// secure and should be changed in the future
-	// TODO: help me dudo
 	cmds = append(cmds, "--extra-links", c.Options.HostSpawnBinPath+":/usr/bin/xdg-open")
 	if override.FsHost {
 		cmds = append(cmds, "--extra-links", c.Options.HostSpawnBinPath+":/usr/bin/host-spawn")

@@ -15,6 +15,8 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+var isVerbose bool
+
 // Run runs the given binary from the given application. The binary can be
 // specified as a path or as a name. If the binary is specified as a name,
 // the first binary matching the given name will be executed. To execute a
@@ -24,7 +26,9 @@ import (
 // available in required applications, so it is recommended to use them only
 // for debugging purposes and handle the error case when the binary is not
 // available, e.g. in shell scripts.
-func (c *Cpak) Run(origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
+func (c *Cpak) Run(origin string, version string, branch string, commit string, release string, binary string, verbose bool, extraArgs ...string) (err error) {
+	isVerbose = verbose // setting according to the client
+
 	parentAppId, isNested := getNested()
 	if isNested {
 		fmt.Println("Running in nested mode...")

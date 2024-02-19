@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var verbose = false
+
 func NewSpawnCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "spawn",
@@ -24,6 +26,7 @@ func NewSpawnCommand() *cobra.Command {
 		RunE:  SpawnPackage,
 	}
 
+	cmd.Flags().BoolP("verbose", "v", false, "enable verbose output")
 	cmd.Flags().Int("user-uid", 0, "set the user uid")
 	cmd.Flags().String("app-id", "a", "set the app id")
 	cmd.Flags().String("container-id", "c", "set the container id")
@@ -47,7 +50,19 @@ func spawnError(prefix string, iErr error) (err error) {
 	return
 }
 
+func spawnVerbose(args ...interface{}) {
+	if verbose {
+		msg := []interface{}{"[verbose]: "}
+		msg = append(msg, args...)
+		fmt.Println(msg...)
+	}
+}
+
 func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
+	verbose, _ = cmd.Flags().GetBool("verbose")
+
+	fmt.Println("Spawning a new cpak namespace...")
+
 	userUid, err := cmd.Flags().GetInt("user-uid")
 	if err != nil {
 		return spawnError("", err)
@@ -89,7 +104,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return spawnError("", err)
 	}
 
-	fmt.Println("Remounting as private")
+	spawnVerbose("Remounting as private")
 	err = syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
 	if err != nil {
 		return spawnError("mount", err)
@@ -154,7 +169,7 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 
 // the .cpak file is used to check if we are inside a cpak container
 func createCpakFile(appId string, rootFs string) error {
-	fmt.Println("Creating cpak file")
+	spawnVerbose("Creating cpak file")
 	file, err := os.Create(filepath.Join(rootFs, "/tmp", ".cpak"))
 	if err != nil {
 		return spawnError("create", err)
@@ -203,7 +218,7 @@ func mountLayers(rootFs, layersDir string, stateDir string, layersList []string)
 
 func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error {
 	// /tmp is mounted as a new one
-	fmt.Println("Mounting: /tmp")
+	spawnVerbose("Mounting: /tmp")
 	err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp"))
 	if err != nil {
 		return spawnError("mount:/tmp", err)
@@ -222,7 +237,7 @@ func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error
 	mounts = append(mounts, overrideMounts...)
 
 	for _, mount := range mounts {
-		fmt.Println("(override) Mounting: ", mount)
+		spawnVerbose("(override) Mounting: ", mount)
 
 		// we skip mounts that do not exist on the host, this should be
 		// safe because those mounts come from the overrides list which
@@ -230,28 +245,28 @@ func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error
 		// the feature of the container to use those sockets
 		_, err := os.Stat(mount)
 		if os.IsNotExist(err) {
-			fmt.Println(mount, "does not exist, that's probably unsupported by the host, ignoring")
+			spawnVerbose(mount, "does not exist, that's probably unsupported by the host, ignoring")
 			continue
 		}
 
 		_, err = os.Stat(filepath.Join(rootFs, mount))
 		if os.IsNotExist(err) {
-			fmt.Println("does not exist", mount)
+			spawnVerbose("does not exist", mount)
 			if strings.HasSuffix(mount, "/") {
-				fmt.Println("is dir, creating", mount)
+				spawnVerbose("is dir, creating", mount)
 				err = os.MkdirAll(filepath.Join(rootFs, mount), 0755)
 				if err != nil {
 					return spawnError("mkdir:"+mount, err)
 				}
 			} else {
-				fmt.Println("is file, creating", mount)
+				spawnVerbose("is file, creating", mount)
 				parentDir := filepath.Dir(mount)
-				fmt.Println("parentDir", parentDir)
+				spawnVerbose("parentDir", parentDir)
 				err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 				if err != nil {
 					return spawnError("mkdir:"+parentDir, err)
 				}
-				fmt.Println("creating file", mount)
+				spawnVerbose("creating file", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
 					return spawnError("create:"+mount, err)
@@ -262,9 +277,9 @@ func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error
 				}
 			}
 		} else if err == nil {
-			fmt.Println("exists", mount)
+			spawnVerbose("exists", mount)
 			if !strings.HasSuffix(mount, "/") {
-				fmt.Println("is file, creating", mount)
+				spawnVerbose("is file, creating", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
 					return spawnError("create:"+mount, err)
@@ -287,11 +302,11 @@ func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error
 	// process and we need to wait for it to be available. However, it should
 	// be available at this point
 	// cpakSockPath := fmt.Sprintf("/run/user/%d/cpak.sock", userUid)
-	// fmt.Println("Waiting for: ", cpakSockPath, "to be available...")
+	// spawnVerbose("Waiting for: ", cpakSockPath, "to be available...")
 	// for {
 	// 	_, err := os.Stat(cpakSockPath)
 	// 	if err == nil {
-	// 		fmt.Println("Mounting: ", cpakSockPath)
+	// 		spawnVerbose("Mounting: ", cpakSockPath)
 	// 		err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath))
 	// 		if err != nil {
 	// 			return spawnError("mount:"+cpakSockPath, err)
@@ -322,7 +337,7 @@ func injectConfigurationFiles(rootFs string) error {
 			return spawnError("mkdir:"+parentDir, err)
 		}
 
-		fmt.Println("Mounting: ", conf)
+		spawnVerbose("Mounting: ", conf)
 		err = tools.MountBind(conf, filepath.Join(rootFs, conf))
 		if err != nil {
 			return spawnError("mount:"+conf, err)
@@ -330,7 +345,7 @@ func injectConfigurationFiles(rootFs string) error {
 	}
 
 	for _, lib := range nvidiaLibs {
-		fmt.Println("Mounting: ", lib)
+		spawnVerbose("Mounting: ", lib)
 		// TODO: errors are ignored since also temp directories are returned
 		//	   so they could not exist at the time of the mount
 		tools.MountBind(lib, filepath.Join(rootFs, lib))
@@ -352,7 +367,7 @@ func setupExtraLinks(rootFs string, extraLinks []string) error {
 			return spawnError("invalid link format", nil)
 		}
 
-		fmt.Println("Linking: ", linkParts[0], linkParts[1])
+		spawnVerbose("Linking: ", linkParts[0], linkParts[1])
 		err := tools.MountBind(linkParts[0], filepath.Join(rootFs, linkParts[1]))
 		if err != nil {
 			return spawnError("mount:"+linkParts[0]+":"+linkParts[1], err)
@@ -362,7 +377,7 @@ func setupExtraLinks(rootFs string, extraLinks []string) error {
 }
 
 func pivotRoot(rootFs string) error {
-	fmt.Println("Pivoting: ", rootFs)
+	spawnVerbose("Pivoting: ", rootFs)
 	pivotDir := filepath.Join(rootFs, ".pivot_root")
 	err := os.MkdirAll(pivotDir, 0755)
 	if err != nil {
@@ -382,7 +397,7 @@ func pivotRoot(rootFs string) error {
 }
 
 // func setHostname(containerId string) error {
-// 	fmt.Println("Setting hostname: ", containerId)
+// 	spawnVerbose("Setting hostname: ", containerId)
 // 	err := syscall.Sethostname([]byte(fmt.Sprintf("cpak-%s", containerId[:12])))
 // 	if err != nil {
 // 		return spawnError("sethostname", err)
@@ -391,14 +406,14 @@ func pivotRoot(rootFs string) error {
 // }
 
 func startSleepProcess(cmdArgs []string, envVars []string) error {
-	fmt.Println("Reconfiguring dynamic linker run-time bindings")
+	spawnVerbose("Reconfiguring dynamic linker run-time bindings")
 	l := exec.Command("ldconfig")
 	err := l.Run()
 	if err != nil {
 		return spawnError("ldconfig", err)
 	}
 
-	fmt.Println("Starting sleep process")
+	spawnVerbose("Starting sleep process")
 	args := []string{}
 	if len(cmdArgs) > 0 {
 		args = append(args, cmdArgs...)

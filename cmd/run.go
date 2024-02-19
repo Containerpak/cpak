@@ -12,7 +12,6 @@ import (
 )
 
 func NewRunCommand() *cobra.Command {
-	var version string
 	var branch string
 	var release string
 	var commit string
@@ -28,7 +27,7 @@ use the @ prefix to specify a binary that's not exported by the package.`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: RunPackage,
 	}
-	cmd.Flags().StringVarP(&version, "version", "v", "", "Specify a version")
+	cmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Specify a branch")
 	cmd.Flags().StringVarP(&commit, "commit", "c", "", "Specify a commit")
 	cmd.Flags().StringVarP(&release, "release", "r", "", "Specify a release")
@@ -44,6 +43,7 @@ func runError(iErr error) (err error) {
 func RunPackage(cmd *cobra.Command, args []string) (err error) {
 	remote := args[0]
 
+	verbose, _ := cmd.Flags().GetBool("verbose")
 	branch, _ := cmd.Flags().GetString("branch")
 	commit, _ := cmd.Flags().GetString("commit")
 	release, _ := cmd.Flags().GetString("release")
@@ -60,7 +60,7 @@ func RunPackage(cmd *cobra.Command, args []string) (err error) {
 		return runError(err)
 	}
 
-	err = cpak.Run(remote, version, branch, commit, release, binary, extraArgs...)
+	err = cpak.Run(remote, version, branch, commit, release, binary, verbose, extraArgs...)
 	if err != nil {
 		return runError(err)
 	}
