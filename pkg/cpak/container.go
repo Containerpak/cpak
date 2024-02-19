@@ -173,13 +173,66 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 
 	// The pid of the container is the pid of the init process
 	// and it is stored so that we can attach to it later
-	pid = cmd.Process.Pid
+	pid, err = getPidFromEnvContainerId(container.Id)
+	if err != nil {
+		return
+	}
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
 	}
 
 	err = store.SetContainerPid(container.Id, pid)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+// StopContainer stops the containers related to the given application.
+func (c *Cpak) StopContainer(app types.Application, override types.Override) (err error) {
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return
+	}
+
+	containers, err := store.GetApplicationContainers(app)
+	if err != nil {
+		return
+	}
+
+	for _, container := range containers {
+		fmt.Println("Stopping container:", container.Pid)
+		syscall.Kill(container.Pid, syscall.SIGTERM)
+		err = c.CleanupContainer(container)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+// Stop is a convenient wrapper around the StopContainer function that
+// takes the origin and version of the application to stop.
+func (c *Cpak) Stop(origin, version, branch, commit, release string) (err error) {
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return
+	}
+
+	app, err := store.GetApplicationByOrigin(origin, version, branch, commit, release)
+	if err != nil {
+		return
+	}
+
+	override, err := LoadOverride(app.Origin, app.Version)
+	if err != nil {
+		override = app.Override
+	}
+
+	err = c.StopContainer(app, override)
 	if err != nil {
 		return
 	}
@@ -274,6 +327,11 @@ func getPidFromEnvContainerId(containerId string) (pid int, err error) {
 	if err != nil {
 		return
 	}
+
+	if isVerbose {
+		fmt.Println("Pids found:", pids)
+	}
+
 	if len(pids) == 0 {
 		err = fmt.Errorf("no process with containerId %s found", containerId)
 		return
