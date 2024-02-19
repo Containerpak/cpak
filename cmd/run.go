@@ -16,7 +16,6 @@ func NewRunCommand() *cobra.Command {
 	var release string
 	var commit string
 
-	// we have to accept also unhandled flags which will be passed to the binary
 	cmd := &cobra.Command{
 		Use:   "run <remote>",
 		Short: "Run a package from a remote Git repository",
