@@ -38,7 +38,6 @@ func installError(iErr error) (err error) {
 
 func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 	remote := args[0]
-	fmt.Println("Installing cpak from remote:", remote)
 
 	branch, _ := cmd.Flags().GetString("branch")
 	release, _ := cmd.Flags().GetString("release")
@@ -56,10 +55,10 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 			versionParamsCount++
 		}
 	}
+	// we can't specify more than one version parameter
 	if versionParamsCount > 1 {
 		return fmt.Errorf("more than one version parameter specified")
 	}
-
 	// if all version parameters are empty, we default to the main branch
 	// assuming it is the default branch of the repository
 	if versionParamsCount == 0 {
