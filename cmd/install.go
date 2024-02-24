@@ -91,26 +91,7 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 	fmt.Println()
 
 	fmt.Println("The following permissions will be granted:")
-	fmt.Println("  - socket-x11:", manifest.Override.SocketX11)
-	fmt.Println("  - socket-wayland:", manifest.Override.SocketWayland)
-	fmt.Println("  - socket-pulseaudio:", manifest.Override.SocketPulseAudio)
-	fmt.Println("  - socket-session-bus:", manifest.Override.SocketSessionBus)
-	fmt.Println("  - socket-system-bus:", manifest.Override.SocketSystemBus)
-	fmt.Println("  - socket-ssh-agent:", manifest.Override.SocketSshAgent)
-	fmt.Println("  - socket-cups:", manifest.Override.SocketCups)
-	fmt.Println("  - socket-gpg-agent:", manifest.Override.SocketGpgAgent)
-	fmt.Println("  - device-dri:", manifest.Override.DeviceDri)
-	fmt.Println("  - device-kvm:", manifest.Override.DeviceKvm)
-	fmt.Println("  - device-shm:", manifest.Override.DeviceShm)
-	fmt.Println("  - device-all:", manifest.Override.DeviceAll)
-	fmt.Println("  - fs-host:", manifest.Override.FsHost)
-	fmt.Println("  - fs-host-etc:", manifest.Override.FsHostEtc)
-	fmt.Println("  - fs-host-home:", manifest.Override.FsHostHome)
-	fmt.Println("  - fs-extra:", manifest.Override.FsExtra)
-	fmt.Println("  - env:", manifest.Override.Env)
-	fmt.Println("  - network:", manifest.Override.Network)
-	fmt.Println("  - process:", manifest.Override.Process)
-	fmt.Println("  - as-root:", manifest.Override.AsRoot)
+	tools.PrintStructKeyVal(manifest.Override)
 	fmt.Println()
 
 	confirm := tools.ConfirmOperation("Do you want to continue?")
@@ -119,5 +100,4 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	return cpak.InstallCpak(remote, manifest, branch, commit, release)
-
 }
