@@ -5,16 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/mirkobrombin/cpak/pkg/tools"
-	"github.com/mirkobrombin/dabadee/pkg/dabadee"
-	"github.com/mirkobrombin/dabadee/pkg/hash"
-	"github.com/mirkobrombin/dabadee/pkg/processor"
-	"github.com/mirkobrombin/dabadee/pkg/storage"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -205,16 +203,43 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 		return
 	}
 
-	s, err := storage.NewStorage(c.Options.DaBaDeeStoreOptions)
+	// dabadee deduplication is performed on a new namespace to avoid
+	// permission issues
+	cpakBinary, err := getCpakBinary()
 	if err != nil {
 		return
 	}
 
-	h := hash.NewSHA256Generator()
-	p := processor.NewDedupProcessor(layerInStoreDir, s, h, 2)
+	cmds := []string{}
+	if isVerbose {
+		cmds = append(cmds, "--debug")
+	}
+	cmds = append(cmds, []string{
+		"--cgroupns=true",
+		"--utsns=true",
+		"--ipcns=true",
+		"--copy-up=/etc",
+		"--propagation=rslave",
+		cpakBinary,
+		"dedup",
+	}...)
+	if isVerbose {
+		cmds = append(cmds, "--verbose")
+	}
+	cmds = append(cmds, "--path", layerInStoreDir)
+	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Foreground: false,
+		Setsid:     true,
+	}
 
-	d := dabadee.NewDaBaDee(p)
-	err = d.Run()
+	err = cmd.Run()
+	if err != nil {
+		return
+	}
 
 	return
 }
