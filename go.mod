@@ -7,7 +7,7 @@ require (
 	github.com/google/go-containerregistry v0.16.1
 	github.com/google/uuid v1.3.1
 	github.com/mattn/go-sqlite3 v1.14.17
-	github.com/mirkobrombin/dabadee v0.0.0-20240227071701-c5935d2e4409
+	github.com/mirkobrombin/dabadee v0.4.0
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil v3.21.11+incompatible

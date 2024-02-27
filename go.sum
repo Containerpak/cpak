@@ -37,8 +37,8 @@ github.com/mattn/go-sqlite3 v1.14.17 h1:mCRHCLDUBXgpKAqIKsaAaAsrAlbkeomtRFKXh2L6
 github.com/mattn/go-sqlite3 v1.14.17/go.mod h1:2eHXhiwb8IkHr+BDWZGa96P6+rkvnG63S2DGjv9HUNg=
 github.com/minio/highwayhash v1.0.2 h1:Aak5U0nElisjDCfPSG79Tgzkn2gl66NxOMspRrKnA/g=
 github.com/minio/highwayhash v1.0.2/go.mod h1:BQskDq+xkJ12lmlUUi7U0M5Swg3EWR+dLTk+kldvVxY=
-github.com/mirkobrombin/dabadee v0.0.0-20240227071701-c5935d2e4409 h1:JKvIG3rgtBXy81ic1vXvzpRVMo73YQH3E/lVobcWUOk=
-github.com/mirkobrombin/dabadee v0.0.0-20240227071701-c5935d2e4409/go.mod h1:vc6n8YWFRJ9LcRFxdDGQ9MjdYZv7s6+R8tlvTZplJrs=
+github.com/mirkobrombin/dabadee v0.4.0 h1:gFazcZB5HH6twYY+YwMZPZvrssacsJs1NUdHWP9wiRY=
+github.com/mirkobrombin/dabadee v0.4.0/go.mod h1:vc6n8YWFRJ9LcRFxdDGQ9MjdYZv7s6+R8tlvTZplJrs=
 github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db h1:62I3jR2EmQ4l5rM/4FEfDWcRD+abF5XlKShorW5LRoQ=
 github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db/go.mod h1:l0dey0ia/Uv7NcFFVbCLtqEBQbrT4OCwCSKTEv6enCw=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=

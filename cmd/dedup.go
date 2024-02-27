@@ -49,6 +49,6 @@ func dedupRun(cmd *cobra.Command, args []string) error {
 	h := hash.NewSHA256Generator()
 	p := processor.NewDedupProcessor(path, s, h, 2)
 
-	d := dabadee.NewDaBaDee(p)
+	d := dabadee.NewDaBaDee(p, verbose)
 	return d.Run()
 }
