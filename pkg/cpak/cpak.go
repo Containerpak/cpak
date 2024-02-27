@@ -10,6 +10,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/dabadee/pkg/storage"
 )
 
 // //go:embed podman-launcher
@@ -90,7 +91,11 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 			ManifestsPath: filepath.Join(installationPath, "manifests"),
 			ExportsPath:   filepath.Join(installationPath, "exports"),
 			StorePath:     filepath.Join(installationPath, "store"),
-			CachePath:     filepath.Join(installationPath, "cache"),
+			DaBaDeeStoreOptions: storage.StorageOptions{
+				Root:         filepath.Join(installationPath, "dabadee"),
+				WithMetadata: true,
+			},
+			CachePath: filepath.Join(installationPath, "cache"),
 		}
 	}
 

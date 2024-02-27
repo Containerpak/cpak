@@ -1,5 +1,9 @@
 package types
 
+import (
+	"github.com/mirkobrombin/dabadee/pkg/storage"
+)
+
 // CpakOptions is the struct that represents the options for the Cpak struct.
 type CpakOptions struct {
 	// BinPath is the path to the directory where the internal binaries
@@ -26,6 +30,9 @@ type CpakOptions struct {
 	// Note: cache is intended to be used by the cpak pull function to store
 	// the downloaded images and unpacked layers.
 	CachePath string `json:"cache_path"`
+
+	// DaBaDeeStoreopts is the configuration for the DaBaDee store.
+	DaBaDeeStoreOptions storage.StorageOptions `json:"dabadee_store"`
 
 	// Following paths are not meant to be set by the user, they are set
 	// by cpak during its initialization.

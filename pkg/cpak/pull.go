@@ -11,6 +11,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/mirkobrombin/cpak/pkg/tools"
+	"github.com/mirkobrombin/dabadee/pkg/dabadee"
+	"github.com/mirkobrombin/dabadee/pkg/hash"
+	"github.com/mirkobrombin/dabadee/pkg/processor"
+	"github.com/mirkobrombin/dabadee/pkg/storage"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -166,7 +170,7 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 		return
 	}
 
-	hash := digest[strings.Index(digest, ":")+1:][:12]
+	layerHash := digest[strings.Index(digest, ":")+1:][:12]
 
 	bar := progressbar.NewOptions(int(layerSize),
 		progressbar.OptionSetTheme(progressbar.Theme{
@@ -178,7 +182,7 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 		}),
 		// the following add a new line after the progress bar
 		progressbar.OptionSetWriter(io.MultiWriter(os.Stderr, os.Stderr)),
-		progressbar.OptionSetDescription("Downloading "+hash),
+		progressbar.OptionSetDescription("Downloading "+layerHash),
 		progressbar.OptionOnCompletion(func() {
 			fmt.Fprint(os.Stderr, "\n")
 		}),
@@ -197,5 +201,20 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 	}
 
 	err = tools.TarUnpack(layerInCacheDir, layerInStoreDir)
+	if err != nil {
+		return
+	}
+
+	s, err := storage.NewStorage(c.Options.DaBaDeeStoreOptions)
+	if err != nil {
+		return
+	}
+
+	h := hash.NewSHA256Generator()
+	p := processor.NewDedupProcessor(layerInStoreDir, s, h, 2)
+
+	d := dabadee.NewDaBaDee(p)
+	err = d.Run()
+
 	return
 }
