@@ -297,23 +297,22 @@ func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error
 		}
 	}
 
-	// TODO: re-enable this when using the cpak unix socket
 	// the cpak socket is mounted as last because it is created by another
 	// process and we need to wait for it to be available. However, it should
 	// be available at this point
-	// cpakSockPath := fmt.Sprintf("/run/user/%d/cpak.sock", userUid)
-	// spawnVerbose("Waiting for: ", cpakSockPath, "to be available...")
-	// for {
-	// 	_, err := os.Stat(cpakSockPath)
-	// 	if err == nil {
-	// 		spawnVerbose("Mounting: ", cpakSockPath)
-	// 		err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath))
-	// 		if err != nil {
-	// 			return spawnError("mount:"+cpakSockPath, err)
-	// 		}
-	// 		break
-	// 	}
-	// }
+	cpakSockPath := "/tmp/cpak.sock"
+	spawnVerbose("Waiting for: ", cpakSockPath, "to be available...")
+	for {
+		_, err := os.Stat(cpakSockPath)
+		if err == nil {
+			spawnVerbose("Mounting: ", cpakSockPath)
+			err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath))
+			if err != nil {
+				return spawnError("mount:"+cpakSockPath, err)
+			}
+			break
+		}
+	}
 
 	return nil
 }

@@ -127,24 +127,13 @@ func (c *Cpak) prepareSocketListener() (err error) {
 func (c *Cpak) StartSocketListener() (err error) {
 	fmt.Println("Preparing socket listener...")
 
-	// the socket listens on TCP port 12345
-	// TODO: here we use a TCP connection because it is easier to debug but
-	// 		 we should use the Unix socket which is defined in
-	// 		 /run/user/<uid>/cpak.sock and already mounted in the container
-	// uid := os.Getuid()
-	// socketPath := fmt.Sprintf("/run/user/%d/cpak.sock", uid)
-	// err = os.Chmod(socketPath, 0777)
-	// if err != nil {
-	// 	return err
-	// }
-	// listener, err := net.Listen("unix", socketPath)
-	listener, err := net.Listen("tcp", "localhost:12345")
+	// the socket listens on /tmp/cpak.sock
+	listener, err := net.Listen("unix", "/tmp/cpak.sock")
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	//fmt.Printf("Waiting for connections on %s...\n", socketPath)
-	fmt.Printf("Waiting for connections on localhost:12345...\n")
+	fmt.Printf("Waiting for connections on %s...\n", listener.Addr())
 
 	for {
 		var conn net.Conn
@@ -211,7 +200,6 @@ func (c *Cpak) StartSocketListener() (err error) {
 			args := []string{
 				"run",
 				params.Origin,
-				"--version", params.Version,
 				"--branch", params.Branch,
 				"--commit", params.Commit,
 				"--release", params.Release,
@@ -288,9 +276,6 @@ func sendErrorResponse(conn net.Conn, err error) {
 func (c *Cpak) RunNested(parentAppId string, origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
 	fmt.Println("Running another cpak container in nested mode...")
 
-	// uid := os.Getuid()
-	// socketPath := fmt.Sprintf("/run/user/%d/cpak.sock", uid)
-
 	// the RequestParams struct is used by the server to check if the cpak
 	// which is running, has the ability to run the specified nested cpak
 	params := types.RequestParams{
@@ -310,12 +295,8 @@ func (c *Cpak) RunNested(parentAppId string, origin string, version string, bran
 		return
 	}
 
-	// here starts the connection to the socket
-	// TODO: here we use a TCP connection because it is easier to debug but
-	// 		 we should use the Unix socket which is defined in
-	// 		 /run/user/<uid>/cpak.sock and already mounted in the container
-	// conn, err := net.Dial("unix", socketPath)
-	conn, err := net.Dial("tcp", "localhost:12345")
+	// start a connection to the socket
+	conn, err := net.Dial("unix", "/tmp/cpak.sock")
 	if err != nil {
 		return err
 	}
