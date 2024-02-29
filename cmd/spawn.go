@@ -199,18 +199,15 @@ func parseLayers(layers string) []string {
 
 func mountLayers(rootFs, layersDir string, stateDir string, layersList []string) error {
 	layersDirs := ""
-	latestLayer := filepath.Join(layersDir, layersList[len(layersList)-1])
 
-	for index, layer := range layersList {
+	for _, layer := range layersList {
 		layerDir := filepath.Join(layersDir, layer)
 		layersDirs = layersDirs + ":" + layerDir
-
-		if index == len(layersList)-1 {
-			continue
-		}
 	}
 
-	err := tools.MountFuseOverlayfs(rootFs, layersDirs, latestLayer, stateDir)
+	layersDirs = layersDirs[1:]
+
+	err := tools.MountOverlay(rootFs, layersDirs, filepath.Join(stateDir, "up"), filepath.Join(stateDir, "work"))
 	if err != nil {
 		return spawnError("mount:layers "+layersDirs, err)
 	}

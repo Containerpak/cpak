@@ -1,8 +1,6 @@
 package cmd
 
-/*
-TODO: implement the update command
-*/
+// TODO: implement the update command
 
 import (
 	"fmt"

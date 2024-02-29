@@ -49,7 +49,12 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	if len(containers) > 0 {
 		container = containers[0]
 		fmt.Println("Container found:", container.Id)
-		container.StatePath = c.GetInStoreDir("states", container.Id)
+
+		container.StatePath, err = c.GetInStoreDirMkdir("states", container.Id)
+		if err != nil {
+			fmt.Println("Error getting state path:", err)
+			return
+		}
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
 		container.Pid, err = getPidFromEnvContainerId(container.Id)
@@ -273,7 +278,8 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 	uid := fmt.Sprintf("%d", os.Getuid())
 	gid := fmt.Sprintf("%d", os.Getgid())
 
-	//nsenterBin := filepath.Join(c.Options.BinPath, "nsenter") TODO: use from busybox
+	//nsenterBin := filepath.Join(c.Options.BinPath, "nsenter")
+	// TODO: use from busybox
 	nsenterBin := "nsenter"
 	cmds := []string{
 		"-m",

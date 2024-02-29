@@ -21,6 +21,18 @@ func (c *Cpak) GetInStoreDirMkdir(sub string, args ...string) (path string, err 
 		path = filepath.Dir(path)
 	}
 	err = os.MkdirAll(realPath, 0755)
+
+	if sub == "states" && len(args) == 1 {
+		_, err = c.GetInStoreDirMkdir("states", args[0], "up")
+		if err != nil {
+			return
+		}
+		_, err = c.GetInStoreDirMkdir("states", args[0], "work")
+		if err != nil {
+			return
+		}
+	}
+
 	return
 }
 

@@ -57,9 +57,9 @@ func MountBind(src, dest string) error {
 
 // MountOverlay mounts the given lower, upper and work directories in the
 // given destination path as an overlay filesystem.
-func MountOverlay(lowerDir, upperDir, workDir string) error {
+func MountOverlay(targetDir, lowerDir, upperDir, workDir string) error {
 	return syscall.Mount(
-		"overlay", lowerDir, "overlay", 0,
+		"overlay", targetDir, "overlay", 0,
 		fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s,userxattr", lowerDir, upperDir, workDir),
 	)
 }
@@ -68,7 +68,6 @@ func MountFuseOverlayfs(targetDir, lowerDir, upperDir, workDir string) (err erro
 	c := exec.Command("fuse-overlayfs", targetDir, "-o", fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir))
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
-	fmt.Println("cmd was:", c.String())
 	return c.Run()
 }
 
@@ -76,6 +75,5 @@ func MountTmpfs(targetDir string) (err error) {
 	c := exec.Command("mount", "-t", "tmpfs", "tmpfs", targetDir)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
-	fmt.Println("cmd was:", c.String())
 	return c.Run()
 }
