@@ -12,8 +12,6 @@ import (
 )
 
 func NewServiceCommand() *cobra.Command {
-
-	// we have to accept also unhandled flags which will be passed to the binary
 	cmd := &cobra.Command{
 		Use:  "start-service",
 		RunE: RunService,

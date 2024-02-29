@@ -13,10 +13,6 @@ import (
 )
 
 func NewInstallCommand() *cobra.Command {
-	var branch string
-	var release string
-	var commit string
-
 	cmd := &cobra.Command{
 		Use:   "install <remote>",
 		Short: "Install a package from a remote Git repository",
@@ -24,9 +20,9 @@ func NewInstallCommand() *cobra.Command {
 		RunE:  InstallPackage,
 	}
 
-	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Specify a branch")
-	cmd.Flags().StringVarP(&release, "release", "r", "", "Install a specific release")
-	cmd.Flags().StringVarP(&commit, "commit", "c", "", "Specify a commit")
+	cmd.Flags().StringP("branch", "b", "", "Specify a branch")
+	cmd.Flags().StringP("release", "r", "", "Install a specific release")
+	cmd.Flags().StringP("commit", "c", "", "Specify a commit")
 
 	return cmd
 }

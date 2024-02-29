@@ -12,10 +12,6 @@ import (
 )
 
 func NewRunCommand() *cobra.Command {
-	var branch string
-	var release string
-	var commit string
-
 	cmd := &cobra.Command{
 		Use:   "run <remote>",
 		Short: "Run a package from a remote Git repository",
@@ -27,9 +23,9 @@ use the @ prefix to specify a binary that's not exported by the package.`,
 		RunE: RunPackage,
 	}
 	cmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
-	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Specify a branch")
-	cmd.Flags().StringVarP(&commit, "commit", "c", "", "Specify a commit")
-	cmd.Flags().StringVarP(&release, "release", "r", "", "Specify a release")
+	cmd.Flags().StringP("branch", "b", "", "Specify a branch")
+	cmd.Flags().StringP("commit", "c", "", "Specify a commit")
+	cmd.Flags().StringP("release", "r", "", "Specify a release")
 
 	return cmd
 }
@@ -64,6 +60,5 @@ func RunPackage(cmd *cobra.Command, args []string) (err error) {
 		return runError(err)
 	}
 
-	fmt.Println("cpak ran successfully!")
 	return nil
 }

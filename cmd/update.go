@@ -1,7 +1,7 @@
 package cmd
 
 /*
-cpak update ?<remote> ?<branch> (update all remotes and branches if none specified, update is based on commit hash)
+TODO: implement the update command
 */
 
 import (

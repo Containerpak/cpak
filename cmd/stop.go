@@ -8,11 +8,6 @@ import (
 )
 
 func NewStopCommand() *cobra.Command {
-	var branch string
-	var release string
-	var commit string
-	var version string
-
 	cmd := &cobra.Command{
 		Use:   "stop <remote>",
 		Short: "Stop a running cpak container",
@@ -20,10 +15,10 @@ func NewStopCommand() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE:  StopContainer,
 	}
-	cmd.Flags().StringVarP(&version, "version", "v", "", "Specify a version")
-	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Specify a branch")
-	cmd.Flags().StringVarP(&commit, "commit", "c", "", "Specify a commit")
-	cmd.Flags().StringVarP(&release, "release", "r", "", "Specify a release")
+	cmd.Flags().StringP("version", "v", "", "Specify a version")
+	cmd.Flags().StringP("branch", "b", "", "Specify a branch")
+	cmd.Flags().StringP("commit", "c", "", "Specify a commit")
+	cmd.Flags().StringP("release", "r", "", "Specify a release")
 
 	return cmd
 }
@@ -43,5 +38,10 @@ func StopContainer(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	return cpak.Stop(remote, version, branch, commit, release)
+	err = cpak.Stop(remote, version, branch, commit, release)
+	if err != nil {
+		return fmt.Errorf("an error occurred while stopping the cpak container: %s", err)
+	}
+
+	return nil
 }

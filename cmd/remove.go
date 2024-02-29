@@ -12,19 +12,15 @@ import (
 )
 
 func NewRemoveCommand() *cobra.Command {
-	var branch string
-	var release string
-	var commit string
-
 	cmd := &cobra.Command{
 		Use:   "remove <remote>",
 		Short: "Remove a package installed from a remote Git repository",
 		Args:  cobra.ExactArgs(1),
 		RunE:  RemovePackage,
 	}
-	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Specify a branch")
-	cmd.Flags().StringVarP(&release, "release", "r", "", "Install a specific release")
-	cmd.Flags().StringVarP(&commit, "commit", "c", "", "Specify a commit")
+	cmd.Flags().StringP("branch", "b", "", "Specify a branch")
+	cmd.Flags().StringP("release", "r", "", "Install a specific release")
+	cmd.Flags().StringP("commit", "c", "", "Specify a commit")
 
 	return cmd
 }

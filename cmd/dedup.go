@@ -13,9 +13,10 @@ import (
 
 func NewDedupCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "dedup",
-		Short: "Deduplicate a path in the cpak dabadee store",
-		RunE:  dedupRun,
+		Use:    "dedup",
+		Short:  "Deduplicate a path in the cpak dabadee store",
+		RunE:   dedupRun,
+		Hidden: true,
 	}
 
 	cmd.Flags().BoolP("verbose", "v", false, "enable verbose output")

@@ -21,9 +21,10 @@ var verbose = false
 
 func NewSpawnCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "spawn",
-		Short: "Spawn a new namespace",
-		RunE:  SpawnPackage,
+		Use:    "spawn",
+		Short:  "Spawn a new namespace",
+		RunE:   SpawnPackage,
+		Hidden: true,
 	}
 
 	cmd.Flags().BoolP("verbose", "v", false, "enable verbose output")
