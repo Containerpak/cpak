@@ -319,6 +319,12 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 
 	err = cmd.Run()
 	if err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if ok {
+			if exitErr.ExitCode() == 2 {
+				err = nil
+			}
+		}
 		return
 	}
 
