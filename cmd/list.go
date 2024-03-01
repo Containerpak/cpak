@@ -1,9 +1,5 @@
 package cmd
 
-/*
-cpak list
-*/
-
 import (
 	"encoding/json"
 	"fmt"

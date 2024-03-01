@@ -13,8 +13,9 @@ import (
 
 func NewServiceCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "start-service",
-		RunE: RunService,
+		Use:    "start-service",
+		RunE:   RunService,
+		Hidden: true,
 	}
 	return cmd
 }

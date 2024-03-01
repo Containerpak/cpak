@@ -1,9 +1,5 @@
 package cmd
 
-/*
-cpak spawn -c <container-id> -r <rootfs> -e <env> -l <layers> -s <state-dir> -d <layers-dir>
-*/
-
 import (
 	"fmt"
 	"os"

@@ -1,9 +1,5 @@
 package cmd
 
-/*
-cpak run <remote> --branch? --release? --commit?
-*/
-
 import (
 	"fmt"
 

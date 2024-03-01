@@ -1,9 +1,5 @@
 package cmd
 
-/*
-cpak remove <remote> <version>
-*/
-
 import (
 	"fmt"
 

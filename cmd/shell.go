@@ -1,9 +1,5 @@
 package cmd
 
-/*
-cpak shell <remote> <branch> (shell into a package)
-*/
-
 import (
 	"fmt"
 
