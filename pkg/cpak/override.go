@@ -91,14 +91,14 @@ func GetOverrideMounts(o types.Override) []string {
 		mounts = append(mounts, "/etc/")
 	}
 
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = os.Getenv("HOME")
+	}
+	if !strings.HasSuffix(homeDir, "/") {
+		homeDir += "/"
+	}
 	if o.FsHostHome {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			homeDir = os.Getenv("HOME")
-		}
-		if !strings.HasSuffix(homeDir, "/") {
-			homeDir += "/"
-		}
 		mounts = append(mounts, homeDir)
 	}
 
@@ -108,6 +108,33 @@ func GetOverrideMounts(o types.Override) []string {
 	// }
 
 	mounts = append(mounts, o.FsExtra...)
+
+	// foundMounts := []string{}
+	// for _, mount := range tools.GetHostMounts() {
+	// 	found := false
+	// 	for _, m := range mounts {
+	// 		if strings.Contains(mount, m) {
+	// 			found = true
+	// 			break
+	// 		}
+	// 	}
+	// 	if found {
+	// 		continue
+	// 	}
+
+	// 	if strings.HasPrefix(mount, homeDir) && o.FsHostHome {
+	// 		foundMounts = append(foundMounts, mount)
+	// 		continue
+	// 	}
+
+	// 	for _, m := range o.FsExtra {
+	// 		if strings.HasPrefix(mount, m) {
+	// 			foundMounts = append(foundMounts, mount)
+	// 			break
+	// 		}
+	// 	}
+	// }
+	// mounts = append(mounts, foundMounts...)
 
 	return mounts
 }

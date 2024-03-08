@@ -52,7 +52,7 @@ func Mount(src, dest string, mode uintptr) error {
 // It is just a wrapper around Mount, for convenience.
 func MountBind(src, dest string) error {
 	return Mount(src, dest, syscall.MS_BIND|syscall.MS_REC|syscall.MS_RDONLY|syscall.MS_NOSUID|
-		syscall.MS_NOEXEC|syscall.MS_NODEV|syscall.MS_PRIVATE)
+		syscall.MS_NOEXEC|syscall.MS_NODEV|syscall.MS_PRIVATE|syscall.MS_SLAVE)
 }
 
 // MountOverlay mounts the given lower, upper and work directories in the
@@ -76,4 +76,21 @@ func MountTmpfs(targetDir string) (err error) {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
+}
+
+func GetHostMounts() (mounts []string) {
+	file, err := os.Open("/proc/mounts")
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		mounts = append(mounts, fields[1])
+	}
+
+	return
 }
