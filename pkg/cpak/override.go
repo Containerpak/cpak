@@ -174,19 +174,26 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 		return
 	}
 
-	overridesPath := homeDir + "/.config/cpak/overrides"
-	err = os.MkdirAll(overridesPath, 0755)
+	cpakLocalDir, err := getCpakLocalName(origin)
 	if err != nil {
 		return
 	}
 
-	file, err := os.Open(overridesPath + "/" + origin + version + "/cpak.json")
+	overridePath := filepath.Join(homeDir, ".config/cpak/overrides", cpakLocalDir, version)
+	err = os.MkdirAll(overridePath, 0755)
 	if err != nil {
+		return
+	}
+
+	file, err := os.Open(filepath.Join(overridePath, "cpak.json"))
+	if err != nil {
+		fmt.Println(err)
 		return
 	}
 
 	err = json.NewDecoder(file).Decode(&override)
 	if err != nil {
+		fmt.Println(err)
 		return
 	}
 
