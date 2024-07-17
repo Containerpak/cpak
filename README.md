@@ -2,14 +2,16 @@
   <img src="cpak-logo.svg#gh-light-mode-only" height="120">
   <img src="cpak-logo.svg#gh-dark-mode-only" height="120">
   <p>A fast, decentralized, portable,  powerful and low-memory footprint package 
-    format for Unix.</p>
+    format for Linux.</p>
 </div>
 
 ---
 
 cpak is meant to simplify the process of distributing software via OCI images,
 and to integrate with the operating system, bringing the benefits of
-containerization to the desktop, in a truly native fashion.
+containerization to the desktop*, in a truly native fashion.
+
+*cpak works for desktop, server and basically everything that runs Linux. 
 
 > **Note:**
 > cpak is still in early development.
