@@ -411,7 +411,7 @@ func startSleepProcess(cmdArgs []string, envVars []string) error {
 	if len(cmdArgs) > 0 {
 		args = append(args, cmdArgs...)
 	} else {
-		args = append(args, "/usr/bin/sleep")
+		args = append(args, "/bin/sleep")
 		args = append(args, "infinity")
 	}
 
