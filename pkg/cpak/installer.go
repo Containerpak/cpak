@@ -107,7 +107,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		}
 	}
 
-	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + sourceType + version))
+	imageId := base64.StdEncoding.EncodeToString([]byte(manifest.Name + ":" + sourceType + ":" + version + ":" + origin))
 	layers, config, err := c.Pull(manifest.Image, imageId)
 	if err != nil {
 		return
