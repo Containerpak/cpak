@@ -2,7 +2,6 @@ package cpak
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,9 +11,6 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/pkg/storage"
 )
-
-// //go:embed podman-launcher
-// var podmanLauncherBytes []byte
 
 type Cpak struct {
 	Options types.CpakOptions
