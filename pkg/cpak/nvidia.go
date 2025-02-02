@@ -1,122 +1,140 @@
 package cpak
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// GetNvidiaLibs finds the paths of the libraries needed by the
-// GPU drivers to run.
-//
-// Note: this follows the same logic as the one used in the
-// distrobox utility to find the nvidia libraries, see:
-// https://github.com/89luca89/distrobox/blob/9bea9498c58e367cea2f106492b5b5cbd8e6b713/distrobox-init#L1256
+// GetNvidiaLibs returns all files relevant for NVIDIA integration.
+// This includes configuration files, binaries, and libraries.
+// Highly inspired to the Distrobox NVIDIA implementation.
 func GetNvidiaLibs() ([]string, error) {
-	var nvidiaLibs []string
-	directories := []string{
-		"/etc",
-		"/usr",
+	var files []string
+	specs := []struct {
+		base      string
+		predicate func(string, fs.DirEntry) bool
+	}{
+		{"/etc", matchGenericConfig},
+		{"/usr", matchNonLibConfig},
+		{"/bin", matchBinary},
+		{"/sbin", matchBinary},
+		{"/usr/bin", matchBinary},
+		{"/usr/sbin", matchBinary},
+		{"/usr/lib", matchLibrary},
+		{"/usr/lib64", matchLibrary},
+		{"/usr/lib32", matchLibrary},
 	}
 
-	for _, directory := range directories {
-		nvidiaLibs = append(nvidiaLibs, getNvidiaLibsFromDir(directory)...)
-	}
-
-	// Remove duplicates and hidden files.
-	var cleanedNvidiaLibs []string
-	for _, nvidiaLib := range nvidiaLibs {
-		// if any of the components of the path starts with a dot, skip it.
-		components := strings.Split(nvidiaLib, "/")
-		isHidden := false
-		for _, component := range components {
-			if strings.HasPrefix(component, ".") {
-				isHidden = true
-				continue
-			}
-		}
-
-		if isHidden {
+	for _, spec := range specs {
+		if info, err := os.Stat(spec.base); err != nil || !info.IsDir() {
 			continue
 		}
-
-		// if any of the components of the path is already in the list,
-		// skip it.
-		var skip bool
-		for _, cleanedNvidiaLib := range cleanedNvidiaLibs {
-			if strings.HasPrefix(nvidiaLib, cleanedNvidiaLib) {
-				skip = true
-				break
-			}
-		}
-		if skip {
+		res, err := walkAndFilter(spec.base, spec.predicate)
+		if err != nil {
 			continue
 		}
-
-		cleanedNvidiaLibs = append(cleanedNvidiaLibs, nvidiaLib)
+		files = append(files, res...)
 	}
 
-	return cleanedNvidiaLibs, nil
+	// Remove duplicates and files with hidden components.
+	cleaned := []string{}
+	seen := make(map[string]struct{})
+	for _, f := range files {
+		if isHiddenPath(f) {
+			continue
+		}
+		if _, ok := seen[f]; ok {
+			continue
+		}
+		seen[f] = struct{}{}
+		cleaned = append(cleaned, f)
+	}
+
+	return cleaned, nil
 }
 
-// getNvidiaLibsFromDir finds every file and directory in the given
-// directory, which name contains the string "nvidia".
-//
-// Note: this is recursive, it calls itself for every directory
-// found so it can find nvidia libraries in subdirectories.
-func getNvidiaLibsFromDir(dir string) []string {
-	var nvidiaLibs []string
-
-	excludedDirs := []string{
-		"/usr/src",
-	}
-
-	// Open the directory.
-	directory, err := os.Open(dir)
-	if err != nil {
-		return nvidiaLibs
-	}
-
-	// Read the directory.
-	files, err := directory.Readdir(0)
-	if err != nil {
-		return nvidiaLibs
-	}
-
-	// For every file in the directory.
-	for _, file := range files {
-		// If the file is in the excluded directories, skip it.
-		var skip bool
-		for _, excludedDir := range excludedDirs {
-			if strings.HasPrefix(dir, excludedDir) {
-				skip = true
-				break
-			}
+// walkAndFilter walks through the directory tree rooted at 'root'
+// and returns files that satisfy the predicate.
+func walkAndFilter(root string, predicate func(string, fs.DirEntry) bool) ([]string, error) {
+	var results []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
 		}
-
-		// if one of the components of the path starts with a dot, skip it.
-		components := strings.Split(dir, "/")
-		for _, component := range components {
-			if strings.HasPrefix(component, ".") {
-				skip = true
-				break
-			}
+		if d.IsDir() {
+			return nil
 		}
-
-		if skip {
-			continue
+		if predicate(path, d) {
+			results = append(results, path)
 		}
+		return nil
+	})
+	return results, err
+}
 
-		// If the file is a directory, call this function recursively.
-		if file.IsDir() {
-			nvidiaLibs = append(nvidiaLibs, getNvidiaLibsFromDir(filepath.Join(dir, file.Name()))...)
-		}
+// matchGenericConfig returns true if the file path contains "nvidia".
+// Used to match generic configuration files in /etc.
+func matchGenericConfig(path string, d fs.DirEntry) bool {
+	return strings.Contains(path, "nvidia")
+}
 
-		// If the file name contains the string "nvidia", add it to the list.
-		if strings.Contains(file.Name(), "nvidia") {
-			nvidiaLibs = append(nvidiaLibs, filepath.Join(dir, file.Name()))
+// group2Patterns holds patterns for non-library configuration files in /usr.
+var group2Patterns = []string{
+	"glvnd/egl_vendor.d/10_nvidia.json",
+	"X11/xorg.conf.d/10-nvidia.conf",
+	"X11/xorg.conf.d/nvidia-drm-outputclass.conf",
+	"egl/egl_external_platform.d/10_nvidia_wayland.json",
+	"egl/egl_external_platform.d/15_nvidia_gbm.json",
+	"nvidia/nvoptix.bin",
+	"vulkan/icd.d/nvidia_icd.json",
+	"vulkan/icd.d/nvidia_layers.json",
+	"vulkan/implicit_layer.d/nvidia_layers.json",
+	"nvidia.icd",
+	"nvidia.yaml",
+	"nvidia.json",
+}
+
+// matchNonLibConfig returns true if the file path contains any of the patterns
+// specified in group2Patterns.
+func matchNonLibConfig(path string, d fs.DirEntry) bool {
+	for _, pat := range group2Patterns {
+		if strings.Contains(path, pat) {
+			return true
 		}
 	}
+	return false
+}
 
-	return nvidiaLibs
+// matchBinary returns true if the file name (lowercased) contains "nvidia".
+// Used to match Nvidia CLI utilities.
+func matchBinary(path string, d fs.DirEntry) bool {
+	return strings.Contains(strings.ToLower(d.Name()), "nvidia")
+}
+
+// matchLibrary returns true if the file is a library matching Nvidia or CUDA patterns.
+// It checks for specific prefixes and substring conditions in the file name.
+func matchLibrary(path string, d fs.DirEntry) bool {
+	name := d.Name()
+	if strings.HasPrefix(name, "libnvcuvid") || strings.HasPrefix(name, "libnvoptix") {
+		return true
+	}
+	if strings.Contains(name, ".so") {
+		if strings.Contains(name, "nvidia") || strings.Contains(name, "cuda") {
+			return true
+		}
+	}
+	return false
+}
+
+// isHiddenPath returns true if any component of the path starts with a dot.
+func isHiddenPath(path string) bool {
+	parts := strings.Split(path, string(os.PathSeparator))
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
 }
