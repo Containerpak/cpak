@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -28,6 +29,12 @@ var isVerbose bool
 // available, e.g. in shell scripts.
 func (c *Cpak) Run(origin string, version string, branch string, commit string, release string, binary string, verbose bool, extraArgs ...string) (err error) {
 	isVerbose = verbose // setting according to the client
+
+	// if isVerbose is true, we benchmark the container creation
+	var startTime time.Time
+	if verbose {
+		startTime = time.Now()
+	}
 
 	parentAppId, isNested := getNested()
 	if isNested {
@@ -67,6 +74,13 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 	container, err = c.PrepareContainer(app, override)
 	if err != nil {
 		return
+	}
+
+	// here is where we print the benchmark time, implicitly excluding the
+	// time spent in the command execution
+	if verbose {
+		elapsed := time.Since(startTime)
+		fmt.Printf("Container creation took %s\n", elapsed)
 	}
 
 	command := []string{}
