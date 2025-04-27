@@ -1,0 +1,49 @@
+package cmd
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+
+	hrun_server "github.com/distrobox/hrun/pkg/server"
+	"github.com/spf13/cobra"
+)
+
+func NewHostExecServerCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:    "hostexec-server",
+		Short:  "Starts the host execution server for a container (internal)",
+		RunE:   runHostExecServer,
+		Hidden: true,
+	}
+
+	cmd.Flags().String("socket-path", "", "Path for the Unix domain socket")
+	cmd.Flags().StringArray("allowed-cmd", []string{}, "Allowed command to execute (can be specified multiple times)")
+	cmd.MarkFlagRequired("socket-path")
+
+	return cmd
+}
+
+func runHostExecServer(cmd *cobra.Command, args []string) error {
+	socketPath, _ := cmd.Flags().GetString("socket-path")
+	allowedCmds, _ := cmd.Flags().GetStringArray("allowed-cmd")
+
+	socketDir := filepath.Dir(socketPath)
+	if err := os.MkdirAll(socketDir, 0700); err != nil {
+		return fmt.Errorf("failed to create socket directory %s: %w", socketDir, err)
+	}
+
+	_ = os.Remove(socketPath)
+
+	log.Printf("Starting hrun server on socket: %s with allowed commands: %v", socketPath, allowedCmds)
+	err := hrun_server.StartServer(allowedCmds, socketPath)
+
+	if err != nil {
+		log.Printf("hrun server exited with error: %v", err)
+		return fmt.Errorf("hostexec server failed: %w", err)
+	}
+
+	log.Println("hrun server finished successfully.")
+	return nil
+}

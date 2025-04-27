@@ -18,10 +18,16 @@ type Container struct {
 	// RootFs is the path to the root filesystem of the container.
 	RootFs string
 
-	// Pid is the pid of the spawned container process.
+	// Pid is the pid of the main spawned container process inside the namespace.
 	Pid int
 
 	// StatePath is the path to the state directory of the container, the
 	// actual workdir for the layer mounts.
 	StatePath string
+
+	// HostExecPid is the PID of the 'cpak hostexec-server' process running on the host for this container.
+	HostExecPid int
+
+	// HostExecSocketPath is the path to the Unix domain socket used by the hostexec server/client.
+	HostExecSocketPath string
 }

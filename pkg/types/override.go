@@ -25,4 +25,6 @@ type Override struct {
 	Process bool     `json:"process"`
 
 	AsRoot bool `json:"asRoot"`
+
+	AllowedHostCommands []string `json:"allowedHostCommands"`
 }

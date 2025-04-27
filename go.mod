@@ -1,9 +1,10 @@
 module github.com/mirkobrombin/cpak
 
-go 1.20
+go 1.21
 
 require (
-	github.com/creack/pty v1.1.18
+	github.com/creack/pty v1.1.21
+	github.com/distrobox/hrun v0.0.2
 	github.com/google/go-containerregistry v0.16.1
 	github.com/google/uuid v1.3.1
 	github.com/mattn/go-sqlite3 v1.14.17
@@ -38,6 +39,6 @@ require (
 	github.com/vbatts/tar-split v0.11.3 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	golang.org/x/sync v0.2.0 // indirect
-	golang.org/x/sys v0.12.0 // indirect
-	golang.org/x/term v0.11.0 // indirect
+	golang.org/x/sys v0.17.0 // indirect
+	golang.org/x/term v0.17.0 // indirect
 )

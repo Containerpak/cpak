@@ -26,6 +26,8 @@ func main() {
 	rootCmd.AddCommand(cmd.NewServiceCommand())
 	rootCmd.AddCommand(cmd.NewStopCommand())
 	rootCmd.AddCommand(cmd.NewDedupCommand())
+	rootCmd.AddCommand(cmd.NewHostExecServerCommand())
+	rootCmd.AddCommand(cmd.NewHostExecClientCommand())
 
 	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {

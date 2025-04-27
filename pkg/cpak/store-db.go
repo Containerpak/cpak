@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -81,6 +82,9 @@ func (s *Store) initDb(dbPath string) (err error) {
 			Pid INTEGER,
 			ApplicationId TEXT,
 			Timestamp DATETIME,
+			StatePath TEXT,
+			HostExecPid INTEGER,
+			HostExecSocketPath TEXT,
 			FOREIGN KEY(ApplicationId) REFERENCES Application(Id)
 		)
 	`)
@@ -119,20 +123,28 @@ func (s *Store) NewApplication(app types.Application) (err error) {
 
 // NewContainer inserts a new container into the store.
 func (s *Store) NewContainer(container types.Container) (err error) {
-	if container.Application.Id == "" {
-		return errors.New("application id is required")
+	if container.Id == "" || container.Application.Id == "" {
+		return errors.New("container Id and ApplicationId are required")
+	}
+	if container.Timestamp.IsZero() {
+		container.Timestamp = time.Now()
 	}
 
 	_, err = s.db.Exec(
-		"INSERT INTO Container VALUES (?, ?, ?, ?)",
-		container.Id, container.Pid, container.Application.Id, container.Timestamp,
+		"INSERT INTO Container (Id, Pid, ApplicationId, Timestamp, StatePath, HostExecPid, HostExecSocketPath) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		container.Id, container.Pid, container.Application.Id, container.Timestamp, container.StatePath, container.HostExecPid, container.HostExecSocketPath,
 	)
 	if err != nil {
-		err = fmt.Errorf("NewContainer: %s", err)
-		return
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: Container.Id") {
+			return fmt.Errorf("container with Id %s already exists: %w", container.Id, err)
+		}
+		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+			return fmt.Errorf("application with Id %s does not exist: %w", container.Application.Id, err)
+		}
+		return fmt.Errorf("failed to insert container %s: %w", container.Id, err)
 	}
 
-	return
+	return nil
 }
 
 // GetApplications returns all the applications stored in the store.
@@ -294,42 +306,30 @@ func (s *Store) GetApplicationsByAddons(dependencies []string) (apps []types.App
 
 // GetApplicationContainers returns the containers associated with a specific application.
 func (s *Store) GetApplicationContainers(application types.Application) (containers []types.Container, err error) {
-	rows, err := s.db.Query("SELECT * FROM Container INNER JOIN Application ON Container.ApplicationId = Application.Id WHERE ApplicationId = ? ORDER BY Timestamp DESC", application.Id)
+	if application.Id == "" {
+		return nil, errors.New("application ID is required to get containers")
+	}
+
+	rows, err := s.db.Query("SELECT * FROM Container WHERE ApplicationId = ? ORDER BY Timestamp DESC", application.Id)
 	if err != nil {
-		err = fmt.Errorf("GetApplicationContainers: %s", err)
-		return
+		return nil, fmt.Errorf("failed to query containers for app %s: %w", application.Id, err)
 	}
 	defer rows.Close()
 
+	containers = []types.Container{}
 	for rows.Next() {
-		var container types.Container
-		var desktopEntries string
-		var dependencies string
-		var addons string
-		var binaries string
-		var layers string
-		var override string
-		err = rows.Scan(&container.Id, &container.Pid, &container.Application.Id, &container.Timestamp, &container.Application.Id, &container.Application.Name, &container.Application.Version, &container.Application.Branch, &container.Application.Commit, &container.Application.Release, &container.Application.Origin, &container.Application.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &layers, &container.Application.Config, &override)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationContainers: %s", err)
-			return
+		container, scanErr := scanContainer(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("failed to scan container row for app %s: %w", application.Id, scanErr)
 		}
-
-		container.Application.DesktopEntries = strings.Split(desktopEntries, ",")
-		container.Application.Dependencies, err = s.ParseDependencies(dependencies)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationContainers: %s", err)
-			return
-		}
-		container.Application.Addons = strings.Split(addons, ",")
-		container.Application.Binaries = strings.Split(binaries, ",")
-		container.Application.Layers = strings.Split(layers, ",")
-		container.Application.Override = ParseOverride(override)
+		container.Application = application
 		containers = append(containers, container)
 	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating container rows for app %s: %w", application.Id, err)
+	}
 
-	return
-
+	return containers, nil
 }
 
 // RemoveApplicationById removes an application based on the ID provided as a parameter.
@@ -514,4 +514,23 @@ func (s *Store) ParseDependencies(dependencies string) (deps []types.Dependency,
 	}
 
 	return
+}
+
+// scanContainer scans a row into a Container struct (without full Application details initially).
+func scanContainer(rows *sql.Rows) (types.Container, error) {
+	var container types.Container
+	err := rows.Scan(
+		&container.Id, &container.Pid, &container.Application.Id,
+		&container.Timestamp, &container.StatePath, &container.HostExecPid,
+		&container.HostExecSocketPath,
+	)
+	return container, err
+}
+
+// Close closes the database connection.
+func (s *Store) Close() error {
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,41 @@ import (
 )
 
 var verbose = false
+
+const cpakInContainerPath = "/usr/local/bin/cpak"
+const hostExecShimPath = "/usr/local/bin/cpak-hostexec-shim"
+const hostExecShimScriptContent = `#!/bin/sh
+# This script acts as a shim to call cpak hostexec-client
+set -e
+
+# The command name this shim was called as (e.g., xdg-open)
+CALLED_AS=$(basename "$0")
+
+# Get the hostexec socket path from the environment variable
+SOCKET_PATH="$CPAK_HOSTEXEC_SOCKET"
+if [ -z "$SOCKET_PATH" ]; then
+    echo "SPAWN SHIM ERROR: CPAK_HOSTEXEC_SOCKET environment variable not set." >&2
+    exit 1
+fi
+if [ ! -S "$SOCKET_PATH" ]; then
+	echo "SPAWN SHIM ERROR: Socket path $SOCKET_PATH does not exist or is not a socket." >&2
+	# exit 1 # Maybe don't exit, let hostexec-client fail?
+fi
+
+
+# The actual cpak binary mounted inside the container
+CPAK_BINARY="{{.CpakBinaryPath}}" # Template variable for the path
+
+# Check if the cpak binary exists
+if [ ! -x "$CPAK_BINARY" ]; then
+	echo "SPAWN SHIM ERROR: cpak binary not found or not executable at $CPAK_BINARY" >&2
+	exit 1
+fi
+
+# Execute the host command via the hostexec-client subcommand
+# Pass the original command name ($CALLED_AS) and all arguments ($@)
+exec "$CPAK_BINARY" hostexec-client --socket-path "$SOCKET_PATH" -- "$CALLED_AS" "$@"
+`
 
 func NewSpawnCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -62,43 +98,62 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 
 	userUid, err := cmd.Flags().GetInt("user-uid")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("user-uid flag", err)
 	}
 	appId, err := cmd.Flags().GetString("app-id")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("app-id flag", err)
 	}
 	containerId, err := cmd.Flags().GetString("container-id")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("container-id flag", err)
 	}
-	rootFs, err := cmd.Flags().GetString("rootfs")
+	rootFs, err := cmd.Flags().GetString("rootfs") // This is the HOST path to the rootfs mount point
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("rootfs flag", err)
 	}
 	envVars, err := cmd.Flags().GetStringArray("env")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("env flag", err)
 	}
 	layers, err := cmd.Flags().GetString("layers")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("layers flag", err)
 	}
 	stateDir, err := cmd.Flags().GetString("state-dir")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("state-dir flag", err)
 	}
 	layersDir, err := cmd.Flags().GetString("layers-dir")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("layers-dir flag", err)
 	}
 	overrideMounts, err := cmd.Flags().GetStringArray("mount-overrides")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("mount-overrides flag", err)
 	}
 	extraLinks, err := cmd.Flags().GetStringArray("extra-links")
 	if err != nil {
-		return spawnError("", err)
+		return spawnError("extra-links flag", err)
+	}
+
+	var hostExecSocketPath string
+	var allowedHostCmdsStr string
+	finalEnvVarsForContainer := []string{}
+	for _, envVar := range envVars {
+		if strings.HasPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=") {
+			fmt.Println("Found hostexec socket path in env:", envVar)
+			hostExecSocketPath = strings.TrimPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=")
+			finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
+		} else if strings.HasPrefix(envVar, "CPAK_ALLOWED_HOST_CMDS=") {
+			allowedHostCmdsStr = strings.TrimPrefix(envVar, "CPAK_ALLOWED_HOST_CMDS=")
+		} else {
+			finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
+		}
+	}
+	allowedHostCmds := []string{}
+	if allowedHostCmdsStr != "" {
+		allowedHostCmds = strings.Split(allowedHostCmdsStr, ":")
 	}
 
 	spawnVerbose("Remounting as private")
@@ -128,6 +183,17 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
+	if len(allowedHostCmds) > 0 && hostExecSocketPath != "" {
+		fmt.Println("----------------------------------------Creating hostexec shim and symlinks")
+		err = createHostExecShimAndLinks(rootFs, allowedHostCmds)
+		if err != nil {
+			return err
+		}
+		spawnVerbose("Hostexec shim script and symlinks created.")
+	} else {
+		spawnVerbose("Skipping hostexec shim creation (no allowed commands or socket path).")
+	}
+
 	err = pivotRoot(rootFs)
 	if err != nil {
 		return err
@@ -146,8 +212,8 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	// 	return err
 	// }
 
-	envVars = setEnvironmentVariables(containerId, rootFs, envVars, stateDir, layersDir, layers)
-	err = startSleepProcess(args, envVars)
+	_envVars := setEnvironmentVariables(containerId, rootFs, finalEnvVarsForContainer, stateDir, layersDir, layers)
+	err = startSleepProcess(args, _envVars)
 	if err != nil {
 		return err
 	}
@@ -422,6 +488,12 @@ func startSleepProcess(cmdArgs []string, envVars []string) error {
 	c.Stderr = os.Stderr
 	c.Env = envv
 
+	for _, env := range envv {
+		if strings.HasPrefix(env, "CPAK_") {
+			spawnVerbose("CPAK env var found:", env)
+		}
+	}
+
 	err = c.Start()
 	if err != nil {
 		return spawnError("start", err)
@@ -430,6 +502,79 @@ func startSleepProcess(cmdArgs []string, envVars []string) error {
 	err = c.Process.Release()
 	if err != nil {
 		return spawnError("release", err)
+	}
+
+	return nil
+}
+
+// createHostExecShimAndLinks creates the shim script and symlinks for allowed commands.
+func createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {
+	shimFilePath := filepath.Join(rootFs, strings.TrimPrefix(hostExecShimPath, "/"))
+	shimDir := filepath.Dir(shimFilePath)
+
+	spawnVerbose("Creating hostexec shim directory:", shimDir)
+	if err := os.MkdirAll(shimDir, 0755); err != nil && !os.IsExist(err) {
+		return spawnError("create shim dir "+shimDir, err)
+	}
+
+	// Prepare the template
+	tmpl, err := template.New("shim").Parse(hostExecShimScriptContent)
+	if err != nil {
+		return spawnError("parse shim template", err)
+	}
+
+	// Create and write the shim file
+	shimFile, err := os.Create(shimFilePath)
+	if err != nil {
+		return spawnError("create shim file "+shimFilePath, err)
+	}
+
+	// Data for the template
+	templateData := struct{ CpakBinaryPath string }{
+		CpakBinaryPath: cpakInContainerPath,
+	}
+
+	// Execute the template
+	err = tmpl.Execute(shimFile, templateData)
+	if err != nil {
+		shimFile.Close()
+		return spawnError("write shim file "+shimFilePath, err)
+	}
+	shimFile.Close()
+
+	// Make the shim executable
+	err = os.Chmod(shimFilePath, 0755)
+	if err != nil {
+		return spawnError("chmod shim file "+shimFilePath, err)
+	}
+	spawnVerbose("Hostexec shim script created at", shimFilePath)
+
+	// Create symlinks for allowed commands
+	linkTargetDir := filepath.Join(rootFs, "/usr/bin")
+	spawnVerbose("Creating symlink directory:", linkTargetDir)
+	if err := os.MkdirAll(linkTargetDir, 0755); err != nil && !os.IsExist(err) {
+		return spawnError("create link target dir "+linkTargetDir, err)
+	}
+
+	for _, cmdName := range allowedCmds {
+		if cmdName == "" {
+			continue
+		}
+		linkPath := filepath.Join(linkTargetDir, cmdName)
+		// Calculate relative path from link location to shim script
+		relShimPath, err := filepath.Rel(linkTargetDir, shimFilePath)
+		if err != nil {
+			// Should not happen if paths are constructed correctly
+			return spawnError(fmt.Sprintf("calculate relative path for shim from %s", linkTargetDir), err)
+		}
+
+		spawnVerbose("Creating symlink:", linkPath, "->", relShimPath)
+		// Remove existing file/link if present before creating new one
+		_ = os.Remove(linkPath)
+		err = os.Symlink(relShimPath, linkPath)
+		if err != nil {
+			return spawnError(fmt.Sprintf("create symlink %s -> %s", linkPath, relShimPath), err)
+		}
 	}
 
 	return nil
