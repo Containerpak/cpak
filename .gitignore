@@ -2,9 +2,9 @@
 /_cpak
 /vendor/
 podman-launcher
-rootlesskit
-rootlesskit.tar.gz
+/tools/rootlesskit
+/tools/rootlesskit.tar.gz
 go.work
 go.work.sum
-tools/host-spawn
-tools/busybox
+/tools/host-spawn
+/tools/busybox
