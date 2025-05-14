@@ -307,10 +307,8 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 	uid := fmt.Sprintf("%d", os.Getuid())
 	gid := fmt.Sprintf("%d", os.Getgid())
 
-	//nsenterBin := filepath.Join(c.Options.BinPath, "nsenter")
-	// TODO: use from busybox
-	nsenterBin := "nsenter"
 	cmds := []string{
+		"nsenter",
 		"-m",
 		"-u",
 		"-U",
@@ -341,7 +339,8 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.Id)
 	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 
-	cmd := exec.Command(nsenterBin, cmds...)
+	cmd := exec.Command(c.Options.BusyboxBinPath, cmds...)
+	fmt.Println("Executing command:", cmd.String())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

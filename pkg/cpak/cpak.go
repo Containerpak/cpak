@@ -100,6 +100,7 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 	options.StoreContainersPath = filepath.Join(options.StorePath, "containers")
 	options.StoreStatesPath = filepath.Join(options.StorePath, "states")
 	options.RotlesskitBinPath = filepath.Join(options.BinPath, "rootlesskit")
+	options.BusyboxBinPath = filepath.Join(options.BinPath, "busybox")
 	options.HostSpawnBinPath = filepath.Join(options.BinPath, "host-spawn")
 
 	// Create the necessary directories if they don't exist
