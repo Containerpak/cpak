@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
@@ -33,7 +34,6 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	if err != nil {
 		return
 	}
-
 	defer store.Close()
 
 	// Check if a container already exists for the given application
@@ -42,7 +42,6 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 		return
 	}
 
-	container.Application = app
 	config := &v1.ConfigFile{}
 	err = json.Unmarshal([]byte(app.Config), config)
 	if err != nil {
@@ -52,19 +51,19 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	// If a container already exists, check if it is running
 	if len(containers) > 0 {
 		container = containers[0]
-		fmt.Println("Container found:", container.Id)
+		fmt.Println("Container found:", container.CpakId)
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		container.Pid, err = getPidFromEnvContainerId(container.Id)
+		container.Pid, err = getPidFromEnvContainerId(container.CpakId)
 		if err != nil || container.Pid == 0 {
-			fmt.Println("Container not running, cleaning it up:", container.Id)
+			fmt.Println("Container not running, cleaning it up:", container.CpakId)
 			err = c.CleanupContainer(container)
 			if err != nil {
 				return
 			}
 		} else {
-			fmt.Println("Container already running, attaching to it:", container.Id)
+			fmt.Println("Container already running, attaching to it:", container.CpakId)
 			return
 		}
 	}
@@ -72,45 +71,55 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	// If no container exists, create a new one and store it
 	// Note: the container's pid is not set here, it will be set when the
 	// container is started by the StartContainer function
-	container.Id, container.StatePath, err = c.CreateContainer()
+	newContainerCpakId := uuid.New().String()
+	statePath, err := c.GetInStoreDirMkdir("states", newContainerCpakId)
 	if err != nil {
 		return
 	}
 
-	// Store the new container definition (with hostexec info) in the DB
-	err = store.NewContainer(container)
+	_, err = c.GetInStoreDirMkdir("containers", newContainerCpakId, "rootfs")
 	if err != nil {
-		stopHostExecServer(container.HostExecPid)
-		_ = os.Remove(container.HostExecSocketPath)
-		_ = os.RemoveAll(c.GetInStoreDir("containers", container.Id))
-		_ = os.RemoveAll(container.StatePath)
+		os.RemoveAll(statePath)
 		return
 	}
 
-	// Determine socket path (use state dir)
+	container = types.Container{
+		CpakId:            newContainerCpakId,
+		ApplicationCpakId: app.CpakId,
+		StatePath:         statePath,
+		CreateTimestamp:   time.Now(),
+	}
+
 	container.HostExecSocketPath = filepath.Join(container.StatePath, "hostexec.sock")
 
 	// Start the hostexec server process
 	container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, override.AllowedHostCommands)
 	if err != nil {
 		fmt.Println("Error starting hostexec server, cleaning up partially created container...")
-		stopHostExecServer(container.HostExecPid)
-		_ = os.Remove(container.HostExecSocketPath)
-		_ = os.RemoveAll(c.GetInStoreDir("containers", container.Id))
-		_ = os.RemoveAll(container.StatePath)
+		os.Remove(container.HostExecSocketPath)
+		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+		os.RemoveAll(container.StatePath)
 		return types.Container{}, fmt.Errorf("failed to start hostexec server: %w", err)
 	}
 	fmt.Println("HostExec server started (PID:", container.HostExecPid, "Socket:", container.HostExecSocketPath, ")")
 
-	fmt.Println("Container created:", container.Id)
-
-	// Start the container and return the pid
-	_, container.Pid, err = c.StartContainer(container, config, override)
+	err = store.NewContainer(container)
 	if err != nil {
-		return
+		stopHostExecServer(container.HostExecPid)
+		os.Remove(container.HostExecSocketPath)
+		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+		os.RemoveAll(container.StatePath)
+		return types.Container{}, err
+	}
+	fmt.Println("Container created:", container.CpakId)
+
+	_, container.Pid, err = c.StartContainer(container, app, config, override)
+	if err != nil {
+		c.CleanupContainer(container)
+		return types.Container{}, err
 	}
 
-	fmt.Println("Container prepared:", container.Id)
+	fmt.Println("Container prepared:", container.CpakId)
 	return
 }
 
@@ -120,9 +129,9 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 // responsible for setting up the pivot root, mounting the layers and
 // starting the init process, this via the rootlesskit binary which creates
 // a new namespace for the container.
-func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, err error) {
+func (c *Cpak) StartContainer(container types.Container, app types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, err error) {
 	layers := ""
-	for _, layer := range container.Application.Layers {
+	for _, layer := range app.ParsedLayers {
 		layers += layer + "|"
 	}
 
@@ -135,7 +144,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 
 	uid := fmt.Sprintf("%d", os.Getuid())
 	layersPath := c.GetInStoreDir("layers")
-	rootfs = c.GetInStoreDir("containers", container.Id, "rootfs")
+	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
 	overrideMounts := GetOverrideMounts(override)
 	cmds := []string{}
 	if isVerbose {
@@ -155,8 +164,8 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 		cmds = append(cmds, "--verbose")
 	}
 	cmds = append(cmds, "--user-uid", uid)
-	cmds = append(cmds, "--app-id", container.Application.Id)
-	cmds = append(cmds, "--container-id", container.Id)
+	cmds = append(cmds, "--app-id", app.CpakId)
+	cmds = append(cmds, "--container-id", container.CpakId)
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
@@ -170,22 +179,22 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 	if container.HostExecSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 	} else {
-		log.Printf("Warning: HostExec socket path is empty for container %s during start.", container.Id)
+		log.Printf("Warning: HostExec socket path is empty for container %s during start.", container.CpakId)
 	}
 	// Join allowed commands into a single string (e.g., colon-separated) for the env var
 	allowedCmdsStr := strings.Join(override.AllowedHostCommands, ":")
 	cmds = append(cmds, "--env", "CPAK_ALLOWED_HOST_CMDS=xdg-open:"+allowedCmdsStr)
 
-	for _, env := range config.Config.Env {
-		cmds = append(cmds, "--env", env)
+	for _, envVar := range config.Config.Env {
+		cmds = append(cmds, "--env", envVar)
 	}
 
-	for _, override := range overrideMounts {
-		cmds = append(cmds, "--mount-overrides", override)
+	for _, ovr := range overrideMounts {
+		cmds = append(cmds, "--mount-overrides", ovr)
 	}
 
 	// following is where dependencies and addons are exported
-	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, container.Application.Id)+":$PATH")
+	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, app.CpakId)+":$PATH")
 
 	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)
 	cmd.Stdin = os.Stdin
@@ -204,7 +213,7 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 
 	// The pid of the container is the pid of the init process
 	// and it is stored so that we can attach to it later
-	pid, err = getPidFromEnvContainerId(container.Id)
+	pid, err = getPidFromEnvContainerId(container.CpakId)
 	if err != nil {
 		return
 	}
@@ -212,21 +221,22 @@ func (c *Cpak) StartContainer(container types.Container, config *v1.ConfigFile, 
 	if err != nil {
 		return
 	}
+	defer store.Close()
 
-	err = store.SetContainerPid(container.Id, pid)
+	err = store.SetContainerPid(container.CpakId, pid)
 	if err != nil {
 		return
 	}
-
 	return
 }
 
 // StopContainer stops the containers related to the given application.
-func (c *Cpak) StopContainer(app types.Application, override types.Override) (err error) {
+func (c *Cpak) StopContainer(app types.Application) (err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
 	}
+	defer store.Close()
 
 	containers, err := store.GetApplicationContainers(app)
 	if err != nil {
@@ -234,17 +244,19 @@ func (c *Cpak) StopContainer(app types.Application, override types.Override) (er
 	}
 
 	for _, container := range containers {
-		fmt.Println("Stopping container:", container.Pid)
-		syscall.Kill(container.Pid, syscall.SIGTERM)
-		err = c.CleanupContainer(container)
-		if err != nil {
-			return
+		currentPid := container.Pid
+		if currentPid == 0 {
+			currentPid, _ = getPidFromEnvContainerId(container.CpakId)
 		}
-
-		// Stop the associated hostexec server
-		stopHostExecServer(container.HostExecPid)
+		if currentPid != 0 {
+			fmt.Println("Stopping container process:", currentPid)
+			syscall.Kill(currentPid, syscall.SIGTERM)
+		}
+		cleanupErr := c.CleanupContainer(container)
+		if cleanupErr != nil {
+			fmt.Printf("Warning: error during container cleanup %s: %v\n", container.CpakId, cleanupErr)
+		}
 	}
-
 	return
 }
 
@@ -255,53 +267,32 @@ func (c *Cpak) Stop(origin, version, branch, commit, release string) (err error)
 	if err != nil {
 		return
 	}
+	defer store.Close()
 
 	app, err := store.GetApplicationByOrigin(origin, version, branch, commit, release)
 	if err != nil {
 		return
 	}
-
-	override, err := LoadOverride(app.Origin, app.Version)
-	if err != nil {
-		override = app.Override
+	if app.CpakId == "" {
+		return fmt.Errorf("application not found for stopping: %s", origin)
 	}
 
-	err = c.StopContainer(app, override)
+	err = c.StopContainer(app)
 	if err != nil {
 		return
 	}
-
-	return
-}
-
-type ContainerCreateOptions struct {
-	Entrypoint string
-	Env        []string
-	Volume     []string
-}
-
-func (c *Cpak) CreateContainer() (containerId string, statePath string, err error) {
-	containerId = uuid.New().String()
-
-	_, err = c.GetInStoreDirMkdir("containers", containerId, "rootfs")
-	if err != nil {
-		return
-	}
-
-	statePath, err = c.GetInStoreDirMkdir("states", containerId)
-	if err != nil {
-		return
-	}
-
 	return
 }
 
 // ExecInContainer uses nsenter to enter the pid namespace of the given
 // container and execute the given command.
-func (c *Cpak) ExecInContainer(override types.Override, container types.Container, command []string) (err error) {
-	pid, err := getPidFromEnvContainerId(container.Id)
-	if err != nil {
-		return
+func (c *Cpak) ExecInContainer(app types.Application, container types.Container, command []string) (err error) {
+	pidToEnter := container.Pid
+	if pidToEnter == 0 {
+		pidToEnter, err = getPidFromEnvContainerId(container.CpakId)
+		if err != nil {
+			return fmt.Errorf("container process %s not found: %w", container.CpakId, err)
+		}
 	}
 
 	uid := fmt.Sprintf("%d", os.Getuid())
@@ -319,11 +310,11 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 		// "-S", strconv.FormatInt(int64(os.Getuid()), 10),
 		// "-G", strconv.FormatInt(int64(os.Getgid()), 10),
 		"-t",
-		fmt.Sprintf("%d", pid),
+		fmt.Sprintf("%d", pidToEnter),
 		"--",
 	}
 
-	if !override.AsRoot {
+	if !app.ParsedOverride.AsRoot {
 		cmds = append(
 			cmds,
 			"unshare",
@@ -336,7 +327,7 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 	cmds = append(cmds, command...)
 
 	envVars := os.Environ()
-	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.Id)
+	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 
 	cmd := exec.Command(c.Options.BusyboxBinPath, cmds...)
@@ -356,28 +347,24 @@ func (c *Cpak) ExecInContainer(override types.Override, container types.Containe
 		}
 		return
 	}
-
 	return
 }
 
 // getPidFromEnvContainerId returns the pid of the process with the given containerId
 // by looking at the environment variables of all the processes.
-func getPidFromEnvContainerId(containerId string) (pid int, err error) {
-	env := "CPAK_CONTAINER_ID=" + containerId
+func getPidFromEnvContainerId(containerCpakId string) (pid int, err error) {
+	env := "CPAK_CONTAINER_ID=" + containerCpakId
 	pids, err := tools.GetPidFromEnv(env)
 	if err != nil {
 		return
 	}
-
 	if isVerbose {
 		fmt.Println("Pids found:", pids)
 	}
-
 	if len(pids) == 0 {
-		err = fmt.Errorf("no process with containerId %s found", containerId)
+		err = fmt.Errorf("no process with containerId %s found", containerCpakId)
 		return
 	}
-
 	return pids[0], nil
 }
 
@@ -389,19 +376,19 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	// we don't care about the error here, we just want to make sure that
 	// the container filesystem is getting deleted
 	os.RemoveAll(container.StatePath)
-	os.RemoveAll(c.GetInStoreDir("containers", container.Id))
-	os.RemoveAll(c.GetInStoreDir("states", container.Id))
+	os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+	os.RemoveAll(c.GetInStoreDir("states", container.CpakId))
 
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
 	}
+	defer store.Close()
 
-	err = store.RemoveContainer(container.Id)
+	err = store.RemoveContainerByCpakId(container.CpakId)
 	if err != nil {
 		return
 	}
-
 	return
 }
 
@@ -410,40 +397,44 @@ func getCpakBinary() (cpakBinary string, err error) {
 	cpakBinary = os.Args[0]
 	// if the cpak binary is not a full path, we need to find it
 	if !filepath.IsAbs(cpakBinary) {
-		// first we check in the user's home directory
-		cpakBinary = filepath.Join(os.Getenv("HOME"), ".local", "bin", "cpak")
-		// if it is not there, we check in the system's bin directory using
-		// the LookPath function
-		if _, err = os.Stat(cpakBinary); os.IsNotExist(err) {
-			cpakBinary, err = exec.LookPath("cpak")
-			if err != nil {
-				return
+		cpakBinaryExe, findErr := exec.LookPath("cpak")
+		if findErr == nil {
+			cpakBinary = cpakBinaryExe
+		} else {
+			homeDir, homeErr := os.UserHomeDir()
+			if homeErr == nil {
+				userPath := filepath.Join(homeDir, ".local", "bin", "cpak")
+				if _, statErr := os.Stat(userPath); statErr == nil {
+					cpakBinary = userPath
+				} else {
+					return "", fmt.Errorf("cpak binary not found in PATH or ~/.local/bin: %v, %v", findErr, statErr)
+				}
+			} else {
+				return "", fmt.Errorf("cpak binary not found in PATH and UserHomeDir failed: %v, %v", findErr, homeErr)
 			}
 		}
 	}
-
 	return
 }
 
 // getNested checks if the /tmp/.cpak file exists and returns the parent
 // application id from it.
-func getNested() (parentAppId string, nested bool) {
+func getNested() (parentAppCpakId string, nested bool) {
 	nested = false
-	parentAppId = ""
+	parentAppCpakId = ""
 	if _, err := os.Stat("/tmp/.cpak"); err == nil {
 		nested = true
-		file, err := os.Open("/tmp/.cpak")
-		if err != nil {
-			return
+		file, errOpen := os.Open("/tmp/.cpak")
+		if errOpen != nil {
+			return parentAppCpakId, true
 		}
 		defer file.Close()
 
-		_, err = fmt.Fscanln(file, &parentAppId)
-		if err != nil {
-			return
+		_, errScan := fmt.Fscanln(file, &parentAppCpakId)
+		if errScan != nil {
+			return parentAppCpakId, true
 		}
 	}
-
 	return
 }
 
@@ -459,10 +450,9 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 		"hostexec-server",
 		"--socket-path", socketPath,
 	}
-	// Add allowed commands safely
-	for _, cmd := range allowedCmds {
-		if cmd != "" {
-			args = append(args, "--allowed-cmd", cmd)
+	for _, cmdName := range allowedCmds {
+		if cmdName != "" {
+			args = append(args, "--allowed-cmd", cmdName)
 		}
 	}
 
@@ -489,7 +479,7 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 	}
 
 	fmt.Printf("Starting hostexec server: %s %v\n", cpakBinary, args)
-	err = cmd.Start() // Start the process, don't wait
+	err = cmd.Start()
 	if err != nil {
 		logF.Close()
 		return 0, fmt.Errorf("failed to start hostexec server process: %w", err)
@@ -509,7 +499,6 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 		logF.Close()
 		return 0, fmt.Errorf("failed to release hostexec server process %d: %w", pid, err)
 	}
-
 	return pid, nil
 }
 

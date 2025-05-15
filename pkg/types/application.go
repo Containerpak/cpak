@@ -1,13 +1,16 @@
 package types
 
-import "time"
+import (
+	"time"
 
-// Application is the struct that represents an application in the store
-// and in the cpak context.
+	"gorm.io/gorm"
+)
+
 type Application struct {
-	// Id is the unique identifier of the application, it is expected to be
+	gorm.Model
+	// CpakId is the unique identifier of the application, it is expected to be
 	// unique across all the applications in the store.
-	Id string
+	CpakId string `gorm:"uniqueIndex;not null"`
 
 	// Name is the name of the application.
 	Name string
@@ -27,35 +30,53 @@ type Application struct {
 	// Origin is the origin of the application. It is expected to be unique
 	// for each application's version, and should be a git repository URL
 	// without the protocol and the trailing .git.
-	Origin string
+	Origin string `gorm:"index"`
 
-	// Timestamp is the timestamp of the application creation in the store.
-	Timestamp time.Time
+	// InstallTimestamp is the timestamp of the application creation in the store.
+	InstallTimestamp time.Time
 
 	// Binaries is the list of exported binaries of the application.
-	Binaries []string
+	Binaries string
 
 	// DesktopEntries is the list of exported desktop entries of the application.
-	DesktopEntries []string
-
-	// Dependencies is the list of cpak dependencies needed by the application
-	// to work properly.
-	Dependencies []Dependency
+	DesktopEntries string
 
 	// Addons is the list of additional applications which it supports.
-	Addons []string
+	Addons string
 
 	// Layers is the list of layers of the application.
-	Layers []string
+	Layers string
 
 	// Config is the configuration of the application.
 	Config string
 
-	// Override is a set of permissions
-	Override Override
+	// Containers is the list of containers created for the application.
+	Containers []Container `gorm:"foreignKey:ApplicationCpakId;references:CpakId"`
+
+	// ParsedBinaries is the list of exported binaries of the application.
+	ParsedBinaries []string `gorm:"-"`
+
+	// ParsedDesktopEntries is the list of exported desktop entries of the application.
+	ParsedDesktopEntries []string `gorm:"-"`
+
+	// ParsedDependencies is the list of cpak dependencies needed by the application
+	// to work properly.
+	ParsedDependencies []Dependency `gorm:"-"`
+
+	// ParsedAddons is the list of additional applications which it supports.
+	ParsedAddons []string `gorm:"-"`
+
+	// ParsedLayers is the list of layers of the application.
+	ParsedLayers []string `gorm:"-"`
+
+	// ParsedOverride is a set of permissions
+	ParsedOverride Override `gorm:"-"`
+
+	// Raw fields
+	DependenciesRaw string
+	OverrideRaw     string
 }
 
-// SourceType returns the type of the application's source.
 func (a Application) SourceType() string {
 	switch {
 	case a.Branch != "":
@@ -68,7 +89,6 @@ func (a Application) SourceType() string {
 	return "unknown"
 }
 
-// Dependency is the struct that represents a dependency of an application.
 type Dependency struct {
 	Id      string
 	Origin  string

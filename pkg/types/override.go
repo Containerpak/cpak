@@ -28,3 +28,29 @@ type Override struct {
 
 	AllowedHostCommands []string `json:"allowedHostCommands"`
 }
+
+func NewOverride() Override {
+	return Override{
+		SocketX11:           true,
+		SocketWayland:       true,
+		SocketPulseAudio:    true,
+		SocketSessionBus:    true,
+		SocketSystemBus:     true,
+		SocketSshAgent:      false,
+		SocketCups:          true,
+		SocketGpgAgent:      false,
+		DeviceDri:           true,
+		DeviceKvm:           true,
+		DeviceShm:           true,
+		DeviceAll:           false,
+		FsHost:              false,
+		FsHostEtc:           false,
+		FsHostHome:          true,
+		FsExtra:             []string{},
+		Env:                 []string{},
+		Network:             true,
+		Process:             false,
+		AsRoot:              false,
+		AllowedHostCommands: []string{},
+	}
+}

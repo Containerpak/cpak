@@ -1,536 +1,338 @@
 package cpak
 
 import (
-	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type Store struct {
-	db *sql.DB
+	DB *gorm.DB
 }
 
-// NewStore creates a new Store instance.
 func NewStore(dbPath string) (s *Store, err error) {
-	dbPath = dbPath + "/cpak.db"
-	db, err := sql.Open("sqlite3", dbPath)
+	fullDbPath := dbPath + "/cpak.db"
+	db, err := gorm.Open(sqlite.Open(fullDbPath), &gorm.Config{})
 	if err != nil {
-		return
+		return nil, fmt.Errorf("failed to connect database: %w", err)
 	}
 
-	s = &Store{db: db}
+	s = &Store{DB: db}
 
-	err = s.initDb(dbPath)
+	err = s.migrate()
 	if err != nil {
-		return
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return
+	return s, nil
 }
 
-// isDbInitialized checks if the database is initialized or not.
-func (s *Store) isDbInitialized() bool {
-	rows, err := s.db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name='Application'")
+func (s *Store) migrate() error {
+	err := s.DB.AutoMigrate(&types.Application{}, &types.Container{})
 	if err != nil {
-		return false
+		return fmt.Errorf("gorm automigrate: %w", err)
 	}
-	defer rows.Close()
-
-	return rows.Next()
-}
-
-// initDb initializes the database if not already done.
-func (s *Store) initDb(dbPath string) (err error) {
-	if s.isDbInitialized() {
-		return
-	}
-
-	// Application table
-	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS Application (
-			Id TEXT PRIMARY KEY UNIQUE,
-			Name TEXT,
-			Version TEXT,
-			Branch TEXT,
-			"Commit" TEXT,
-			Release TEXT,
-			Origin TEXT,
-			Timestamp DATETIME,
-			Binaries TEXT,
-			DesktopEntries TEXT,
-			Dependencies TEXT,
-			Addons TEXT,
-			Layers TEXT,
-			Config TEXT,
-			Override TEXT
-		)
-	`)
-
-	if err != nil {
-		return fmt.Errorf("initDb: %s", err)
-	}
-
-	// Container table
-	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS Container (
-			Id TEXT PRIMARY KEY,
-			Pid INTEGER,
-			ApplicationId TEXT,
-			Timestamp DATETIME,
-			StatePath TEXT,
-			HostExecPid INTEGER,
-			HostExecSocketPath TEXT,
-			FOREIGN KEY(ApplicationId) REFERENCES Application(Id)
-		)
-	`)
-
-	if err != nil {
-		return fmt.Errorf("initDb: %s", err)
-	}
-
 	return nil
 }
 
-// NewApplication inserts a new application into the store.
+func (s *Store) serializeApplicationFields(app *types.Application) {
+	app.Binaries = strings.Join(app.ParsedBinaries, ",")
+	app.DesktopEntries = strings.Join(app.ParsedDesktopEntries, ",")
+
+	depIds := []string{}
+	for _, dep := range app.ParsedDependencies {
+		depIds = append(depIds, dep.Id)
+	}
+	app.DependenciesRaw = strings.Join(depIds, ",")
+
+	app.Addons = strings.Join(app.ParsedAddons, ",")
+	app.Layers = strings.Join(app.ParsedLayers, ",")
+
+	defaultOverride := types.NewOverride()
+	if !reflect.DeepEqual(app.ParsedOverride, defaultOverride) {
+		overrideBytes, _ := json.Marshal(app.ParsedOverride)
+		app.OverrideRaw = string(overrideBytes)
+	} else {
+		app.OverrideRaw = ""
+	}
+}
+
+func (s *Store) parseApplicationFields(app *types.Application) {
+	if app.Binaries != "" {
+		app.ParsedBinaries = strings.Split(app.Binaries, ",")
+	} else {
+		app.ParsedBinaries = []string{}
+	}
+	if app.DesktopEntries != "" {
+		app.ParsedDesktopEntries = strings.Split(app.DesktopEntries, ",")
+	} else {
+		app.ParsedDesktopEntries = []string{}
+	}
+
+	if app.DependenciesRaw != "" {
+		parsedDeps, _ := s.ParseDependenciesString(app.DependenciesRaw)
+		app.ParsedDependencies = parsedDeps
+	} else {
+		app.ParsedDependencies = []types.Dependency{}
+	}
+
+	if app.Addons != "" {
+		app.ParsedAddons = strings.Split(app.Addons, ",")
+	} else {
+		app.ParsedAddons = []string{}
+	}
+	if app.Layers != "" {
+		app.ParsedLayers = strings.Split(app.Layers, ",")
+	} else {
+		app.ParsedLayers = []string{}
+	}
+
+	if app.OverrideRaw != "" && app.OverrideRaw != "{}" {
+		json.Unmarshal([]byte(app.OverrideRaw), &app.ParsedOverride)
+	} else {
+		app.ParsedOverride = types.NewOverride()
+	}
+}
+
 func (s *Store) NewApplication(app types.Application) (err error) {
-	binaries := strings.Join(app.Binaries, ",")
-	desktopEntries := strings.Join(app.DesktopEntries, ",")
-	dependenciesList := []string{}
-	for _, dependency := range app.Dependencies {
-		dependenciesList = append(dependenciesList, dependency.Id)
-	}
-	dependencies := strings.Join(dependenciesList, ",")
-	addons := strings.Join(app.Addons, ",")
-	layers := strings.Join(app.Layers, ",")
-	override := StringOverride(app.Override)
+	s.serializeApplicationFields(&app)
 
-	_, err = s.db.Exec(
-		"INSERT INTO Application VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		app.Id, app.Name, app.Version, app.Branch, app.Commit, app.Release, app.Origin, app.Timestamp, binaries, desktopEntries, dependencies, addons, layers, app.Config, override,
-	)
-	if err != nil {
-		err = fmt.Errorf("NewApplication: %s", err)
-		return
+	if app.CpakId == "" {
+		return errors.New("application CpakId is mandatory")
+	}
+	if app.InstallTimestamp.IsZero() {
+		app.InstallTimestamp = time.Now()
 	}
 
-	return
-}
-
-// NewContainer inserts a new container into the store.
-func (s *Store) NewContainer(container types.Container) (err error) {
-	if container.Id == "" || container.Application.Id == "" {
-		return errors.New("container Id and ApplicationId are required")
+	result := s.DB.Create(&app)
+	if result.Error != nil {
+		return fmt.Errorf("NewApplication %w", result.Error)
 	}
-	if container.Timestamp.IsZero() {
-		container.Timestamp = time.Now()
-	}
-
-	_, err = s.db.Exec(
-		"INSERT INTO Container (Id, Pid, ApplicationId, Timestamp, StatePath, HostExecPid, HostExecSocketPath) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		container.Id, container.Pid, container.Application.Id, container.Timestamp, container.StatePath, container.HostExecPid, container.HostExecSocketPath,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: Container.Id") {
-			return fmt.Errorf("container with Id %s already exists: %w", container.Id, err)
-		}
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-			return fmt.Errorf("application with Id %s does not exist: %w", container.Application.Id, err)
-		}
-		return fmt.Errorf("failed to insert container %s: %w", container.Id, err)
-	}
-
 	return nil
 }
 
-// GetApplications returns all the applications stored in the store.
+func (s *Store) NewContainer(container types.Container) (err error) {
+	if container.CpakId == "" || container.ApplicationCpakId == "" {
+		return errors.New("container CpakId and ApplicationCpakId are required")
+	}
+	if container.CreateTimestamp.IsZero() {
+		container.CreateTimestamp = time.Now()
+	}
+
+	result := s.DB.Create(&container)
+	if result.Error != nil {
+		if strings.Contains(result.Error.Error(), "UNIQUE constraint failed") {
+			return fmt.Errorf("container with CpakId %s already exists: %w", container.CpakId, result.Error)
+		}
+		return fmt.Errorf("failed to insert container %s: %w", container.CpakId, result.Error)
+	}
+	return nil
+}
+
 func (s *Store) GetApplications() (apps []types.Application, err error) {
-	rows, err := s.db.Query("SELECT * FROM Application ORDER BY Timestamp DESC")
-	if err != nil {
-		err = fmt.Errorf("GetApplications: %s", err)
-		return
+	result := s.DB.Order("install_timestamp desc").Find(&apps)
+	if result.Error != nil {
+		return nil, fmt.Errorf("GetApplications %w", result.Error)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var app types.Application
-		var desktopEntries string
-		var dependencies string
-		var addons string
-		var binaries string
-		var layers string
-		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &layers, &app.Config, &override)
-		if err != nil {
-			err = fmt.Errorf("GetApplications: %s", err)
-			return
-		}
-		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.Dependencies, err = s.ParseDependencies(dependencies)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationContainers: %s", err)
-			return
-		}
-		app.Addons = strings.Split(addons, ",")
-		app.Binaries = strings.Split(binaries, ",")
-		app.Layers = strings.Split(layers, ",")
-		app.Override = ParseOverride(override)
-		apps = append(apps, app)
+	for i := range apps {
+		s.parseApplicationFields(&apps[i])
 	}
-
-	return
+	return apps, nil
 }
 
-// GetApplicationById returns an Application instance based on its Id.
-func (s *Store) GetApplicationById(id string) (app types.Application, err error) {
-	rows, err := s.db.Query("SELECT * FROM Application WHERE Id = ?", id)
-	if err != nil {
-		err = fmt.Errorf("GetApplicationById: %s", err)
-		return
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		var desktopEntries string
-		var dependencies string
-		var addons string
-		var binaries string
-		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &app.Config, &override)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationById: %s", err)
-			return
+func (s *Store) GetApplicationByCpakId(cpakId string) (app types.Application, err error) {
+	result := s.DB.Where("cpak_id = ?", cpakId).First(&app)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return app, fmt.Errorf("application with cpak_id %s not found", cpakId)
 		}
-
-		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.Dependencies, err = s.ParseDependencies(dependencies)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationContainers: %s", err)
-			return
-		}
-		app.Addons = strings.Split(addons, ",")
-		app.Binaries = strings.Split(binaries, ",")
-		app.Override = ParseOverride(override)
-	} else {
-		err = errors.New("application not found")
+		return app, fmt.Errorf("GetApplicationByCpakId %w", result.Error)
 	}
-
-	return
+	s.parseApplicationFields(&app)
+	return app, nil
 }
 
-// GetApplicationsByOrigin returns an Application instance based on its Origin.
-// It accepts an optional version parameter.
 func (s *Store) GetApplicationsByOrigin(origin, version string, branch string, commit string, release string) (apps []types.Application, err error) {
-	var rows *sql.Rows
+	query := s.DB.Where("origin = ?", origin)
 	if version != "" {
-		rows, err = s.db.Query("SELECT * FROM Application WHERE Origin = ? AND Version = ? AND Branch = ? AND \"Commit\" = ? AND Release = ? ORDER BY Timestamp DESC", origin, version, branch, commit, release)
-	} else {
-		rows, err = s.db.Query("SELECT * FROM Application WHERE Origin = ? ORDER BY Timestamp DESC", origin)
+		query = query.Where("version = ?", version)
 	}
-	if err != nil {
-		err = fmt.Errorf("GetApplicationsByOrigin: %s", err)
-		return
+	if branch != "" {
+		query = query.Where("branch = ?", branch)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var app types.Application
-		var desktopEntries string
-		var dependencies string
-		var addons string
-		var binaries string
-		var layers string
-		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Branch, &app.Commit, &app.Release, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &layers, &app.Config, &override)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationsByOrigin: %s", err)
-			return
-		}
-
-		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.Dependencies, err = s.ParseDependencies(dependencies)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationContainers: %s", err)
-			return
-		}
-		app.Addons = strings.Split(addons, ",")
-		app.Binaries = strings.Split(binaries, ",")
-		app.Layers = strings.Split(layers, ",")
-		app.Override = ParseOverride(override)
-		apps = append(apps, app)
+	if commit != "" {
+		query = query.Where("commit = ?", commit)
+	}
+	if release != "" {
+		query = query.Where("release = ?", release)
 	}
 
-	return
+	result := query.Order("install_timestamp desc").Find(&apps)
+	if result.Error != nil {
+		return nil, fmt.Errorf("GetApplicationsByOrigin %w", result.Error)
+	}
+	for i := range apps {
+		s.parseApplicationFields(&apps[i])
+	}
+	return apps, nil
 }
 
-// GetApplicationsByAddons returns an Application instance based on its Addons.
-func (s *Store) GetApplicationsByAddons(dependencies []string) (apps []types.Application, err error) {
-	rows, err := s.db.Query("SELECT * FROM Application WHERE Addons = ? ORDER BY Timestamp DESC", strings.Join(dependencies, ","))
-	if err != nil {
-		err = fmt.Errorf("GetApplicationsByAddons: %s", err)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var app types.Application
-		var desktopEntries string
-		var dependencies string
-		var addons string
-		var binaries string
-		var override string
-		err = rows.Scan(&app.Id, &app.Name, &app.Version, &app.Origin, &app.Timestamp, &binaries, &desktopEntries, &dependencies, &addons, &app.Config, &override)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationsByAddons: %s", err)
-			return
-		}
-
-		app.DesktopEntries = strings.Split(desktopEntries, ",")
-		app.Dependencies, err = s.ParseDependencies(dependencies)
-		if err != nil {
-			err = fmt.Errorf("GetApplicationContainers: %s", err)
-			return
-		}
-		app.Addons = strings.Split(addons, ",")
-		app.Binaries = strings.Split(binaries, ",")
-		app.Override = ParseOverride(override)
-		apps = append(apps, app)
-	}
-
-	return
-}
-
-// GetApplicationContainers returns the containers associated with a specific application.
 func (s *Store) GetApplicationContainers(application types.Application) (containers []types.Container, err error) {
-	if application.Id == "" {
-		return nil, errors.New("application ID is required to get containers")
+	if application.CpakId == "" {
+		return nil, errors.New("application CpakId is required to get containers")
 	}
-
-	rows, err := s.db.Query("SELECT * FROM Container WHERE ApplicationId = ? ORDER BY Timestamp DESC", application.Id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query containers for app %s: %w", application.Id, err)
+	result := s.DB.Where("application_cpak_id = ?", application.CpakId).Order("create_timestamp desc").Find(&containers)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to query containers for app %s: %w", application.CpakId, result.Error)
 	}
-	defer rows.Close()
-
-	containers = []types.Container{}
-	for rows.Next() {
-		container, scanErr := scanContainer(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("failed to scan container row for app %s: %w", application.Id, scanErr)
-		}
-		container.Application = application
-		containers = append(containers, container)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating container rows for app %s: %w", application.Id, err)
-	}
-
 	return containers, nil
 }
 
-// RemoveApplicationById removes an application based on the ID provided as a parameter.
-func (s *Store) RemoveApplicationById(id string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Application WHERE Id = ?", id)
-	if err != nil {
-		err = fmt.Errorf("RemoveApplicationById: %s", err)
-		return
+func (s *Store) RemoveApplicationByCpakId(cpakId string) (err error) {
+	result := s.DB.Unscoped().Where("cpak_id = ?", cpakId).Delete(&types.Application{})
+	if result.Error != nil {
+		return fmt.Errorf("RemoveApplicationByCpakId %w", result.Error)
 	}
-
-	return
+	return nil
 }
 
-// RemoveApplicationByOriginAndVersion removes an application based on the Origin and Version provided as parameters.
 func (s *Store) RemoveApplicationByOriginAndVersion(origin, version string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Application WHERE Origin = ? AND Version = ?", origin, version)
-	if err != nil {
-		err = fmt.Errorf("RemoveApplicationByOriginAndVersion: %s", err)
-		return
+	result := s.DB.Unscoped().Where("origin = ? AND version = ?", origin, version).Delete(&types.Application{})
+	if result.Error != nil {
+		return fmt.Errorf("RemoveApplicationByOriginAndVersion %w", result.Error)
 	}
-
-	return
+	return nil
 }
 
-// RemoveApplicationByOriginAndBranch removes an application based on the Origin and Branch provided as parameters.
 func (s *Store) RemoveApplicationByOriginAndBranch(origin, branch string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Application WHERE Origin = ? AND Branch = ?", origin, branch)
-	if err != nil {
-		err = fmt.Errorf("RemoveApplicationByOriginAndBranch: %s", err)
-		return
+	result := s.DB.Unscoped().Where("origin = ? AND branch = ?", origin, branch).Delete(&types.Application{})
+	if result.Error != nil {
+		return fmt.Errorf("RemoveApplicationByOriginAndBranch %w", result.Error)
 	}
-
-	return
+	return nil
 }
 
-// RemoveApplicationByOriginAndCommit removes an application based on the Origin and Commit provided as parameters.
 func (s *Store) RemoveApplicationByOriginAndCommit(origin, commit string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Application WHERE Origin = ? AND \"Commit\" = ?", origin, commit)
-	if err != nil {
-		err = fmt.Errorf("RemoveApplicationByOriginAndCommit: %s", err)
-		return
+	result := s.DB.Unscoped().Where("origin = ? AND commit = ?", origin, commit).Delete(&types.Application{})
+	if result.Error != nil {
+		return fmt.Errorf("RemoveApplicationByOriginAndCommit %w", result.Error)
 	}
-
-	return
+	return nil
 }
 
-// RemoveApplicationByOriginAndRelease removes an application based on the Origin and Release provided as parameters.
 func (s *Store) RemoveApplicationByOriginAndRelease(origin, release string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Application WHERE Origin = ? AND Release = ?", origin, release)
-	if err != nil {
-		err = fmt.Errorf("RemoveApplicationByOriginAndRelease: %s", err)
-		return
+	result := s.DB.Unscoped().Where("origin = ? AND release = ?", origin, release).Delete(&types.Application{})
+	if result.Error != nil {
+		return fmt.Errorf("RemoveApplicationByOriginAndRelease %w", result.Error)
 	}
-
-	return
+	return nil
 }
 
-// RemoveContainerById removes a container based on the ID provided as a parameter.
-func (s *Store) RemoveContainerById(id string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Container WHERE Id = ?", id)
-	if err != nil {
-		err = fmt.Errorf("RemoveContainerById: %s", err)
-		return
+func (s *Store) RemoveContainerByCpakId(cpakId string) (err error) {
+	result := s.DB.Unscoped().Where("cpak_id = ?", cpakId).Delete(&types.Container{})
+	if result.Error != nil {
+		return fmt.Errorf("RemoveContainerByCpakId %w", result.Error)
 	}
-
-	return
+	return nil
 }
 
-// SetContainerPid sets the PID of a container based on the ID provided as a parameter.
-func (s *Store) SetContainerPid(id string, pid int) (err error) {
-	_, err = s.db.Exec("UPDATE Container SET Pid = ? WHERE Id = ?", pid, id)
-	if err != nil {
-		err = fmt.Errorf("SetContainerPid: %s", err)
-		return
+func (s *Store) SetContainerPid(cpakId string, pid int) (err error) {
+	result := s.DB.Model(&types.Container{}).Where("cpak_id = ?", cpakId).Update("pid", pid)
+	if result.Error != nil {
+		return fmt.Errorf("SetContainerPid %w", result.Error)
 	}
-
-	return
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("no container found with cpak_id %s to update PID", cpakId)
+	}
+	return nil
 }
 
-// RemoveContainer removes a container based on the ID provided as a parameter.
 func (s *Store) RemoveContainer(id string) (err error) {
-	_, err = s.db.Exec("DELETE FROM Container WHERE Id = ?", id)
-	if err != nil {
-		err = fmt.Errorf("RemoveContainer: %s", err)
-		return
-	}
-
-	return
+	return s.RemoveContainerByCpakId(id)
 }
 
-// The following funcs are helpers for convenience.
-
-// GetApplicationByOrigin returns an Application instance based on its Origin
-// and Version.
 func (s *Store) GetApplicationByOrigin(origin, version string, branch string, commit string, release string) (app types.Application, err error) {
 	apps, err := s.GetApplicationsByOrigin(origin, version, branch, commit, release)
 	if err != nil {
-		err = fmt.Errorf("GetApplicationByOrigin: %s", err)
-		return
+		return app, fmt.Errorf("GetApplicationByOrigin: %w", err)
 	}
-
 	if len(apps) > 0 {
-		app = apps[0]
+		return apps[0], nil
 	}
-
-	return
+	return app, gorm.ErrRecordNotFound
 }
 
-// GetApplicationByAddons returns an Application instance based on its Addons.
-func (s *Store) GetApplicationByAddons(dependencies []string) (app types.Application, err error) {
-	apps, err := s.GetApplicationsByAddons(dependencies)
-	if err != nil {
-		err = fmt.Errorf("GetApplicationByAddons: %s", err)
-		return
-	}
-
-	if len(apps) > 0 {
-		app = apps[0]
-	}
-
-	return
+func (s *Store) GetApplicationByAddons(addons []string) (app types.Application, err error) {
+	return app, errors.New("GetApplicationByAddons not fully implemented with GORM for CSV field")
 }
 
-// GetApplicationByDesktopEntry returns an Application instance based on its DesktopEntry.
 func (s *Store) GetApplicationByDesktopEntry(desktopEntry string) (app types.Application, err error) {
 	apps, err := s.GetApplications()
 	if err != nil {
-		err = fmt.Errorf("GetApplicationByDesktopEntry: %s", err)
-		return
+		return app, fmt.Errorf("GetApplicationByDesktopEntry (loading apps): %w", err)
 	}
-
-	for _, _app := range apps {
-		for _, _desktopEntry := range _app.DesktopEntries {
-			if _desktopEntry == desktopEntry {
-				app = _app
-				return
+	for _, currentApp := range apps {
+		for _, de := range currentApp.ParsedDesktopEntries {
+			if de == desktopEntry {
+				return currentApp, nil
 			}
 		}
 	}
-
-	return
+	return app, gorm.ErrRecordNotFound
 }
 
-// GetApplicationByBinary returns an Application instance based on its Binary.
 func (s *Store) GetApplicationByBinary(binary string) (app types.Application, err error) {
 	apps, err := s.GetApplications()
 	if err != nil {
-		err = fmt.Errorf("GetApplicationByBinary: %s", err)
-		return
+		return app, fmt.Errorf("GetApplicationByBinary (loading apps): %w", err)
 	}
-
-	for _, _app := range apps {
-		for _, _binary := range _app.Binaries {
-			if _binary == binary {
-				app = _app
-				return
+	for _, currentApp := range apps {
+		for _, bin := range currentApp.ParsedBinaries {
+			if bin == binary {
+				return currentApp, nil
 			}
 		}
 	}
-
-	return
+	return app, gorm.ErrRecordNotFound
 }
 
-// ParseDependencies parses a string of dependencies into a slice of Dependency.
-//
-// Note: dependencies are references to other cpaaks, so they are expected to be
-// the id of the application.
-func (s *Store) ParseDependencies(dependencies string) (deps []types.Dependency, err error) {
-	for _, dependency := range strings.Split(dependencies, ",") {
-		if dependency != "" {
-			app, err := s.GetApplicationById(dependency)
-			if err == nil {
-				deps = append(deps, types.Dependency{
-					Id:      app.Id,
-					Branch:  app.Branch,
-					Release: app.Release,
-					Commit:  app.Commit,
-					Origin:  app.Origin,
-				})
-			}
+func (s *Store) ParseDependenciesString(dependencyCpakIdsString string) (deps []types.Dependency, err error) {
+	if dependencyCpakIdsString == "" {
+		return []types.Dependency{}, nil
+	}
+	ids := strings.Split(dependencyCpakIdsString, ",")
+	for _, idStr := range ids {
+		if idStr == "" {
+			continue
+		}
+		app, getErr := s.GetApplicationByCpakId(idStr)
+		if getErr == nil {
+			deps = append(deps, types.Dependency{
+				Id:      app.CpakId,
+				Branch:  app.Branch,
+				Release: app.Release,
+				Commit:  app.Commit,
+				Origin:  app.Origin,
+			})
 		}
 	}
-
-	return
+	return deps, nil
 }
 
-// scanContainer scans a row into a Container struct (without full Application details initially).
-func scanContainer(rows *sql.Rows) (types.Container, error) {
-	var container types.Container
-	err := rows.Scan(
-		&container.Id, &container.Pid, &container.Application.Id,
-		&container.Timestamp, &container.StatePath, &container.HostExecPid,
-		&container.HostExecSocketPath,
-	)
-	return container, err
-}
-
-// Close closes the database connection.
 func (s *Store) Close() error {
-	if s.db != nil {
-		return s.db.Close()
+	if s.DB != nil {
+		sqlDB, err := s.DB.DB()
+		if err != nil {
+			return fmt.Errorf("failed to get underlying sql.DB for closing: %w", err)
+		}
+		return sqlDB.Close()
 	}
 	return nil
 }

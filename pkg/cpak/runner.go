@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -28,18 +30,16 @@ var isVerbose bool
 // for debugging purposes and handle the error case when the binary is not
 // available, e.g. in shell scripts.
 func (c *Cpak) Run(origin string, version string, branch string, commit string, release string, binary string, verbose bool, extraArgs ...string) (err error) {
-	isVerbose = verbose // setting according to the client
-
-	// if isVerbose is true, we benchmark the container creation
+	isVerbose = verbose
 	var startTime time.Time
 	if verbose {
 		startTime = time.Now()
 	}
 
-	parentAppId, isNested := getNested()
+	parentAppCpakId, isNested := getNested()
 	if isNested {
 		fmt.Println("Running in nested mode...")
-		return c.RunNested(parentAppId, origin, version, branch, commit, release, binary, extraArgs...)
+		return c.RunNested(parentAppCpakId, origin, version, branch, commit, release, binary, extraArgs...)
 	}
 
 	err = c.prepareSocketListener()
@@ -47,72 +47,73 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 		return
 	}
 
-	workDir := os.Getenv("PWD")
-	if !strings.HasPrefix(workDir, "/home") {
-		workDir = "/"
-	}
-
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
 	}
+	defer store.Close()
 
 	app, err := store.GetApplicationByOrigin(origin, version, branch, commit, release)
-	if err != nil || app.Id == "" {
-		return fmt.Errorf("no application found for origin %s and version %s: %s", origin, version, err)
+	if err != nil || app.CpakId == "" {
+		return fmt.Errorf("no application found for origin %s and version/criteria %s: %w", origin, version, err)
 	}
 
 	// Get the override for the given application, we try to load the user
 	// override first, if it does not exist, we use the application's one
-	var override types.Override
-	override, err = LoadOverride(app.Origin, app.Version)
-	if err != nil {
-		override = app.Override
+	var appOverride types.Override
+	userOverride, errLoad := LoadOverride(app.Origin, app.Version)
+	if errLoad == nil && !reflect.DeepEqual(userOverride, types.NewOverride()) { // Consider user override if loaded and not default
+		appOverride = userOverride
+	} else {
+		appOverride = app.ParsedOverride
 	}
 
-	var container types.Container
-	container, err = c.PrepareContainer(app, override)
+	container, err := c.PrepareContainer(app, appOverride)
 	if err != nil {
 		return
 	}
 
-	// here is where we print the benchmark time, implicitly excluding the
-	// time spent in the command execution
 	if verbose {
 		elapsed := time.Since(startTime)
 		fmt.Printf("Container creation took %s\n", elapsed)
 	}
 
 	command := []string{}
+	actualBinaryName := binary
 	if strings.HasPrefix(binary, "@") {
-		command = append(command, binary[1:])
-		command = append(command, extraArgs...)
-		return c.ExecInContainer(override, container, command)
+		actualBinaryName = binary[1:]
 	} else if strings.HasPrefix(binary, "/") {
-		binary = binary[strings.LastIndex(binary, "/")+1:]
+		actualBinaryName = binary[strings.LastIndex(binary, "/")+1:]
 	}
 
-	for _, _binary := range app.Binaries {
-		_binary = _binary[strings.LastIndex(_binary, "/")+1:]
-		if _binary == binary {
-			break
+	foundBinary := false
+	if strings.HasPrefix(binary, "@") { // Unexported binary, assume it exists
+		command = append(command, actualBinaryName)
+		command = append(command, extraArgs...)
+		foundBinary = true
+	} else {
+		for _, b := range app.ParsedBinaries {
+			if filepath.Base(b) == actualBinaryName {
+				command = append(command, b) // Use the full path from manifest if available
+				command = append(command, extraArgs...)
+				foundBinary = true
+				break
+			}
 		}
 	}
 
-	if app.Id == "" {
-		if version == "" {
-			return fmt.Errorf("no application found for origin %s", origin)
+	if !foundBinary {
+		if len(app.ParsedBinaries) == 0 {
+			return fmt.Errorf("no exported binaries found for application %s", app.Name)
 		}
-		return fmt.Errorf("no application found for origin %s and version %s", origin, version)
+		// Fallback or error if specific binary not found among exported ones
+		// For now, let's assume if not unexported and not found, it's an error or use default.
+		fmt.Printf("Warning: binary '%s' not explicitly found in manifest, attempting to run '%s'\n", actualBinaryName, app.ParsedBinaries[0])
+		command = append(command, app.ParsedBinaries[0])
+		command = append(command, extraArgs...)
 	}
 
-	if len(app.Binaries) == 0 {
-		return fmt.Errorf("no exported binaries found for application %s", app.Name)
-	}
-
-	command = append(command, app.Binaries[0])
-	command = append(command, extraArgs...)
-	err = c.ExecInContainer(override, container, command)
+	err = c.ExecInContainer(app, container, command)
 	return
 }
 
@@ -129,17 +130,16 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	if err != nil {
 		return
 	}
-
 	err = cmd.Process.Release()
 	if err != nil {
 		return
 	}
-
 	return
 }
 
 func (c *Cpak) StartSocketListener() (err error) {
 	fmt.Println("Preparing socket listener...")
+	_ = os.Remove("/tmp/cpak.sock")
 
 	// the socket listens on /tmp/cpak.sock
 	listener, err := net.Listen("unix", "/tmp/cpak.sock")
@@ -157,112 +157,125 @@ func (c *Cpak) StartSocketListener() (err error) {
 			continue
 		}
 
-		defer conn.Close()
+		go c.handleSocketConnection(conn)
+	}
+}
 
-		buffer := make([]byte, 1024)
-		var n int
-		n, err = conn.Read(buffer)
-		if err != nil {
+func (c *Cpak) handleSocketConnection(conn net.Conn) {
+	defer conn.Close()
+
+	buffer := make([]byte, 2048)
+	var n int
+	var err error
+	n, err = conn.Read(buffer)
+	if err != nil {
+		if err != io.EOF {
 			fmt.Printf("Error reading request: %v\n", err)
-			return
 		}
+		return
+	}
 
-		// the cpak container sends different requests to the socket, those
-		// can be both JSON encoded or plain text but the first one must always
-		// be a JSON encoded RequestParams struct which is used by the server
-		// to check if the cpak which is running, has the ability to run the
-		// specified nested cpak
-		var params types.RequestParams
-		err = json.Unmarshal(buffer[:n], &params)
+	// the cpak container sends different requests to the socket, those
+	// can be both JSON encoded or plain text but the first one must always
+	// be a JSON encoded RequestParams struct which is used by the server
+	// to check if the cpak which is running, has the ability to run the
+	// specified nested cpak
+	var params types.RequestParams
+	err = json.Unmarshal(buffer[:n], &params)
+	if err != nil {
+		fmt.Printf("Error parsing JSON request: %v\n", err)
+		sendErrorResponse(conn, fmt.Errorf("invalid JSON request"))
+		return
+	}
+
+	fmt.Printf("Received request from the container: %+v\n", params)
+
+	switch params.Action {
+	case "run":
+		fmt.Printf("Running another cpak container in nested mode...\n")
+
+		// we need to create a PTY to run the nested cpak and allow the
+		// bidirectional communication between the host and the container
+		var ptyMaster, ptySlave *os.File
+		ptyMaster, ptySlave, err = pty.Open()
 		if err != nil {
-			fmt.Printf("Error parsing JSON request: %v\n", err)
-			sendErrorResponse(conn, fmt.Errorf("invalid JSON request"))
+			fmt.Println("Error creating PTY:", err)
+			sendErrorResponse(conn, fmt.Errorf("error creating PTY"))
+			return
+		}
+		defer ptyMaster.Close() // Ensure master is closed
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			io.Copy(ptyMaster, conn)
+		}()
+		go func() {
+			io.Copy(conn, ptyMaster)
+		}()
+
+		args := []string{
+			"run",
+			params.Origin,
+		}
+		if params.Version != "" {
+			args = append(args, "--version", params.Version)
+		}
+		if params.Branch != "" {
+			args = append(args, "--branch", params.Branch)
+		}
+		if params.Commit != "" {
+			args = append(args, "--commit", params.Commit)
+		}
+		if params.Release != "" {
+			args = append(args, "--release", params.Release)
+		}
+		args = append(args, "--", params.Binary)
+		args = append(args, params.ExtraArgs...)
+
+		cpakBinary, _ := getCpakBinary()
+		cmd := exec.Command(cpakBinary, args...)
+		cmd.Stdin = ptySlave
+		cmd.Stdout = ptySlave
+		cmd.Stderr = ptySlave
+
+		// set the process group so that the termination signal is
+		// forwarded to the shell process
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+		}
+
+		// start the shell process
+		if err = cmd.Start(); err != nil {
+			fmt.Println("Error starting shell:", err)
+			sendErrorResponse(conn, fmt.Errorf("error starting shell"))
+			ptySlave.Close()
 			return
 		}
 
-		fmt.Printf("Received request from the container: %+v\n", params)
+		cmdExited := make(chan error, 1)
+		go func() {
+			cmdExited <- cmd.Wait()
+			ptySlave.Close() // Close slave after command exits
+		}()
 
-		switch params.Action {
-		case "run":
-			fmt.Printf("Running another cpak container in nested mode...\n")
-
-			// we need to create a PTY to run the nested cpak and allow the
-			// bidirectional communication between the host and the container
-			var ptyMaster, ptySlave *os.File
-			ptyMaster, ptySlave, err = pty.Open()
+		select {
+		case err := <-cmdExited:
 			if err != nil {
-				fmt.Println("Error creating PTY:", err)
-				sendErrorResponse(conn, fmt.Errorf("error creating PTY"))
-				conn.Close()
-				return
+				fmt.Printf("Nested cpak command exited with error: %v\n", err)
+			} else {
+				fmt.Println("Nested cpak command exited successfully.")
 			}
-
-			// set up the channels to communicate with the host
-			go func() {
-				io.Copy(conn, ptyMaster)
-				ptyMaster.Close()
-				conn.Close()
-			}()
-			go func() {
-				io.Copy(ptyMaster, conn)
-				ptyMaster.Close()
-				conn.Close()
-			}()
-
-			// here the effective command is executed in the host to run the
-			// requested nested cpak container
-			args := []string{
-				"run",
-				params.Origin,
-				"--branch", params.Branch,
-				"--commit", params.Commit,
-				"--release", params.Release,
-				"--",
-				params.Binary,
-			}
-			args = append(args, params.ExtraArgs...)
-			cmd := exec.Command("cpak", args...)
-			cmd.Stdin = ptySlave
-			cmd.Stdout = ptySlave
-			cmd.Stderr = ptySlave
-
-			// set the process group so that the termination signal is
-			// forwarded to the shell process
-			cmd.SysProcAttr = &syscall.SysProcAttr{
-				Setpgid: true,
-			}
-
-			// start the shell process
-			if err = cmd.Start(); err != nil {
-				fmt.Println("Error starting shell:", err)
-				sendErrorResponse(conn, fmt.Errorf("error starting shell"))
-				conn.Close()
-				return
-			}
-
-			// we need to create a channel to handle termination signals
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
-
-			// setting up a goroutine to wait for the shell process to exit
-			go func() {
-				cmd.Wait()
-				ptySlave.Close()
-			}()
-
-			// a goroutine to handle termination signals
-			go func() {
-				<-sigCh
-				fmt.Println("Closing the connection and shell process...")
-				sendSuccessResponse(conn)
-				conn.Close()
+			sendSuccessResponse(conn)
+		case <-done:
+			fmt.Println("Client connection closed or errored. Terminating nested cpak process.")
+			if cmd.Process != nil {
 				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}()
-		default:
-			fmt.Printf("Unknown request: %s\n", params.Action)
-			sendErrorResponse(conn, fmt.Errorf("unknown request: %s", params.Action))
-			return
+			}
 		}
+	default:
+		fmt.Printf("Unknown request: %s\n", params.Action)
+		sendErrorResponse(conn, fmt.Errorf("unknown request: %s", params.Action))
 	}
 }
 
@@ -270,31 +283,24 @@ func sendSuccessResponse(conn net.Conn) {
 	response := "OK"
 	_, err := conn.Write([]byte(response))
 	if err != nil {
-		fmt.Printf("Error sending success response: %v\n", err)
 	}
-
-	fmt.Printf("Sent response to the container: %s\n", response)
 }
 
-func sendErrorResponse(conn net.Conn, err error) {
-	response := fmt.Sprintf("Error: %v", err)
-	_, writeErr := conn.Write([]byte(response))
-	if writeErr != nil {
-		fmt.Printf("Error sending error response: %v\n", writeErr)
+func sendErrorResponse(conn net.Conn, errToSend error) {
+	response := fmt.Sprintf("Error: %v", errToSend)
+	_, err := conn.Write([]byte(response))
+	if err != nil {
 	}
-
-	fmt.Printf("Sent response to the container: %s\n", response)
 }
 
-// RunNested runs the given binary from the given application in nested mode.
-func (c *Cpak) RunNested(parentAppId string, origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
+func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
 	fmt.Println("Running another cpak container in nested mode...")
 
 	// the RequestParams struct is used by the server to check if the cpak
 	// which is running, has the ability to run the specified nested cpak
 	params := types.RequestParams{
 		Action:      "run",
-		ParentAppId: parentAppId,
+		ParentAppId: parentAppCpakId,
 		Origin:      origin,
 		Version:     version,
 		Branch:      branch,
@@ -327,23 +333,22 @@ func (c *Cpak) RunNested(parentAppId string, origin string, version string, bran
 
 	// set up the channels to communicate with the host
 	doneCh := make(chan struct{})
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		_, err := io.Copy(conn, os.Stdin)
-		if err != nil {
-			fmt.Println("Error copying data to the server:", err)
-		}
+		io.Copy(os.Stdout, conn)
 		close(doneCh)
 	}()
 	go func() {
-		_, err := io.Copy(os.Stdout, conn)
-		if err != nil {
-			fmt.Println("Error copying data from the server:", err)
-		}
-		close(doneCh)
+		io.Copy(conn, os.Stdin)
+		conn.(*net.UnixConn).CloseWrite()
 	}()
 
-	// wait for the channels to be closed
-	<-doneCh
+	select {
+	case <-doneCh:
+	case <-sigCh:
+		fmt.Println("Interrupt received, closing nested connection.")
+	}
 	return
 }

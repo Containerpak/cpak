@@ -34,12 +34,18 @@ func ListPackages(cmd *cobra.Command, args []string) error {
 		return listError(err)
 	}
 
-	cpak, err := cpak.NewCpak()
+	c, err := cpak.NewCpak()
 	if err != nil {
 		return listError(err)
 	}
 
-	apps, err := cpak.GetInstalledApps()
+	store, err := cpak.NewStore(c.Options.StorePath)
+	if err != nil {
+		return listError(fmt.Errorf("failed to open store: %w", err))
+	}
+	defer store.Close()
+
+	apps, err := store.GetApplications()
 	if err != nil {
 		return listError(err)
 	}
@@ -48,7 +54,7 @@ func ListPackages(cmd *cobra.Command, args []string) error {
 		header := []string{"Name", "Version", "Timestamp", "Origin", "Source"}
 		data := [][]string{}
 		for _, app := range apps {
-			data = append(data, []string{app.Name, app.Version, app.Timestamp.Format(time.RFC3339), app.Origin, app.SourceType()})
+			data = append(data, []string{app.Name, app.Version, app.InstallTimestamp.Format(time.RFC3339), app.Origin, app.SourceType()})
 		}
 		tools.ShowTable(header, data)
 	} else {
@@ -56,7 +62,6 @@ func ListPackages(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return listError(err)
 		}
-
 		fmt.Println(string(jsonBytes))
 	}
 

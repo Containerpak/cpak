@@ -1,25 +1,27 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Container is the struct that represents a container in the store and
 // in the cpak context.
 type Container struct {
-	// Id is the unique identifier of the container, it is expected to be
+	gorm.Model
+	// CpakId is the unique identifier of the container, it is expected to be
 	// unique across all the containers in the store.
-	Id string
+	CpakId string `gorm:"uniqueIndex;not null"`
 
-	// Application is the application the container is based on.
-	Application Application
-
-	// Timestamp is the time the container was created in the store.
-	Timestamp time.Time
-
-	// RootFs is the path to the root filesystem of the container.
-	RootFs string
+	// ApplicationCpakId is the application the container is based on.
+	ApplicationCpakId string `gorm:"index;not null"`
 
 	// Pid is the pid of the main spawned container process inside the namespace.
 	Pid int
+
+	// CreateTimestamp is the time the container was created in the store.
+	CreateTimestamp time.Time
 
 	// StatePath is the path to the state directory of the container, the
 	// actual workdir for the layer mounts.

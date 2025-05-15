@@ -1,6 +1,10 @@
 package cpak
 
-import "github.com/mirkobrombin/cpak/pkg/types"
+import (
+	"fmt"
+
+	"github.com/mirkobrombin/cpak/pkg/types"
+)
 
 // GetInstalledApps returns a list of installed applications.
 //
@@ -9,9 +13,13 @@ import "github.com/mirkobrombin/cpak/pkg/types"
 func (c *Cpak) GetInstalledApps() (apps []types.Application, err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("failed to open store for GetInstalledApps: %w", err)
 	}
+	defer store.Close()
 
 	apps, err = store.GetApplications()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get applications from store: %w", err)
+	}
 	return
 }
