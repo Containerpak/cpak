@@ -204,7 +204,7 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 }
 
 // Save saves the override in the user's home directory.
-func SaveOverride(override types.Override, name string) (err error) {
+func SaveOverride(override types.Override, name, version string) (err error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -216,7 +216,7 @@ func SaveOverride(override types.Override, name string) (err error) {
 		return
 	}
 
-	file, err := os.Create(overridesPath + "/" + name + ".json")
+	file, err := os.Create(overridesPath + "/" + name + "/" + version + "/cpak.json")
 	if err != nil {
 		return
 	}
