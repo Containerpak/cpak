@@ -22,7 +22,6 @@ func GetOverrideMounts(o types.Override) []string {
 		mounts = append(mounts, "/tmp/.ICE-unix/")
 		mounts = append(mounts, "/tmp/.XIM-unix/")
 		mounts = append(mounts, "/tmp/.font-unix/")
-		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus") // TODO: move to a dedicated option
 		mounts = append(mounts, "/run/user/"+curUid+"/ICEauthority")
 	}
 
@@ -64,6 +63,10 @@ func GetOverrideMounts(o types.Override) []string {
 
 	if o.SocketGpgAgent {
 		mounts = append(mounts, "/run/user/"+curUid+"/gnupg/S.gpg-agent")
+	}
+
+	if o.SocketAtSpiBus {
+		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus")
 	}
 
 	if o.DeviceAll {

@@ -9,6 +9,7 @@ type Override struct {
 	SocketSshAgent   bool `json:"socketSshAgent"`
 	SocketCups       bool `json:"socketCups"`
 	SocketGpgAgent   bool `json:"socketGpgAgent"`
+	SocketAtSpiBus   bool `json:"socketAtSpiBus"`
 
 	DeviceDri bool `json:"deviceDri"`
 	DeviceKvm bool `json:"deviceKvm"`
@@ -39,6 +40,7 @@ func NewOverride() Override {
 		SocketSshAgent:      false,
 		SocketCups:          true,
 		SocketGpgAgent:      false,
+		SocketAtSpiBus:      true,
 		DeviceDri:           true,
 		DeviceKvm:           true,
 		DeviceShm:           true,
