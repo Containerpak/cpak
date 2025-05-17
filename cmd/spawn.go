@@ -233,6 +233,11 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 // the .cpak file is used to check if we are inside a cpak container
 func createCpakFile(appId string, rootFs string) error {
 	spawnVerbose("Creating cpak file")
+
+	err := os.MkdirAll(filepath.Join(rootFs, "/tmp"), 0755)
+	if err != nil {
+		return spawnError("mkdir:/tmp", err)
+	}
 	file, err := os.Create(filepath.Join(rootFs, "/tmp", ".cpak"))
 	if err != nil {
 		return spawnError("create", err)
