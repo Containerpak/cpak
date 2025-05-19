@@ -2,12 +2,13 @@ package tools
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
-
-	"github.com/shirou/gopsutil/process"
 )
 
 // GetSubIDRanges returns the subuid and subgid ranges for the current user.
@@ -98,27 +99,35 @@ func readSubIDFile(filename, username string) (subIDSlice []string, err error) {
 	return
 }
 
-func GetPidFromEnv(envVar string) (pids []int, err error) {
-	procs, err := process.Processes()
+func GetPidFromEnv(envVar string) (int, error) {
+	// Scan /proc for numeric directories
+	dirs, err := os.ReadDir("/proc")
 	if err != nil {
-		return
+		return 0, fmt.Errorf("failed to read /proc: %w", err)
 	}
 
-	for _, proc := range procs {
-		var env []string
-		env, err = proc.Environ()
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(d.Name())
+		if err != nil {
+			continue // not a PID dir
+		}
+
+		envPath := filepath.Join("/proc", d.Name(), "environ")
+		data, err := os.ReadFile(envPath)
 		if err != nil {
 			continue
 		}
 
-		for _, e := range env {
+		// environ entries are '\x00'-separated
+		envEntries := strings.Split(string(data), "\x00")
+		for _, e := range envEntries {
 			if e == envVar {
-				pids = append(pids, int(proc.Pid))
-				return
+				return pid, nil
 			}
 		}
-
 	}
-
-	return
+	return 0, fmt.Errorf("no process with env var %s found", envVar)
 }

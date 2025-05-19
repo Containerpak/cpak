@@ -358,18 +358,15 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 // by looking at the environment variables of all the processes.
 func getPidFromEnvContainerId(containerCpakId string) (pid int, err error) {
 	env := "CPAK_CONTAINER_ID=" + containerCpakId
-	pids, err := tools.GetPidFromEnv(env)
+	pid, err = tools.GetPidFromEnv(env)
 	if err != nil {
-		return
-	}
-	if isVerbose {
-		fmt.Println("Pids found:", pids)
-	}
-	if len(pids) == 0 {
 		err = fmt.Errorf("no process with containerId %s found", containerCpakId)
 		return
 	}
-	return pids[0], nil
+	if isVerbose {
+		fmt.Println("PID found:", pid)
+	}
+	return
 }
 
 // CleanupContainer removes the container with the given id.
