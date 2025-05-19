@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/tools"
@@ -29,7 +30,7 @@ func installError(iErr error) (err error) {
 }
 
 func InstallPackage(cmd *cobra.Command, args []string) (err error) {
-	remote := args[0]
+	remote := strings.ToLower(args[0])
 
 	branch, _ := cmd.Flags().GetString("branch")
 	release, _ := cmd.Flags().GetString("release")

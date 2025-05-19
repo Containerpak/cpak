@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/spf13/cobra"
@@ -32,7 +33,7 @@ func runError(iErr error) (err error) {
 }
 
 func RunPackage(cmd *cobra.Command, args []string) (err error) {
-	remote := args[0]
+	remote := strings.ToLower(args[0])
 
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	branch, _ := cmd.Flags().GetString("branch")

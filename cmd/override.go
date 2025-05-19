@@ -19,10 +19,9 @@ func NewOverrideCommand() *cobra.Command {
 		Long: `Set a single override key to a given value for an installed cpak application.
 Use JSON field names for KEY (e.g. socketX11, fsExtra, env, etc.).
 For list fields (fsExtra, env, allowedHostCommands), separate items with ':'`,
-		Args: cobra.NoArgs,
+		Args: cobra.MinimumNArgs(1),
 		RunE: overrideRun,
 	}
-	cmd.Flags().StringVarP(&appOrigin, "app", "a", "", "Application origin (required)")
 	cmd.Flags().StringVarP(&key, "key", "k", "", "Override key (json field name) (required)")
 	cmd.Flags().StringVarP(&value, "value", "v", "", "Override value (required)")
 	_ = cmd.MarkFlagRequired("app")
@@ -43,7 +42,8 @@ type overrideOptions struct {
 
 // overrideRun implements the override command logic
 func overrideRun(cmd *cobra.Command, args []string) error {
-	appOrigin := *overrideCmd.app
+	appOrigin := strings.ToLower(args[0])
+
 	key := *overrideCmd.key
 	value := *overrideCmd.value
 
