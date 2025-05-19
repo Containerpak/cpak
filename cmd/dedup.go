@@ -25,9 +25,11 @@ func NewDedupCommand() *cobra.Command {
 	return cmd
 }
 
-func dedupRun(cmd *cobra.Command, args []string) error {
+func dedupRun(cmd *cobra.Command, args []string) (err error) {
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	path, _ := cmd.Flags().GetString("path")
+
+	fmt.Printf("Deduplicating path %s in the DaBaDee storage..\n", path)
 
 	if path == "" {
 		return fmt.Errorf("path is mandatory")
@@ -39,17 +41,23 @@ func dedupRun(cmd *cobra.Command, args []string) error {
 
 	c, err := cpak.NewCpak()
 	if err != nil {
-		return err
+		return
 	}
 
 	s, err := storage.NewStorage(c.Options.DaBaDeeStoreOptions)
 	if err != nil {
-		return err
+		return
 	}
 
 	h := hash.NewSHA256Generator()
 	p := processor.NewDedupProcessor(path, s, h, 2)
 
 	d := dabadee.NewDaBaDee(p, verbose)
-	return d.Run()
+	err = d.Run()
+	if err != nil {
+		return
+	}
+
+	fmt.Printf("Deduplication completed successfully\n")
+	return nil
 }
