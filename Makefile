@@ -15,5 +15,4 @@ download:
 		-o pkg/tools/busybox
 
 cpak:
-	go build -o cpak .
-	
+	go build -trimpath -ldflags="-s -w" -o cpak .
