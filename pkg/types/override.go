@@ -16,6 +16,8 @@ type Override struct {
 	DeviceShm bool `json:"deviceShm"`
 	DeviceAll bool `json:"deviceAll"`
 
+	Notification bool `json:"notification"`
+
 	FsHost     bool     `json:"fsHost"`
 	FsHostEtc  bool     `json:"fsHostEtc"`
 	FsHostHome bool     `json:"fsHostHome"`

@@ -12,9 +12,7 @@ import (
 
 // Mounts returns the list of paths to be mounted on the new namespace
 // to achieve the desired override.
-func GetOverrideMounts(o types.Override) []string {
-	var mounts []string
-
+func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	curUid := fmt.Sprintf("%d", os.Getuid())
 
 	if o.SocketX11 {
@@ -67,6 +65,10 @@ func GetOverrideMounts(o types.Override) []string {
 
 	if o.SocketAtSpiBus {
 		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus")
+	}
+
+	if o.Notification {
+		shims = append(shims, "notify-send")
 	}
 
 	if o.DeviceAll {
@@ -139,7 +141,7 @@ func GetOverrideMounts(o types.Override) []string {
 	// }
 	// mounts = append(mounts, foundMounts...)
 
-	return mounts
+	return mounts, shims
 }
 
 // NewOverride returns a new override with default values.

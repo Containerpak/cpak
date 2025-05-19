@@ -145,7 +145,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	uid := fmt.Sprintf("%d", os.Getuid())
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
-	overrideMounts := GetOverrideMounts(override)
+	overrideMounts, overrideShims := GetOverrideMounts(override)
 	cmds := []string{}
 	if isVerbose {
 		cmds = append(cmds, "--debug")
@@ -191,6 +191,10 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	for _, ovr := range overrideMounts {
 		cmds = append(cmds, "--mount-overrides", ovr)
+	}
+
+	for _, shim := range overrideShims {
+		cmds = append(cmds, "--mount-shims", shim)
 	}
 
 	// following is where dependencies and addons are exported

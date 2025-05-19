@@ -70,6 +70,7 @@ func NewSpawnCommand() *cobra.Command {
 	cmd.Flags().String("image-dir", "i", "set the image directory")
 	cmd.Flags().String("layers-dir", "d", "set the layers directory")
 	cmd.Flags().StringArrayP("mount-overrides", "m", []string{}, "set the mount overrides")
+	cmd.Flags().StringArrayP("mount-shims", "M", []string{}, "set the mount shims")
 	cmd.Flags().StringArrayP("extra-links", "x", []string{}, "set the extra links")
 
 	return cmd
@@ -83,9 +84,9 @@ func spawnError(prefix string, iErr error) (err error) {
 	return
 }
 
-func spawnVerbose(args ...interface{}) {
+func spawnVerbose(args ...any) {
 	if verbose {
-		msg := []interface{}{"[verbose]: "}
+		msg := []any{"[verbose]: "}
 		msg = append(msg, args...)
 		fmt.Println(msg...)
 	}
@@ -131,6 +132,10 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	overrideMounts, err := cmd.Flags().GetStringArray("mount-overrides")
 	if err != nil {
 		return spawnError("mount-overrides flag", err)
+	}
+	overrideMountShims, err := cmd.Flags().GetStringArray("mount-shims")
+	if err != nil {
+		return spawnError("mount-shims flag", err)
 	}
 	extraLinks, err := cmd.Flags().GetStringArray("extra-links")
 	if err != nil {
@@ -183,8 +188,14 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
+	// Append shims obtained by overrides, to the allowed commands
+	if len(overrideMountShims) > 0 {
+		fmt.Println("Found mount shims in overrides:", overrideMountShims)
+		allowedHostCmds = append(allowedHostCmds, overrideMountShims...)
+	}
+
 	if len(allowedHostCmds) > 0 && hostExecSocketPath != "" {
-		fmt.Println("----------------------------------------Creating hostexec shim and symlinks")
+		spawnVerbose("Creating hostexec shim and symlinks")
 		err = createHostExecShimAndLinks(rootFs, allowedHostCmds)
 		if err != nil {
 			return err
