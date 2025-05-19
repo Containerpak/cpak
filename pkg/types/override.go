@@ -10,11 +10,17 @@ type Override struct {
 	SocketCups       bool `json:"socketCups" flag:"socketCups,bool"`
 	SocketGpgAgent   bool `json:"socketGpgAgent" flag:"socketGpgAgent,bool"`
 	SocketAtSpiBus   bool `json:"socketAtSpiBus" flag:"socketAtSpiBus,bool"`
+	SocketBluetooth  bool `json:"socketBluetooth" flag:"socketBluetooth,bool"`
 
-	DeviceDri bool `json:"deviceDri" flag:"deviceDri,bool"`
-	DeviceKvm bool `json:"deviceKvm" flag:"deviceKvm,bool"`
-	DeviceShm bool `json:"deviceShm" flag:"deviceShm,bool"`
-	DeviceAll bool `json:"deviceAll" flag:"deviceAll,bool"`
+	DeviceDri   bool `json:"deviceDri" flag:"deviceDri,bool"`
+	DeviceKvm   bool `json:"deviceKvm" flag:"deviceKvm,bool"`
+	DeviceShm   bool `json:"deviceShm" flag:"deviceShm,bool"`
+	DeviceAlsa  bool `json:"deviceAlsa" flag:"deviceAlsa,bool"`
+	DeviceVideo bool `json:"deviceVideo" flag:"deviceVideo,bool"`
+	DeviceFuse  bool `json:"deviceFuse" flag:"deviceFuse,bool"`
+	DeviceTun   bool `json:"deviceTun" flag:"deviceTun,bool"`
+	DeviceUsb   bool `json:"deviceUsb" flag:"deviceUsb,bool"`
+	DeviceAll   bool `json:"deviceAll" flag:"deviceAll,bool"`
 
 	Notification bool `json:"notification" flag:"notification,bool"`
 

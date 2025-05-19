@@ -85,6 +85,30 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 		if o.DeviceShm {
 			mounts = append(mounts, "/dev/shm/")
 		}
+
+		if o.DeviceAlsa {
+			mounts = append(mounts, "/dev/snd/")
+		}
+
+		if o.DeviceVideo {
+			if vids, err := filepath.Glob("/dev/video*"); err == nil {
+				mounts = append(mounts, vids...)
+			}
+		}
+
+		if o.DeviceFuse {
+			mounts = append(mounts, "/dev/fuse")
+		}
+
+		if o.DeviceTun {
+			mounts = append(mounts, "/dev/net/tun")
+		}
+
+		if o.DeviceUsb {
+			mounts = append(mounts, "/dev/bus/usb/")
+			mounts = append(mounts, "/dev/usb/")
+			mounts = append(mounts, "/dev/input/")
+		}
 	}
 
 	// TODO: currently unsupported
