@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+CALLED_AS=$(basename "$0")
+
+SOCKET_PATH="$CPAK_HOSTEXEC_SOCKET"
+if [ -z "$SOCKET_PATH" ]; then
+    echo "SPAWN SHIM ERROR: CPAK_HOSTEXEC_SOCKET environment variable not set." >&2
+    exit 1
+fi
+if [ ! -S "$SOCKET_PATH" ]; then
+	echo "SPAWN SHIM ERROR: Socket path $SOCKET_PATH does not exist or is not a socket." >&2
+	# exit 1 # Maybe don't exit, let hostexec-client fail?
+fi
+
+CPAK_BINARY="{{.CpakBinaryPath}}" # Template variable for the path
+
+# Check if the cpak binary exists
+if [ ! -x "$CPAK_BINARY" ]; then
+	echo "SPAWN SHIM ERROR: cpak binary not found or not executable at $CPAK_BINARY" >&2
+	exit 1
+fi
+
+exec "$CPAK_BINARY" hostexec-client --socket-path "$SOCKET_PATH" -- "$CALLED_AS" "$@"

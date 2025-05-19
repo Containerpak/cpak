@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,38 +17,6 @@ var verbose = false
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
 const hostExecShimPath = "/usr/local/bin/cpak-hostexec-shim"
-const hostExecShimScriptContent = `#!/bin/sh
-# This script acts as a shim to call cpak hostexec-client
-set -e
-
-# The command name this shim was called as (e.g., xdg-open)
-CALLED_AS=$(basename "$0")
-
-# Get the hostexec socket path from the environment variable
-SOCKET_PATH="$CPAK_HOSTEXEC_SOCKET"
-if [ -z "$SOCKET_PATH" ]; then
-    echo "SPAWN SHIM ERROR: CPAK_HOSTEXEC_SOCKET environment variable not set." >&2
-    exit 1
-fi
-if [ ! -S "$SOCKET_PATH" ]; then
-	echo "SPAWN SHIM ERROR: Socket path $SOCKET_PATH does not exist or is not a socket." >&2
-	# exit 1 # Maybe don't exit, let hostexec-client fail?
-fi
-
-
-# The actual cpak binary mounted inside the container
-CPAK_BINARY="{{.CpakBinaryPath}}" # Template variable for the path
-
-# Check if the cpak binary exists
-if [ ! -x "$CPAK_BINARY" ]; then
-	echo "SPAWN SHIM ERROR: cpak binary not found or not executable at $CPAK_BINARY" >&2
-	exit 1
-fi
-
-# Execute the host command via the hostexec-client subcommand
-# Pass the original command name ($CALLED_AS) and all arguments ($@)
-exec "$CPAK_BINARY" hostexec-client --socket-path "$SOCKET_PATH" -- "$CALLED_AS" "$@"
-`
 
 func NewSpawnCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -533,37 +500,14 @@ func createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {
 		return spawnError("create shim dir "+shimDir, err)
 	}
 
-	// Prepare the template
-	tmpl, err := template.New("shim").Parse(hostExecShimScriptContent)
+	// Render the shim script content
+	content, err := cpak.RenderShim(cpakInContainerPath)
 	if err != nil {
-		return spawnError("parse shim template", err)
+		return spawnError("render shim template", err)
 	}
-
-	// Create and write the shim file
-	shimFile, err := os.Create(shimFilePath)
-	if err != nil {
-		return spawnError("create shim file "+shimFilePath, err)
-	}
-
-	// Data for the template
-	templateData := struct{ CpakBinaryPath string }{
-		CpakBinaryPath: cpakInContainerPath,
-	}
-
-	// Execute the template
-	err = tmpl.Execute(shimFile, templateData)
-	if err != nil {
-		shimFile.Close()
+	if err := os.WriteFile(shimFilePath, content, 0755); err != nil {
 		return spawnError("write shim file "+shimFilePath, err)
 	}
-	shimFile.Close()
-
-	// Make the shim executable
-	err = os.Chmod(shimFilePath, 0755)
-	if err != nil {
-		return spawnError("chmod shim file "+shimFilePath, err)
-	}
-	spawnVerbose("Hostexec shim script created at", shimFilePath)
 
 	// Create symlinks for allowed commands
 	linkTargetDir := filepath.Join(rootFs, "/usr/bin")
