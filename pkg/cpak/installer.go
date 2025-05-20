@@ -203,6 +203,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	originalPath := filepath.Join(rootFs, desktopEntry)
 	desktopEntryContent, err := os.ReadFile(originalPath)
 	if err != nil {
+		fmt.Printf("Warning: could not read desktop entry %s: %v\n", originalPath, err)
 		return err
 	}
 
@@ -211,6 +212,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	for _, line := range lines {
 		if strings.HasPrefix(line, "Icon=") {
 			iconPath = strings.TrimPrefix(line, "Icon=")
+			fmt.Printf("Found icon in %s\n", iconPath)
 			break
 		}
 	}
@@ -222,14 +224,17 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 			inRootFsIconPath := filepath.Join(rootFs, "usr", "share", "icons", "hicolor", commonIconDir, "apps", iconPath)
 			if _, statErr := os.Stat(inRootFsIconPath); statErr == nil {
 				iconPath = inRootFsIconPath
+				fmt.Printf("Found icon in %s\n", iconPath)
 				break
 			}
 			if _, statErr := os.Stat(inRootFsIconPath + ".svg"); statErr == nil {
 				iconPath = inRootFsIconPath + ".svg"
+				fmt.Printf("Found icon in %s\n", iconPath)
 				break
 			}
 			if _, statErr := os.Stat(inRootFsIconPath + ".png"); statErr == nil {
 				iconPath = inRootFsIconPath + ".png"
+				fmt.Printf("Found icon in %s\n", iconPath)
 				break
 			}
 		}
@@ -239,10 +244,13 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 			inRootFsPixmapPath := filepath.Join(rootFs, "usr", "share", "pixmaps", iconPath)
 			if _, statErr := os.Stat(inRootFsPixmapPath); statErr == nil {
 				iconPath = inRootFsPixmapPath
+				fmt.Printf("Found icon in %s\n", iconPath)
 			} else if _, statErr := os.Stat(inRootFsPixmapPath + ".png"); statErr == nil {
 				iconPath = inRootFsPixmapPath + ".png"
+				fmt.Printf("Found icon in %s\n", iconPath)
 			} else if _, statErr := os.Stat(inRootFsPixmapPath + ".svg"); statErr == nil {
 				iconPath = inRootFsPixmapPath + ".svg"
+				fmt.Printf("Found icon in %s\n", iconPath)
 			}
 		}
 
@@ -269,6 +277,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 				return err
 			}
 			err = tools.CopyFile(iconPath, destinationIconPath)
+			fmt.Printf("Exported icon to %s\n", destinationIconPath)
 			if err != nil {
 				return err
 			}
@@ -277,6 +286,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 
 	desktopEntryContentStr := strings.ReplaceAll(string(desktopEntryContent), "Exec=", "Exec=cpak run "+app.Origin+" @")
 	if err := os.WriteFile(destinationPath, []byte(desktopEntryContentStr), 0755); err != nil {
+		fmt.Printf("Warning: could not export desktop entry %s: %v\n", destinationPath, err)
 		return err
 	}
 	return nil
@@ -314,6 +324,12 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	appToRemove, err := store.GetApplicationByOrigin(origin, "", branch, commit, release)
 	if err != nil || appToRemove.CpakId == "" {
 		return fmt.Errorf("application %s not found for specified criteria: %w", origin, err)
+	}
+
+	// Stop all containers associated with the application
+	err = c.Stop(appToRemove.Origin, appToRemove.Version, appToRemove.Branch, appToRemove.Commit, appToRemove.Release)
+	if err != nil {
+		return fmt.Errorf("failed to stop containers for %s: %w", appToRemove.Name, err)
 	}
 
 	switch {
