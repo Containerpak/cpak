@@ -192,101 +192,101 @@ func (c *Cpak) createExports(app types.Application) (err error) {
 // an absolute path, it looks for it in the common directories, preferring the
 // one with the highest resolution.
 func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopEntry string) error {
-	destinationPath := filepath.Join(
-		os.Getenv("HOME"),
-		".local",
-		"share",
-		"applications",
-		filepath.Base(desktopEntry),
-	)
+	home := os.Getenv("HOME")
 
-	originalPath := filepath.Join(rootFs, desktopEntry)
-	desktopEntryContent, err := os.ReadFile(originalPath)
-	if err != nil {
-		fmt.Printf("Warning: could not read desktop entry %s: %v\n", originalPath, err)
-		return err
+	var originalPath string
+	entryBase := filepath.Base(desktopEntry)
+	direct := filepath.Join(rootFs, strings.TrimLeft(desktopEntry, "/"))
+	if _, err := os.Stat(direct); err == nil {
+		originalPath = direct
+	} else {
+		_ = filepath.Walk(rootFs, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if filepath.Base(path) == entryBase {
+				originalPath = path
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	if originalPath == "" {
+		return fmt.Errorf("desktop entry %s not found under %s", entryBase, rootFs)
 	}
 
-	iconPath := ""
-	lines := strings.Split(string(desktopEntryContent), "\n")
-	for _, line := range lines {
+	desktopDir := filepath.Join(home, ".local", "share", "applications", app.CpakId)
+	if err := os.MkdirAll(desktopDir, 0755); err != nil {
+		return err
+	}
+	desktopDest := filepath.Join(desktopDir, entryBase)
+
+	data, err := os.ReadFile(originalPath)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+
+	var iconName string
+	for _, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(line, "Icon=") {
-			iconPath = strings.TrimPrefix(line, "Icon=")
-			fmt.Printf("Found icon in %s\n", iconPath)
+			iconName = strings.TrimPrefix(line, "Icon=")
 			break
 		}
 	}
 
-	if iconPath != "" && !filepath.IsAbs(iconPath) {
-		// Try to find the icon in /usr/share/icons
-		commonIconDirs := []string{"scalable", "512x512", "256x256", "128x128", "64x64", "48x48", "32x32"}
-		for _, commonIconDir := range commonIconDirs {
-			inRootFsIconPath := filepath.Join(rootFs, "usr", "share", "icons", "hicolor", commonIconDir, "apps", iconPath)
-			if _, statErr := os.Stat(inRootFsIconPath); statErr == nil {
-				iconPath = inRootFsIconPath
-				fmt.Printf("Found icon in %s\n", iconPath)
-				break
-			}
-			if _, statErr := os.Stat(inRootFsIconPath + ".svg"); statErr == nil {
-				iconPath = inRootFsIconPath + ".svg"
-				fmt.Printf("Found icon in %s\n", iconPath)
-				break
-			}
-			if _, statErr := os.Stat(inRootFsIconPath + ".png"); statErr == nil {
-				iconPath = inRootFsIconPath + ".png"
-				fmt.Printf("Found icon in %s\n", iconPath)
-				break
-			}
+	var absIconPath string
+	if iconName != "" && !filepath.IsAbs(iconName) {
+		iconBase := iconName
+		tryDirs := []string{
+			filepath.Join(rootFs, "usr", "share", "icons"),
+			filepath.Join(rootFs, "usr", "share", "pixmaps"),
 		}
-
-		// If not found in /usr/share/icons, try /usr/share/pixmaps
-		if !filepath.IsAbs(iconPath) {
-			inRootFsPixmapPath := filepath.Join(rootFs, "usr", "share", "pixmaps", iconPath)
-			if _, statErr := os.Stat(inRootFsPixmapPath); statErr == nil {
-				iconPath = inRootFsPixmapPath
-				fmt.Printf("Found icon in %s\n", iconPath)
-			} else if _, statErr := os.Stat(inRootFsPixmapPath + ".png"); statErr == nil {
-				iconPath = inRootFsPixmapPath + ".png"
-				fmt.Printf("Found icon in %s\n", iconPath)
-			} else if _, statErr := os.Stat(inRootFsPixmapPath + ".svg"); statErr == nil {
-				iconPath = inRootFsPixmapPath + ".svg"
-				fmt.Printf("Found icon in %s\n", iconPath)
+		for _, root := range tryDirs {
+			if absIconPath != "" {
+				break
 			}
-		}
-
-		if !filepath.IsAbs(iconPath) {
-			var iconLine string
-			for _, line := range lines {
-				if strings.HasPrefix(line, "Icon=") {
-					iconLine = strings.TrimPrefix(line, "Icon=")
-					break
+			_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+				if err != nil || info.IsDir() {
+					return nil
 				}
+				base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+				if base == iconBase {
+					absIconPath = path
+					return filepath.SkipDir
+				}
+				return nil
+			})
+		}
+		if absIconPath != "" {
+			ext := filepath.Ext(absIconPath)
+			iconDest := filepath.Join(home, ".local", "share", "icons", app.CpakId+ext)
+			if err := os.MkdirAll(filepath.Dir(iconDest), 0755); err != nil {
+				return err
 			}
-			fmt.Printf("Warning: could not resolve absolute path for icon '%s' for app %s\n", iconLine, app.Name)
-			// return nil // Non bloccare l'esportazione del .desktop se l'icona non si trova
+			if err := tools.CopyFile(absIconPath, iconDest); err != nil {
+				return err
+			}
+			fmt.Printf("Exported icon to %s\n", iconDest)
+			iconName = iconDest
 		} else {
-			destinationIconPath := filepath.Join(
-				os.Getenv("HOME"),
-				".local",
-				"share",
-				"icons",
-				filepath.Base(iconPath),
-			)
-			err = os.MkdirAll(filepath.Dir(destinationIconPath), 0755)
-			if err != nil {
-				return err
-			}
-			err = tools.CopyFile(iconPath, destinationIconPath)
-			fmt.Printf("Exported icon to %s\n", destinationIconPath)
-			if err != nil {
-				return err
-			}
+			fmt.Printf("Warning: icon %s not found for app %s\n", iconName, app.Name)
 		}
 	}
 
-	desktopEntryContentStr := strings.ReplaceAll(string(desktopEntryContent), "Exec=", "Exec=cpak run "+app.Origin+" @")
-	if err := os.WriteFile(destinationPath, []byte(desktopEntryContentStr), 0755); err != nil {
-		fmt.Printf("Warning: could not export desktop entry %s: %v\n", destinationPath, err)
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "Exec=") {
+			cmdPart := strings.TrimPrefix(line, "Exec=")
+			lines[i] = "Exec=cpak run " + app.Origin + " @" + cmdPart
+		}
+		if strings.HasPrefix(line, "Icon=") && iconName != "" {
+			lines[i] = "Icon=" + iconName
+		}
+	}
+	newContent := strings.Join(lines, "\n")
+
+	if err := os.WriteFile(desktopDest, []byte(newContent), 0755); err != nil {
 		return err
 	}
 	return nil
@@ -362,40 +362,44 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 }
 
 func (c *Cpak) removeExports(app types.Application) error {
-	for _, entry := range app.ParsedDesktopEntries {
-		destinationPath := filepath.Join(
-			os.Getenv("HOME"),
-			".local",
-			"share",
-			"applications",
-			filepath.Base(entry),
-		)
-		if err := os.Remove(destinationPath); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Warning: could not remove desktop entry %s: %v\n", destinationPath, err)
-		}
+	home := os.Getenv("HOME")
+
+	desktopDir := filepath.Join(home, ".local", "share", "applications", app.CpakId)
+	if err := os.RemoveAll(desktopDir); err != nil {
+		fmt.Printf("Warning: could not remove desktop entries dir %s: %v\n", desktopDir, err)
 	}
 
-	for _, binary := range app.ParsedBinaries {
-		destinationItems := []string{c.Options.ExportsPath}
-		destinationItems = append(destinationItems, strings.Split(app.Origin, "/")...)
-		destinationItems = append(destinationItems, filepath.Base(binary))
-		destinationPath := filepath.Join(destinationItems...)
-		if err := os.Remove(destinationPath); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Warning: could not remove binary export %s: %v\n", destinationPath, err)
-		}
-
-		originDir := filepath.Dir(destinationPath)
-		if entries, err := os.ReadDir(originDir); err == nil && len(entries) == 0 {
-			os.Remove(originDir)
-			repoDir := filepath.Dir(originDir)
-			if entriesRepo, errRepo := os.ReadDir(repoDir); errRepo == nil && len(entriesRepo) == 0 {
-				os.Remove(repoDir)
-				hostDir := filepath.Dir(repoDir)
-				if entriesHost, errHost := os.ReadDir(hostDir); errHost == nil && len(entriesHost) == 0 {
-					os.Remove(hostDir)
+	iconsDir := filepath.Join(home, ".local", "share", "icons")
+	entries, err := os.ReadDir(iconsDir)
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasPrefix(name, app.CpakId+".") {
+				path := filepath.Join(iconsDir, name)
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					fmt.Printf("Warning: could not remove icon %s: %v\n", path, err)
 				}
 			}
 		}
 	}
+
+	for _, binary := range app.ParsedBinaries {
+		dst := filepath.Join(append([]string{c.Options.ExportsPath}, strings.Split(app.Origin, "/")...)...)
+		dst = filepath.Join(dst, filepath.Base(binary))
+		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("Warning: could not remove binary export %s: %v\n", dst, err)
+		}
+
+		dir := filepath.Dir(dst)
+		for dir != c.Options.ExportsPath && dir != "/" {
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) > 0 {
+				break
+			}
+			os.Remove(dir)
+			dir = filepath.Dir(dir)
+		}
+	}
+
 	return nil
 }
