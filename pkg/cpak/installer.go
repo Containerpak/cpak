@@ -234,44 +234,39 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 			break
 		}
 	}
+	if iconName == "" {
+		return nil
+	}
 
 	var absIconPath string
-	if iconName != "" && !filepath.IsAbs(iconName) {
-		iconBase := iconName
-		tryDirs := []string{
-			filepath.Join(rootFs, "usr", "share", "icons"),
-			filepath.Join(rootFs, "usr", "share", "pixmaps"),
+	for _, layer := range app.ParsedLayers {
+		layerDir := c.GetInStoreDir("layers", layer)
+		cand := filepath.Clean(layerDir + iconName)
+		if _, err := os.Stat(cand); err == nil {
+			absIconPath = cand
+			break
 		}
-		for _, root := range tryDirs {
-			if absIconPath != "" {
-				break
-			}
-			_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-				if base == iconBase {
-					absIconPath = path
-					return filepath.SkipDir
-				}
-				return nil
-			})
+	}
+
+	if absIconPath == "" && filepath.IsAbs(iconName) {
+		if _, err := os.Stat(iconName); err == nil {
+			absIconPath = iconName
 		}
-		if absIconPath != "" {
-			ext := filepath.Ext(absIconPath)
-			iconDest := filepath.Join(home, ".local", "share", "icons", app.CpakId+ext)
-			if err := os.MkdirAll(filepath.Dir(iconDest), 0755); err != nil {
-				return err
-			}
-			if err := tools.CopyFile(absIconPath, iconDest); err != nil {
-				return err
-			}
-			fmt.Printf("Exported icon to %s\n", iconDest)
-			iconName = iconDest
-		} else {
-			fmt.Printf("Warning: icon %s not found for app %s\n", iconName, app.Name)
+	}
+
+	if absIconPath != "" {
+		ext := filepath.Ext(absIconPath)
+		iconDest := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", app.CpakId+ext)
+		if err := os.MkdirAll(filepath.Dir(iconDest), 0755); err != nil {
+			return err
 		}
+		if err := tools.CopyFile(absIconPath, iconDest); err != nil {
+			return err
+		}
+		fmt.Printf("Exported icon to %s\n", iconDest)
+		iconName = iconDest
+	} else {
+		fmt.Printf("Warning: icon %s not found for app %s\n", iconName, app.Name)
 	}
 
 	lines := strings.Split(content, "\n")
@@ -285,11 +280,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 		}
 	}
 	newContent := strings.Join(lines, "\n")
-
-	if err := os.WriteFile(desktopDest, []byte(newContent), 0755); err != nil {
-		return err
-	}
-	return nil
+	return os.WriteFile(desktopDest, []byte(newContent), 0755)
 }
 
 func (c *Cpak) exportBinary(app types.Application, binary string) error {
