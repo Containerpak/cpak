@@ -28,6 +28,7 @@ func main() {
 	rootCmd.AddCommand(cmd.NewDedupCommand())
 	rootCmd.AddCommand(cmd.NewAuditCommand())
 	rootCmd.AddCommand(cmd.NewOverrideCommand())
+	rootCmd.AddCommand(cmd.NewExtractCommand())
 	rootCmd.AddCommand(cmd.NewHostExecServerCommand())
 	rootCmd.AddCommand(cmd.NewHostExecClientCommand())
 
