@@ -1,3 +1,8 @@
+/*
+* Copyright (c) 2025 FABRICATORS S.R.L.
+* Licensed under the Fabricators Public Access License (FPAL) v1.0
+* See https://github.com/fabricatorsltd/FPAL for details.
+ */
 package cpak
 
 import (
@@ -102,7 +107,7 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 	options.StoreContainersPath = filepath.Join(options.StorePath, "containers")
 	options.StoreStatesPath = filepath.Join(options.StorePath, "states")
 	options.RotlesskitBinPath = filepath.Join(options.BinPath, "rootlesskit")
-	options.BusyboxBinPath = filepath.Join(options.BinPath, "busybox")
+	options.NsenterBinPath = filepath.Join(options.BinPath, "nsenter")
 
 	// Create the necessary directories if they don't exist
 	err = createCpakDirs(&options)

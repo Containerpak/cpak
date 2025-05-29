@@ -7,4 +7,4 @@ podman-launcher
 go.work
 go.work.sum
 /tools/host-spawn
-/tools/busybox
+/tools/nsenter

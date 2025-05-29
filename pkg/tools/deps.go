@@ -1,3 +1,8 @@
+/*
+* Copyright (c) 2025 FABRICATORS S.R.L.
+* Licensed under the Fabricators Public Access License (FPAL) v1.0
+* See https://github.com/fabricatorsltd/FPAL for details.
+ */
 package tools
 
 import (
@@ -14,8 +19,8 @@ import (
 //go:embed rootlesskit.tar.gz
 var rootlesskit []byte
 
-//go:embed busybox
-var busybox []byte
+//go:embed nsenter
+var nsenter []byte
 
 // EnsureUnixDeps ensures that the required dependencies are available in the
 // host system.
@@ -31,12 +36,12 @@ func EnsureUnixDeps(binPath string, rootlessImplementation string) error {
 		return fmt.Errorf("error creating bin directory: %w", err)
 	}
 
-	_, err = os.Stat(filepath.Join(binPath, "busybox"))
+	_, err = os.Stat(filepath.Join(binPath, "nsenter"))
 	if err != nil {
-		fmt.Println("busybox not found, installing it from embedded binary")
-		err = os.WriteFile(filepath.Join(binPath, "busybox"), busybox, 0755)
+		fmt.Println("nsenter not found, installing it from embedded binary")
+		err = os.WriteFile(filepath.Join(binPath, "nsenter"), nsenter, 0755)
 		if err != nil {
-			return fmt.Errorf("error writing busybox: %w", err)
+			return fmt.Errorf("error writing nsenter: %w", err)
 		}
 	}
 

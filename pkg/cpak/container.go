@@ -1,3 +1,8 @@
+/*
+* Copyright (c) 2025 FABRICATORS S.R.L.
+* Licensed under the Fabricators Public Access License (FPAL) v1.0
+* See https://github.com/fabricatorsltd/FPAL for details.
+ */
 package cpak
 
 import (
@@ -303,7 +308,6 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 	gid := fmt.Sprintf("%d", os.Getgid())
 
 	cmds := []string{
-		"nsenter",
 		"-m",
 		"-u",
 		"-U",
@@ -334,7 +338,7 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 
-	cmd := exec.Command(c.Options.BusyboxBinPath, cmds...)
+	cmd := exec.Command(c.Options.NsenterBinPath, cmds...)
 	fmt.Println("Executing command:", cmd.String())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

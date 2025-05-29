@@ -1,3 +1,8 @@
+/*
+* Copyright (c) 2025 FABRICATORS S.R.L.
+* Licensed under the Fabricators Public Access License (FPAL) v1.0
+* See https://github.com/fabricatorsltd/FPAL for details.
+ */
 package types
 
 // OciManifest is the struct that represents the manifest of an OCI image.

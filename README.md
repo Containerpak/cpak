@@ -3,6 +3,11 @@
   <img src="cpak-logo.svg#gh-dark-mode-only" height="120">
   <p>A fast, decentralized, portable,  powerful and low-memory footprint package 
     format for Linux.</p>
+  <p>
+    <a href="https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE.md">
+      <img src="https://img.shields.io/badge/License-FPAL_1.0-orange.svg" alt="License: FPAL-1.0">
+    </a>
+  </p>
 </div>
 
 ---
