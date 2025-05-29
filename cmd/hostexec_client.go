@@ -10,7 +10,7 @@ import (
 	"log"
 	"os"
 
-	hrun_client "github.com/distrobox/hrun/pkg/client"
+	hrun_client "github.com/containerpak/hrun/pkg/client"
 	"github.com/spf13/cobra"
 )
 

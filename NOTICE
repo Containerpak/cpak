@@ -4,9 +4,9 @@ This product includes software developed by third parties.
 
 ## Libraries
 
-**github.com/distrobox/hrun/pkg**
+**github.com/containerpak/hrun/pkg**
 License: MIT
-[https://github.com/distrobox/hrun/blob/v0.0.3/LICENSE](https://github.com/distrobox/hrun/blob/v0.0.3/LICENSE)
+[https://github.com/containerpak/hrun/blob/v0.0.3/LICENSE](https://github.com/containerpak/hrun/blob/v0.0.3/LICENSE)
 
 **github.com/mirkobrombin/dabadee/pkg**
 License: Apache-2.0

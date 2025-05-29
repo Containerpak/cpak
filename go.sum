@@ -1,6 +1,8 @@
 github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
 github.com/containerd/stargz-snapshotter/estargz v0.14.3 h1:OqlDCK3ZVUO6C3B/5FSkDwbkEETK84kQgEeFwDC+62k=
 github.com/containerd/stargz-snapshotter/estargz v0.14.3/go.mod h1:KY//uOCIkSuNAHhJogcZtrNHdKrA99/FCCRjE3HD36o=
+github.com/containerpak/hrun v0.0.4 h1:uLwgs824ZA6TKrQD9BVGw7KfVtR9CAW3DDAu/ZBNd4I=
+github.com/containerpak/hrun v0.0.4/go.mod h1:a/5BpbkTtbEr3Snur5JGii/LT/ri5LMx3N7naneLWuc=
 github.com/cpuguy83/go-md2man/v2 v2.0.2/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
 github.com/cpuguy83/go-md2man/v2 v2.0.3/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
 github.com/creack/pty v1.1.21 h1:1/QdRyBaHHJP61QkWMXlOIBfsgdDeeKfK8SYVUWJKf0=
@@ -8,8 +10,6 @@ github.com/creack/pty v1.1.21/go.mod h1:MOBLtS5ELjhRRrroQr9kyvTxUAFNvYEK993ew/Vr
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/distrobox/hrun v0.0.2 h1:rHkyWrlrFwGgs4F8WZhBvENRgoe+XrnCxvtwr3pFLFY=
-github.com/distrobox/hrun v0.0.2/go.mod h1:YNnMfhhxp1WDVu9pZ06+Q8yv1cVEaIw9xttxd6mNECA=
 github.com/docker/cli v24.0.0+incompatible h1:0+1VshNwBQzQAx9lOl+OYCTCEAD8fKs/qeXMx3O0wqM=
 github.com/docker/cli v24.0.0+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
 github.com/docker/distribution v2.8.2+incompatible h1:T3de5rq0dB1j30rp0sA2rER+m322EBzniBPB6ZIzuh8=
@@ -44,8 +44,8 @@ github.com/mattn/go-sqlite3 v1.14.22 h1:2gZY6PC6kBnID23Tichd1K+Z0oS6nE/XwU+Vz/5o
 github.com/mattn/go-sqlite3 v1.14.22/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
 github.com/minio/highwayhash v1.0.2 h1:Aak5U0nElisjDCfPSG79Tgzkn2gl66NxOMspRrKnA/g=
 github.com/minio/highwayhash v1.0.2/go.mod h1:BQskDq+xkJ12lmlUUi7U0M5Swg3EWR+dLTk+kldvVxY=
-github.com/mirkobrombin/dabadee v0.4.0 h1:gFazcZB5HH6twYY+YwMZPZvrssacsJs1NUdHWP9wiRY=
-github.com/mirkobrombin/dabadee v0.4.0/go.mod h1:vc6n8YWFRJ9LcRFxdDGQ9MjdYZv7s6+R8tlvTZplJrs=
+github.com/mirkobrombin/dabadee v1.0.0 h1:64b6U/dAaMyMMjb6D6B+ZN8Wc52fJokXmyKJwcT8zAU=
+github.com/mirkobrombin/dabadee v1.0.0/go.mod h1:vc6n8YWFRJ9LcRFxdDGQ9MjdYZv7s6+R8tlvTZplJrs=
 github.com/mirkobrombin/go-struct-flags v1.0.1 h1:fWqsSqhiHgBVOVxxvoZHNIVfOni1LHTatHkNzr7jp/0=
 github.com/mirkobrombin/go-struct-flags v1.0.1/go.mod h1:G9m7ZJ4EMuc6Dtd9y/JnEnecA44YohDFLPZlx58MLUU=
 github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db h1:62I3jR2EmQ4l5rM/4FEfDWcRD+abF5XlKShorW5LRoQ=

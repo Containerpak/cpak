@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	hrun_server "github.com/distrobox/hrun/pkg/server"
+	hrun_server "github.com/containerpak/hrun/pkg/server"
 	"github.com/spf13/cobra"
 )
 

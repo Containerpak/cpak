@@ -3,11 +3,11 @@ module github.com/mirkobrombin/cpak
 go 1.23.4
 
 require (
+	github.com/containerpak/hrun v0.0.4
 	github.com/creack/pty v1.1.21
-	github.com/distrobox/hrun v0.0.2
 	github.com/google/go-containerregistry v0.16.1
 	github.com/google/uuid v1.3.1
-	github.com/mirkobrombin/dabadee v0.4.0
+	github.com/mirkobrombin/dabadee v1.0.0
 	github.com/mirkobrombin/go-struct-flags v1.0.1
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/schollz/progressbar/v3 v3.13.1
