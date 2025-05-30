@@ -140,6 +140,14 @@ License: Apache-2.0
 License: BSD-3-Clause
 [https://github.com/vbatts/tar-split/blob/v0.11.3/LICENSE](https://github.com/vbatts/tar-split/blob/v0.11.3/LICENSE)
 
+**github.com/invopop/jsonschema**
+License: MIT
+[https://github.com/invopop/jsonschema/blob/main/COPYING](https://github.com/invopop/jsonschema/blob/main/COPYING)
+
+**github.com/xeipuuv/gojsonschema**
+License: Apache-2.0
+[https://github.com/xeipuuv/gojsonschema/blob/master/LICENSE-APACHE-2.0.txt](https://github.com/xeipuuv/gojsonschema/blob/master/LICENSE-APACHE-2.0.txt)
+
 **golang.org/x/sync/errgroup**
 License: BSD-3-Clause
 [https://cs.opensource.google/go/x/sync/+/v0.10.0\:LICENSE](https://cs.opensource.google/go/x/sync/+/v0.10.0:LICENSE)

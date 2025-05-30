@@ -18,7 +18,7 @@ func NewInitCommand() *cobra.Command {
 		RunE:  initRun,
 	}
 
-	// Required manifest fields
+	// flags required...
 	cmd.Flags().StringP("name", "n", "", "Name of the application (required)")
 	cmd.MarkFlagRequired("name")
 
@@ -30,9 +30,9 @@ func NewInitCommand() *cobra.Command {
 
 	cmd.Flags().StringP("image", "i", "", "OCI image reference (required)")
 	cmd.MarkFlagRequired("image")
+	cmd.Flags().StringSliceP("binary", "b", []string{}, "Path to a binary to expose (can be repeated, must be absolute paths, required)")
 
 	// Optional manifest fields
-	cmd.Flags().StringSliceP("binary", "b", []string{}, "Path to a binary to expose (can be repeated)")
 	cmd.Flags().StringSliceP("desktop-entry", "e", []string{}, "Path to a desktop entry file (can be repeated)")
 	cmd.Flags().StringSliceP("dependency", "D", []string{}, "Origin of a cpak dependency (can be repeated)")
 	cmd.Flags().StringSliceP("addon", "a", []string{}, "Name of an addon (can be repeated)")
@@ -65,20 +65,18 @@ func initRun(cmd *cobra.Command, args []string) error {
 		IdleTime:       idle,
 		Override:       types.NewOverride(),
 	}
-
 	for _, origin := range deps {
 		manifest.Dependencies = append(manifest.Dependencies, types.Dependency{Origin: origin})
 	}
 
-	if err := cpak.ValidateManifestSyntax(&manifest); err != nil {
-		return fmt.Errorf("manifest validation error: %w", err)
+	if err := cpak.ValidateManifest(&manifest); err != nil {
+		return fmt.Errorf("cpak.json is invalid:\n%s", err)
 	}
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to serialize manifest: %w", err)
 	}
-
 	if err := os.WriteFile("cpak.json", data, 0644); err != nil {
 		return fmt.Errorf("failed to write cpak.json: %w", err)
 	}
