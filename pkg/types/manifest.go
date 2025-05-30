@@ -14,6 +14,9 @@ type CpakManifest struct {
 	// as concise as possible.
 	Description string `json:"description"`
 
+	// Version is the version of the application.
+	Version string `json:"version"`
+
 	// Image is the image of the application. It is expected to be a valid
 	// OCI image (full image reference).
 	Image string `json:"image"`

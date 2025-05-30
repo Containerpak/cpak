@@ -34,6 +34,7 @@ func main() {
 	rootCmd.AddCommand(cmd.NewAuditCommand())
 	rootCmd.AddCommand(cmd.NewOverrideCommand())
 	rootCmd.AddCommand(cmd.NewExtractCommand())
+	rootCmd.AddCommand(cmd.NewInitCommand())
 	rootCmd.AddCommand(cmd.NewHostExecServerCommand())
 	rootCmd.AddCommand(cmd.NewHostExecClientCommand())
 
