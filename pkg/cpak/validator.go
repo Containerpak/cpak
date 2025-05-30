@@ -4,26 +4,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/invopop/jsonschema"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/xeipuuv/gojsonschema"
 )
 
 // ValidateManifest validates a CpakManifest against its JSON schema.
 func ValidateManifest(m *types.CpakManifest) error {
-	exeDir, err := filepath.Abs(filepath.Dir(os.Args[0]))
-	if err != nil {
-		return fmt.Errorf("cannot locate executable dir: %w", err)
-	}
-	schemaPath := filepath.Join(exeDir, "manifest.schema.json")
-	if _, err := os.Stat(schemaPath); err != nil {
-		return fmt.Errorf("schema file not found at %s: %w", schemaPath, err)
-	}
+	reflector := &jsonschema.Reflector{ExpandedStruct: true}
+	schema := reflector.Reflect(&types.CpakManifest{})
 
-	schemaLoader := gojsonschema.NewReferenceLoader("file://" + schemaPath)
+	schemaBytes, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to serialize JSON schema: %w", err)
+	}
+	schemaLoader := gojsonschema.NewBytesLoader(schemaBytes)
 
 	manifestBytes, err := json.Marshal(m)
 	if err != nil {
@@ -35,6 +32,7 @@ func ValidateManifest(m *types.CpakManifest) error {
 	if err != nil {
 		return fmt.Errorf("schema validation error: %w", err)
 	}
+
 	if !result.Valid() {
 		var sb strings.Builder
 		sb.WriteString("manifest validation failed:\n")
@@ -45,5 +43,6 @@ func ValidateManifest(m *types.CpakManifest) error {
 		}
 		return errors.New(sb.String())
 	}
+
 	return nil
 }

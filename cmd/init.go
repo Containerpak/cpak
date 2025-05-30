@@ -19,6 +19,8 @@ func NewInitCommand() *cobra.Command {
 	}
 
 	// flags required...
+	cmd.Flags().StringP("manifest-version", "m", "1.0", "Manifest version (default: 1.0)")
+
 	cmd.Flags().StringP("name", "n", "", "Name of the application (required)")
 	cmd.MarkFlagRequired("name")
 
@@ -43,6 +45,7 @@ func NewInitCommand() *cobra.Command {
 
 // initRun executes the scaffolding of cpak.json based on provided flags.
 func initRun(cmd *cobra.Command, args []string) error {
+	manifestVersion, _ := cmd.Flags().GetString("manifest-version")
 	name, _ := cmd.Flags().GetString("name")
 	version, _ := cmd.Flags().GetString("version")
 	desc, _ := cmd.Flags().GetString("description")
@@ -54,16 +57,17 @@ func initRun(cmd *cobra.Command, args []string) error {
 	idle, _ := cmd.Flags().GetInt("idle-time")
 
 	manifest := types.CpakManifest{
-		Name:           name,
-		Description:    desc,
-		Version:        version,
-		Image:          image,
-		Binaries:       binaries,
-		DesktopEntries: desktops,
-		Dependencies:   []types.Dependency{},
-		Addons:         addons,
-		IdleTime:       idle,
-		Override:       types.NewOverride(),
+		ManifestVersion: manifestVersion,
+		Name:            name,
+		Description:     desc,
+		Version:         version,
+		Image:           image,
+		Binaries:        binaries,
+		DesktopEntries:  desktops,
+		Dependencies:    []types.Dependency{},
+		Addons:          addons,
+		IdleTime:        idle,
+		Override:        types.NewOverride(),
 	}
 	for _, origin := range deps {
 		manifest.Dependencies = append(manifest.Dependencies, types.Dependency{Origin: origin})

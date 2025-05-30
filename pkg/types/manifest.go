@@ -7,6 +7,9 @@ package types
 
 // CpakManifest is the struct that represents the manifest of an application.
 type CpakManifest struct {
+	// ManifestVersion is the version of the manifest schema (e.g. "1.0").
+	ManifestVersion string `json:"manifest_version" jsonschema:"enum=1.0,description=Manifest schema version"`
+
 	// Name is the name of the application.
 	Name string `json:"name" jsonschema:"minLength=1,description=Application name"`
 
