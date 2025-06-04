@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/spf13/cobra"
 )
@@ -60,7 +61,7 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 	// if all version parameters are empty, we default to the main branch
 	// assuming it is the default branch of the repository
 	if versionParamsCount == 0 {
-		fmt.Println("No version specified, using main branch if available")
+		logger.Println("No version specified, using main branch if available")
 		branch = "main"
 	}
 
@@ -69,28 +70,28 @@ func InstallPackage(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	fmt.Println("\nThe following cpak(s) will be installed:")
-	fmt.Printf("  - %s: %s\n", manifest.Name, manifest.Description)
-	fmt.Println()
+	logger.Println("\nThe following cpak(s) will be installed:")
+	logger.Printf("  - %s: %s", manifest.Name, manifest.Description)
+	logger.Println()
 
-	fmt.Println("The following will be exported:")
+	logger.Println("The following will be exported:")
 	for _, binary := range manifest.Binaries {
-		fmt.Printf("  - (binary) %s\n", binary)
+		logger.Printf("  - (binary) %s", binary)
 	}
 	for _, dependency := range manifest.DesktopEntries {
-		fmt.Printf("  - (desktop entry) %s\n", dependency)
+		logger.Printf("  - (desktop entry) %s", dependency)
 	}
-	fmt.Println()
+	logger.Println()
 
-	fmt.Println("The following dependencies will be installed:")
+	logger.Println("The following dependencies will be installed:")
 	for _, dependency := range manifest.Dependencies {
-		fmt.Printf("  - %s\n", dependency)
+		logger.Printf("  - %s", dependency)
 	}
-	fmt.Println()
+	logger.Println()
 
-	fmt.Println("The following permissions will be granted:")
+	logger.Println("The following permissions will be granted:")
 	tools.PrintStructKeyVal(manifest.Override)
-	fmt.Println()
+	logger.Println()
 
 	confirm := tools.ConfirmOperation("Do you want to continue?")
 	if !confirm {

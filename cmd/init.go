@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -85,6 +86,6 @@ func initRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write cpak.json: %w", err)
 	}
 
-	fmt.Println("Created cpak.json successfully.")
+	logger.Println("Created cpak.json successfully.")
 	return nil
 }

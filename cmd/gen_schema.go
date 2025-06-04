@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/invopop/jsonschema"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -40,6 +41,6 @@ func runGenSchema(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write schema to %s: %w", schemaPath, err)
 	}
 
-	fmt.Println("Schema generated at", schemaPath)
+	logger.Println("Schema generated at", schemaPath)
 	return nil
 }

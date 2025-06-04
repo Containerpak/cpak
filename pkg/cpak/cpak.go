@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/pkg/storage"
@@ -168,9 +169,9 @@ func createCpakDirs(options *types.CpakOptions) error {
 // If the repair flag is set to true, the function will try to repair the
 // store, by removing inactivated containers and missing applications.
 func (c *Cpak) Audit(repair bool) (err error) {
-	fmt.Println("Starting cpak store audit...")
+	logger.Println("Starting cpak store audit...")
 	if repair {
-		fmt.Println("Repair mode enabled.")
+		logger.Println("Repair mode enabled.")
 	}
 
 	store, err := NewStore(c.Options.StorePath)
@@ -185,33 +186,33 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	}
 
 	// --- 1. Applications in the DB vs Layers on the Filesystem ---
-	fmt.Println("\nChecking application layers...")
+	logger.Println("\nChecking application layers...")
 	appsToPotentiallyRemove := make(map[string]string)
 
 	for _, app := range allDbApps {
-		fmt.Printf("  Auditing app: %s (Origin: %s, Version: %s)\n", app.Name, app.Origin, app.Version)
+		logger.Printf("  Auditing app: %s (Origin: %s, Version: %s)", app.Name, app.Origin, app.Version)
 		if len(app.ParsedLayers) == 0 && app.Config != "" {
-			fmt.Printf("    [WARNING] App %s has OCI config but no layers listed in DB.\n", app.CpakId)
+			logger.Printf("    [WARNING] App %s has OCI config but no layers listed in DB.", app.CpakId)
 		}
 		for _, layerDigest := range app.ParsedLayers {
 			layerPath := c.GetInStoreDir("layers", layerDigest)
 			if _, statErr := os.Stat(layerPath); os.IsNotExist(statErr) {
 				reason := fmt.Sprintf("layer %s for app %s (CpakId: %s) not found at %s", layerDigest, app.Name, app.CpakId, layerPath)
-				fmt.Printf("    [ERROR] %s\n", reason)
+				logger.Printf("    [ERROR] %s", reason)
 				appsToPotentiallyRemove[app.CpakId] = reason
 			}
 		}
 	}
 	if repair && len(appsToPotentiallyRemove) > 0 {
-		fmt.Println("  Repairing missing layers for applications (marking for removal, manual intervention might be needed):")
+		logger.Println("  Repairing missing layers for applications (marking for removal, manual intervention might be needed):")
 		for cpakId, reason := range appsToPotentiallyRemove {
-			fmt.Printf("    App %s is corrupted due to missing layers (%s). Consider removing and reinstalling.\n", cpakId, reason)
+			logger.Printf("    App %s is corrupted due to missing layers (%s). Consider removing and reinstalling.", cpakId, reason)
 		}
 		allDbApps, _ = store.GetApplications()
 	}
 
 	// --- 2. Layers Garbage Collection ---
-	fmt.Println("\nChecking for orphaned layers (Garbage Collection)...")
+	logger.Println("\nChecking for orphaned layers (Garbage Collection)...")
 	allReferencedLayers := make(map[string]bool)
 	for _, app := range allDbApps {
 		for _, layerDigest := range app.ParsedLayers {
@@ -223,7 +224,7 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	diskLayers, err := os.ReadDir(layerStorePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Printf("  [ERROR] Could not read layers directory %s: %v\n", layerStorePath, err)
+			logger.Printf("  [ERROR] Could not read layers directory %s: %v", layerStorePath, err)
 		}
 	} else {
 		for _, diskLayerEntry := range diskLayers {
@@ -231,13 +232,13 @@ func (c *Cpak) Audit(repair bool) (err error) {
 				layerDigestOnDisk := diskLayerEntry.Name()
 				if !allReferencedLayers[layerDigestOnDisk] {
 					layerFullPath := filepath.Join(layerStorePath, layerDigestOnDisk)
-					fmt.Printf("  Layer %s found on disk but not referenced by any application.\n", layerFullPath)
+					logger.Printf("  Layer %s found on disk but not referenced by any application.", layerFullPath)
 					if repair {
-						fmt.Printf("    Repair: Removing orphaned layer %s...\n", layerFullPath)
+						logger.Printf("    Repair: Removing orphaned layer %s...", layerFullPath)
 						if removeErr := os.RemoveAll(layerFullPath); removeErr != nil {
-							fmt.Printf("      [ERROR] Failed to remove orphaned layer %s: %v\n", layerFullPath, removeErr)
+							logger.Printf("      [ERROR] Failed to remove orphaned layer %s: %v", layerFullPath, removeErr)
 						} else {
-							fmt.Printf("      Orphaned layer %s removed.\n", layerFullPath)
+							logger.Printf("      Orphaned layer %s removed.", layerFullPath)
 						}
 					}
 				}
@@ -246,7 +247,7 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	}
 
 	// --- 3. Containers in the DB vs Filesystem and Process States ---
-	fmt.Println("\nChecking container integrity and process states...")
+	logger.Println("\nChecking container integrity and process states...")
 	allDbContainers := []types.Container{}
 	for _, app := range allDbApps {
 		appContainers, _ := store.GetApplicationContainers(app)
@@ -254,25 +255,25 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	}
 
 	for _, container := range allDbContainers {
-		fmt.Printf("  Auditing container: %s (App CpakId: %s)\n", container.CpakId, container.ApplicationCpakId)
+		logger.Printf("  Auditing container: %s (App CpakId: %s)", container.CpakId, container.ApplicationCpakId)
 		validContainer := true
 
 		if _, statErr := os.Stat(container.StatePath); os.IsNotExist(statErr) {
-			fmt.Printf("    [ERROR] State path %s for container %s not found.\n", container.StatePath, container.CpakId)
+			logger.Printf("    [ERROR] State path %s for container %s not found.", container.StatePath, container.CpakId)
 			validContainer = false
 		}
 		containerRootfs := c.GetInStoreDir("containers", container.CpakId, "rootfs")
 		if _, statErr := os.Stat(containerRootfs); os.IsNotExist(statErr) {
-			fmt.Printf("    [ERROR] RootFS path %s for container %s not found.\n", containerRootfs, container.CpakId)
+			logger.Printf("    [ERROR] RootFS path %s for container %s not found.", containerRootfs, container.CpakId)
 			validContainer = false
 		}
 
 		if container.Pid != 0 {
 			pidExists, _ := process.PidExists(int32(container.Pid))
 			if !pidExists {
-				fmt.Printf("    [INFO] Main process PID %d for container %s is not running.\n", container.Pid, container.CpakId)
+				logger.Printf("    [INFO] Main process PID %d for container %s is not running.", container.Pid, container.CpakId)
 				if repair {
-					fmt.Printf("      Repair: Container %s main process is not running. Cleaning up associated files and DB entry.\n", container.CpakId)
+					logger.Printf("      Repair: Container %s main process is not running. Cleaning up associated files and DB entry.", container.CpakId)
 					validContainer = false
 				}
 			}
@@ -281,12 +282,12 @@ func (c *Cpak) Audit(repair bool) (err error) {
 		if container.HostExecPid != 0 {
 			pidExists, _ := process.PidExists(int32(container.HostExecPid))
 			if !pidExists {
-				fmt.Printf("    [INFO] HostExec server PID %d for container %s is not running.\n", container.HostExecPid, container.CpakId)
+				logger.Printf("    [INFO] HostExec server PID %d for container %s is not running.", container.HostExecPid, container.CpakId)
 			}
 		}
 
 		if !validContainer && repair {
-			fmt.Printf("    Repair: Removing invalid container DB entry %s and associated files.\n", container.CpakId)
+			logger.Printf("    Repair: Removing invalid container DB entry %s and associated files.", container.CpakId)
 			if container.HostExecPid != 0 {
 				stopHostExecServer(container.HostExecPid)
 			}
@@ -295,27 +296,27 @@ func (c *Cpak) Audit(repair bool) (err error) {
 			_ = os.RemoveAll(filepath.Dir(containerRootfs))
 
 			if removeErr := store.RemoveContainerByCpakId(container.CpakId); removeErr != nil {
-				fmt.Printf("      [ERROR] Failed to remove container %s from DB: %v\n", container.CpakId, removeErr)
+				logger.Printf("      [ERROR] Failed to remove container %s from DB: %v", container.CpakId, removeErr)
 			} else {
-				fmt.Printf("      Container %s removed from DB.\n", container.CpakId)
+				logger.Printf("      Container %s removed from DB.", container.CpakId)
 			}
 		}
 	}
 
 	// --- 4. Orphaned Container/State Directories ---
-	fmt.Println("\nChecking for orphaned container/state directories...")
+	logger.Println("\nChecking for orphaned container/state directories...")
 	checkOrphanedDirs := func(basePath string, description string, getDbIdsFunc func() (map[string]bool, error)) {
 		diskEntries, err := os.ReadDir(basePath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				fmt.Printf("  [ERROR] Could not read %s directory %s: %v\n", description, basePath, err)
+				logger.Printf("  [ERROR] Could not read %s directory %s: %v", description, basePath, err)
 			}
 			return
 		}
 
 		dbIds, err := getDbIdsFunc()
 		if err != nil {
-			fmt.Printf("  [ERROR] Could not get DB IDs for %s: %v\n", description, err)
+			logger.Printf("  [ERROR] Could not get DB IDs for %s: %v", description, err)
 			return
 		}
 
@@ -324,13 +325,13 @@ func (c *Cpak) Audit(repair bool) (err error) {
 				idOnDisk := entry.Name()
 				if !dbIds[idOnDisk] {
 					fullPath := filepath.Join(basePath, idOnDisk)
-					fmt.Printf("  Orphaned %s directory found: %s\n", description, fullPath)
+					logger.Printf("  Orphaned %s directory found: %s", description, fullPath)
 					if repair {
-						fmt.Printf("    Repair: Removing orphaned %s directory %s...\n", description, fullPath)
+						logger.Printf("    Repair: Removing orphaned %s directory %s...", description, fullPath)
 						if removeErr := os.RemoveAll(fullPath); removeErr != nil {
-							fmt.Printf("      [ERROR] Failed to remove %s: %v\n", fullPath, removeErr)
+							logger.Printf("      [ERROR] Failed to remove %s: %v", fullPath, removeErr)
 						} else {
-							fmt.Printf("      %s directory %s removed.\n", description, fullPath)
+							logger.Printf("      %s directory %s removed.", description, fullPath)
 						}
 					}
 				}
@@ -355,7 +356,7 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	checkOrphanedDirs(c.Options.StoreStatesPath, "state", getContainerDbIds)
 
 	// --- 5. Exports (Binaries and .desktop Files) ---
-	fmt.Println("\nChecking application exports (binaries and .desktop files)...")
+	logger.Println("\nChecking application exports (binaries and .desktop files)...")
 	homeDir, _ := os.UserHomeDir()
 	desktopEntriesPath := filepath.Join(homeDir, ".local", "share", "applications")
 
@@ -366,11 +367,11 @@ func (c *Cpak) Audit(repair bool) (err error) {
 			exportPath := filepath.Join(c.Options.ExportsPath, filepath.Join(strings.Split(app.Origin, "/")...), filepath.Base(binaryName))
 			expectedExports[exportPath] = app.CpakId
 			if _, statErr := os.Stat(exportPath); os.IsNotExist(statErr) {
-				fmt.Printf("  [WARNING] Exported binary %s for app %s (Origin: %s) not found.\n", exportPath, app.Name, app.Origin)
+				logger.Printf("  [WARNING] Exported binary %s for app %s (Origin: %s) not found.", exportPath, app.Name, app.Origin)
 				if repair {
-					fmt.Printf("    Repair: Recreating binary export for %s...\n", exportPath)
+					logger.Printf("    Repair: Recreating binary export for %s...", exportPath)
 					if c.exportBinary(app, binaryName) != nil {
-						fmt.Printf("      [ERROR] Failed to recreate binary %s.\n", exportPath)
+						logger.Printf("      [ERROR] Failed to recreate binary %s.", exportPath)
 					}
 				}
 			}
@@ -380,10 +381,10 @@ func (c *Cpak) Audit(repair bool) (err error) {
 			exportPath := filepath.Join(desktopEntriesPath, baseName)
 			expectedExports[exportPath] = app.CpakId
 			if _, statErr := os.Stat(exportPath); os.IsNotExist(statErr) {
-				fmt.Printf("  [WARNING] Exported .desktop file %s for app %s (Origin: %s) not found.\n", exportPath, app.Name, app.Origin)
+				logger.Printf("  [WARNING] Exported .desktop file %s for app %s (Origin: %s) not found.", exportPath, app.Name, app.Origin)
 				if repair {
-					fmt.Printf("    Repair: Recreating .desktop entry for %s...\n", exportPath)
-					fmt.Println("      Automatic recreation of .desktop file during audit is complex. Please reinstall or re-export if needed.")
+					logger.Printf("    Repair: Recreating .desktop entry for %s...", exportPath)
+					logger.Println("      Automatic recreation of .desktop file during audit is complex. Please reinstall or re-export if needed.")
 				}
 			}
 		}
@@ -397,11 +398,11 @@ func (c *Cpak) Audit(repair bool) (err error) {
 		}
 		if !d.IsDir() {
 			if _, expected := expectedExports[path]; !expected {
-				fmt.Printf("  Orphaned binary export found: %s\n", path)
+				logger.Printf("  Orphaned binary export found: %s", path)
 				if repair {
-					fmt.Printf("    Repair: Removing orphaned binary export %s...\n", path)
+					logger.Printf("    Repair: Removing orphaned binary export %s...", path)
 					if removeErr := os.Remove(path); removeErr != nil {
-						fmt.Printf("      [ERROR] Failed to remove %s: %v\n", path, removeErr)
+						logger.Printf("      [ERROR] Failed to remove %s: %v", path, removeErr)
 					}
 				}
 			}
@@ -431,11 +432,11 @@ func (c *Cpak) Audit(repair bool) (err error) {
 					}
 
 					if !appExistsForThisExport {
-						fmt.Printf("  Potentially orphaned .desktop file found: %s (managed by cpak)\n", fullDesktopPath)
+						logger.Printf("  Potentially orphaned .desktop file found: %s (managed by cpak)", fullDesktopPath)
 						if repair {
-							fmt.Printf("    Repair: Removing orphaned .desktop file %s...\n", fullDesktopPath)
+							logger.Printf("    Repair: Removing orphaned .desktop file %s...", fullDesktopPath)
 							if removeErr := os.Remove(fullDesktopPath); removeErr != nil {
-								fmt.Printf("      [ERROR] Failed to remove %s: %v\n", fullDesktopPath, removeErr)
+								logger.Printf("      [ERROR] Failed to remove %s: %v", fullDesktopPath, removeErr)
 							}
 						}
 					}
@@ -444,6 +445,6 @@ func (c *Cpak) Audit(repair bool) (err error) {
 		}
 	}
 
-	fmt.Println("\nAudit finished.")
+	logger.Println("\nAudit finished.")
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -29,16 +30,16 @@ func runSError(iErr error) (err error) {
 func RunService(cmd *cobra.Command, args []string) (err error) {
 	cpak, err := cpak.NewCpak()
 	if err != nil {
-		fmt.Println("cpak service exited with error!", err)
+		logger.Println("cpak service exited with error!", err)
 		return runSError(err)
 	}
 
 	err = cpak.StartSocketListener()
 	if err != nil {
-		fmt.Println("cpak service exited with error!", err)
+		logger.Println("cpak service exited with error!", err)
 		return runSError(err)
 	}
 
-	fmt.Println("cpak service exited successfully!")
+	logger.Println("cpak service exited successfully!")
 	return nil
 }

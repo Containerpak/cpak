@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/spf13/cobra"
 )
@@ -60,14 +61,14 @@ func spawnVerbose(args ...any) {
 	if verbose {
 		msg := []any{"[verbose]: "}
 		msg = append(msg, args...)
-		fmt.Println(msg...)
+		logger.Println(msg...)
 	}
 }
 
 func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	verbose, _ = cmd.Flags().GetBool("verbose")
 
-	fmt.Println("Spawning a new cpak namespace...")
+	logger.Println("Spawning a new cpak namespace...")
 
 	userUid, err := cmd.Flags().GetInt("user-uid")
 	if err != nil {
@@ -119,7 +120,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 	finalEnvVarsForContainer := []string{}
 	for _, envVar := range envVars {
 		if strings.HasPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=") {
-			fmt.Println("Found hostexec socket path in env:", envVar)
+			logger.Println("Found hostexec socket path in env:", envVar)
 			hostExecSocketPath = strings.TrimPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=")
 			finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
 		} else if strings.HasPrefix(envVar, "CPAK_ALLOWED_HOST_CMDS=") {
@@ -162,7 +163,7 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 
 	// Append shims obtained by overrides, to the allowed commands
 	if len(overrideMountShims) > 0 {
-		fmt.Println("Found mount shims in overrides:", overrideMountShims)
+		logger.Println("Found mount shims in overrides:", overrideMountShims)
 		allowedHostCmds = append(allowedHostCmds, overrideMountShims...)
 	}
 

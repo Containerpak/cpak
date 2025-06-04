@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/schollz/progressbar/v3"
 )
@@ -92,7 +93,7 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 		}
 
 		if found {
-			fmt.Printf("Layer %s already present in the store, skipping..\n", layerDigest)
+			logger.Printf("Layer %s already present in the store, skipping..", layerDigest)
 			continue
 		}
 

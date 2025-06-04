@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -43,7 +44,7 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 
 	parentAppCpakId, isNested := getNested()
 	if isNested {
-		fmt.Println("Running in nested mode...")
+		logger.Println("Running in nested mode...")
 		return c.RunNested(parentAppCpakId, origin, version, branch, commit, release, binary, extraArgs...)
 	}
 
@@ -80,7 +81,7 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 
 	if verbose {
 		elapsed := time.Since(startTime)
-		fmt.Printf("Container creation took %s\n", elapsed)
+		logger.Printf("Container creation took %s", elapsed)
 	}
 
 	command := []string{}
@@ -113,7 +114,7 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 		}
 		// Fallback or error if specific binary not found among exported ones
 		// For now, let's assume if not unexported and not found, it's an error or use default.
-		fmt.Printf("Warning: binary '%s' not explicitly found in manifest, attempting to run '%s'\n", actualBinaryName, app.ParsedBinaries[0])
+		logger.Printf("Warning: binary '%s' not explicitly found in manifest, attempting to run '%s'", actualBinaryName, app.ParsedBinaries[0])
 		command = append(command, app.ParsedBinaries[0])
 		command = append(command, extraArgs...)
 	}
@@ -143,7 +144,7 @@ func (c *Cpak) prepareSocketListener() (err error) {
 }
 
 func (c *Cpak) StartSocketListener() (err error) {
-	fmt.Println("Preparing socket listener...")
+	logger.Println("Preparing socket listener...")
 	_ = os.Remove("/tmp/cpak.sock")
 
 	// the socket listens on /tmp/cpak.sock
@@ -152,13 +153,13 @@ func (c *Cpak) StartSocketListener() (err error) {
 		return err
 	}
 	defer listener.Close()
-	fmt.Printf("Waiting for connections on %s...\n", listener.Addr())
+	logger.Printf("Waiting for connections on %s...", listener.Addr())
 
 	for {
 		var conn net.Conn
 		conn, err = listener.Accept()
 		if err != nil {
-			fmt.Printf("Error accepting connection: %v\n", err)
+			logger.Printf("Error accepting connection: %v", err)
 			continue
 		}
 
@@ -175,7 +176,7 @@ func (c *Cpak) handleSocketConnection(conn net.Conn) {
 	n, err = conn.Read(buffer)
 	if err != nil {
 		if err != io.EOF {
-			fmt.Printf("Error reading request: %v\n", err)
+			logger.Printf("Error reading request: %v", err)
 		}
 		return
 	}
@@ -188,23 +189,23 @@ func (c *Cpak) handleSocketConnection(conn net.Conn) {
 	var params types.RequestParams
 	err = json.Unmarshal(buffer[:n], &params)
 	if err != nil {
-		fmt.Printf("Error parsing JSON request: %v\n", err)
+		logger.Printf("Error parsing JSON request: %v", err)
 		sendErrorResponse(conn, fmt.Errorf("invalid JSON request"))
 		return
 	}
 
-	fmt.Printf("Received request from the container: %+v\n", params)
+	logger.Printf("Received request from the container: %+v", params)
 
 	switch params.Action {
 	case "run":
-		fmt.Printf("Running another cpak container in nested mode...\n")
+		logger.Printf("Running another cpak container in nested mode...")
 
 		// we need to create a PTY to run the nested cpak and allow the
 		// bidirectional communication between the host and the container
 		var ptyMaster, ptySlave *os.File
 		ptyMaster, ptySlave, err = pty.Open()
 		if err != nil {
-			fmt.Println("Error creating PTY:", err)
+			logger.Println("Error creating PTY:", err)
 			sendErrorResponse(conn, fmt.Errorf("error creating PTY"))
 			return
 		}
@@ -252,7 +253,7 @@ func (c *Cpak) handleSocketConnection(conn net.Conn) {
 
 		// start the shell process
 		if err = cmd.Start(); err != nil {
-			fmt.Println("Error starting shell:", err)
+			logger.Println("Error starting shell:", err)
 			sendErrorResponse(conn, fmt.Errorf("error starting shell"))
 			ptySlave.Close()
 			return
@@ -267,19 +268,19 @@ func (c *Cpak) handleSocketConnection(conn net.Conn) {
 		select {
 		case err := <-cmdExited:
 			if err != nil {
-				fmt.Printf("Nested cpak command exited with error: %v\n", err)
+				logger.Printf("Nested cpak command exited with error: %v", err)
 			} else {
-				fmt.Println("Nested cpak command exited successfully.")
+				logger.Println("Nested cpak command exited successfully.")
 			}
 			sendSuccessResponse(conn)
 		case <-done:
-			fmt.Println("Client connection closed or errored. Terminating nested cpak process.")
+			logger.Println("Client connection closed or errored. Terminating nested cpak process.")
 			if cmd.Process != nil {
 				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
 		}
 	default:
-		fmt.Printf("Unknown request: %s\n", params.Action)
+		logger.Printf("Unknown request: %s", params.Action)
 		sendErrorResponse(conn, fmt.Errorf("unknown request: %s", params.Action))
 	}
 }
@@ -299,7 +300,7 @@ func sendErrorResponse(conn net.Conn, errToSend error) {
 }
 
 func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
-	fmt.Println("Running another cpak container in nested mode...")
+	logger.Println("Running another cpak container in nested mode...")
 
 	// the RequestParams struct is used by the server to check if the cpak
 	// which is running, has the ability to run the specified nested cpak
@@ -316,7 +317,7 @@ func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, 
 	}
 	requestData, err := json.Marshal(params)
 	if err != nil {
-		fmt.Printf("Error encoding request data as JSON: %v\n", err)
+		logger.Printf("Error encoding request data as JSON: %v", err)
 		return
 	}
 
@@ -329,10 +330,10 @@ func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, 
 
 	// the requestData is sent to the socket to validate the action
 	// before setting up the channels to communicate with the host
-	fmt.Printf("Sending request to the socket: %s\n", requestData)
+	logger.Printf("Sending request to the socket: %s", requestData)
 	_, err = conn.Write(requestData)
 	if err != nil {
-		fmt.Printf("Error sending request: %v\n", err)
+		logger.Printf("Error sending request: %v", err)
 		return
 	}
 
@@ -353,7 +354,7 @@ func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, 
 	select {
 	case <-doneCh:
 	case <-sigCh:
-		fmt.Println("Interrupt received, closing nested connection.")
+		logger.Println("Interrupt received, closing nested connection.")
 	}
 	return
 }

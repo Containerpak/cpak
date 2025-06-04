@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +37,7 @@ func StopContainer(cmd *cobra.Command, args []string) (err error) {
 	commit, _ := cmd.Flags().GetString("commit")
 	release, _ := cmd.Flags().GetString("release")
 
-	fmt.Println("Stopping cpak from remote:", remote)
+	logger.Println("Stopping cpak from remote:", remote)
 
 	cpak, err := cpak.NewCpak()
 	if err != nil {

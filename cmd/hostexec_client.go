@@ -7,10 +7,10 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	hrun_client "github.com/containerpak/hrun/pkg/client"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -40,13 +40,13 @@ func runHostExecClient(cmd *cobra.Command, args []string) error {
 
 	commandAndArgs := args
 
-	log.Printf("Starting hrun client for command %v on socket %s", commandAndArgs, socketPath)
+	logger.Printf("Starting hrun client for command %v on socket %s", commandAndArgs, socketPath)
 	err := hrun_client.StartClient(commandAndArgs, socketPath)
 
 	if err != nil {
 		return fmt.Errorf("hrun client execution failed: %w", err)
 	}
 
-	log.Println("hrun client finished successfully.")
+	logger.Println("hrun client finished successfully.")
 	return nil
 }

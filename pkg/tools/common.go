@@ -6,9 +6,10 @@
 package tools
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/mirkobrombin/cpak/pkg/logger"
 )
 
 // CamelToSnake converts a camel case string to a snake case string
@@ -34,27 +35,27 @@ func PrintStructKeyVal(structure interface{}) {
 		name := typ.Field(i).Name
 		snakeCaseName := CamelToSnake(name)
 		if field.Kind() == reflect.String {
-			fmt.Printf("  - %s: %s\n", snakeCaseName, field.String())
+			logger.Printf("  - %s: %s", snakeCaseName, field.String())
 			continue
 		}
 		if field.Kind() == reflect.Slice {
-			fmt.Printf("  - %s:\n", snakeCaseName)
+			logger.Printf("  - %s:", snakeCaseName)
 			for j := 0; j < field.Len(); j++ {
-				fmt.Printf("    - %s\n", field.Index(j).String())
+				logger.Printf("    - %s", field.Index(j).String())
 			}
 			continue
 		}
 		if field.Kind() == reflect.Map {
-			fmt.Printf("  - %s:\n", snakeCaseName)
+			logger.Printf("  - %s:", snakeCaseName)
 			for _, key := range field.MapKeys() {
-				fmt.Printf("    - %s: %s\n", key.String(), field.MapIndex(key).String())
+				logger.Printf("    - %s: %s", key.String(), field.MapIndex(key).String())
 			}
 			continue
 		}
 		if field.Kind() == reflect.Bool {
-			fmt.Printf("  - %s: %v\n", snakeCaseName, field.Bool())
+			logger.Printf("  - %s: %v", snakeCaseName, field.Bool())
 			continue
 		}
-		fmt.Printf("  - %s: %v\n", snakeCaseName, field.Interface())
+		logger.Printf("  - %s: %v", snakeCaseName, field.Interface())
 	}
 }

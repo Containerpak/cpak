@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -91,7 +92,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 
 	existingApp, _ := store.GetApplicationByOrigin(origin, version, branch, commit, release)
 	if existingApp.CpakId != "" {
-		fmt.Println("application already installed, perform an Audit if this application is not working as expected")
+		logger.Println("application already installed, perform an Audit if this application is not working as expected")
 		return
 	}
 
@@ -100,7 +101,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 	for _, depManifest := range manifest.Dependencies {
 		depOrigin := depManifest.Origin
 		if !isURL(depOrigin) {
-			fmt.Printf("dependency %s is not a valid cpak url, assuming it comes from the same origin\n", depOrigin)
+			logger.Printf("dependency %s is not a valid cpak url, assuming it comes from the same origin", depOrigin)
 			parentOrigin := origin[:strings.LastIndex(origin, "/")]
 			depOrigin = parentOrigin + "/" + depOrigin
 		}
@@ -268,10 +269,10 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 		if err := tools.CopyFile(absIconPath, iconDest); err != nil {
 			return err
 		}
-		fmt.Printf("Exported icon to %s\n", iconDest)
+		logger.Printf("Exported icon to %s", iconDest)
 		iconName = iconDest
 	} else {
-		fmt.Printf("Warning: icon %s not found for app %s\n", iconName, app.Name)
+		logger.Printf("Warning: icon %s not found for app %s", iconName, app.Name)
 	}
 
 	lines := strings.Split(content, "\n")
@@ -345,7 +346,7 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 
 	err = c.removeExports(appToRemove)
 	if err != nil {
-		fmt.Printf("Warning: failed to remove all exports for %s: %v\n", appToRemove.Name, err)
+		logger.Printf("Warning: failed to remove all exports for %s: %v", appToRemove.Name, err)
 	}
 
 	// an Audit is needed to remove resources (containers, exports, etc.)
@@ -362,7 +363,7 @@ func (c *Cpak) removeExports(app types.Application) error {
 
 	desktopDir := filepath.Join(home, ".local", "share", "applications", app.CpakId)
 	if err := os.RemoveAll(desktopDir); err != nil {
-		fmt.Printf("Warning: could not remove desktop entries dir %s: %v\n", desktopDir, err)
+		logger.Printf("Warning: could not remove desktop entries dir %s: %v", desktopDir, err)
 	}
 
 	iconsDir := filepath.Join(home, ".local", "share", "icons")
@@ -373,7 +374,7 @@ func (c *Cpak) removeExports(app types.Application) error {
 			if strings.HasPrefix(name, app.CpakId+".") {
 				path := filepath.Join(iconsDir, name)
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					fmt.Printf("Warning: could not remove icon %s: %v\n", path, err)
+					logger.Printf("Warning: could not remove icon %s: %v", path, err)
 				}
 			}
 		}
@@ -383,7 +384,7 @@ func (c *Cpak) removeExports(app types.Application) error {
 		dst := filepath.Join(append([]string{c.Options.ExportsPath}, strings.Split(app.Origin, "/")...)...)
 		dst = filepath.Join(dst, filepath.Base(binary))
 		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Warning: could not remove binary export %s: %v\n", dst, err)
+			logger.Printf("Warning: could not remove binary export %s: %v", dst, err)
 		}
 
 		dir := filepath.Dir(dst)

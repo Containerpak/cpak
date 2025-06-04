@@ -8,7 +8,6 @@ package cpak
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -56,19 +56,19 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	// If a container already exists, check if it is running
 	if len(containers) > 0 {
 		container = containers[0]
-		fmt.Println("Container found:", container.CpakId)
+		logger.Println("Container found:", container.CpakId)
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
 		container.Pid, err = getPidFromEnvContainerId(container.CpakId)
 		if err != nil || container.Pid == 0 {
-			fmt.Println("Container not running, cleaning it up:", container.CpakId)
+			logger.Println("Container not running, cleaning it up:", container.CpakId)
 			err = c.CleanupContainer(container)
 			if err != nil {
 				return
 			}
 		} else {
-			fmt.Println("Container already running, attaching to it:", container.CpakId)
+			logger.Println("Container already running, attaching to it:", container.CpakId)
 			return
 		}
 	}
@@ -100,13 +100,13 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	// Start the hostexec server process
 	container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, override.AllowedHostCommands)
 	if err != nil {
-		fmt.Println("Error starting hostexec server, cleaning up partially created container...")
+		logger.Println("Error starting hostexec server, cleaning up partially created container...")
 		os.Remove(container.HostExecSocketPath)
 		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 		os.RemoveAll(container.StatePath)
 		return types.Container{}, fmt.Errorf("failed to start hostexec server: %w", err)
 	}
-	fmt.Println("HostExec server started (PID:", container.HostExecPid, "Socket:", container.HostExecSocketPath, ")")
+	logger.Println("HostExec server started (PID:", container.HostExecPid, "Socket:", container.HostExecSocketPath, ")")
 
 	err = store.NewContainer(container)
 	if err != nil {
@@ -116,7 +116,7 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 		os.RemoveAll(container.StatePath)
 		return types.Container{}, err
 	}
-	fmt.Println("Container created:", container.CpakId)
+	logger.Println("Container created:", container.CpakId)
 
 	_, container.Pid, err = c.StartContainer(container, app, config, override)
 	if err != nil {
@@ -124,7 +124,7 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 		return types.Container{}, err
 	}
 
-	fmt.Println("Container prepared:", container.CpakId)
+	logger.Println("Container prepared:", container.CpakId)
 	return
 }
 
@@ -184,7 +184,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if container.HostExecSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 	} else {
-		log.Printf("Warning: HostExec socket path is empty for container %s during start.", container.CpakId)
+		logger.Printf("Warning: HostExec socket path is empty for container %s during start.", container.CpakId)
 	}
 	// Join allowed commands into a single string (e.g., colon-separated) for the env var
 	allowedCmdsStr := strings.Join(override.AllowedHostCommands, ":")
@@ -258,12 +258,12 @@ func (c *Cpak) StopContainer(app types.Application) (err error) {
 			currentPid, _ = getPidFromEnvContainerId(container.CpakId)
 		}
 		if currentPid != 0 {
-			fmt.Println("Stopping container process:", currentPid)
+			logger.Println("Stopping container process:", currentPid)
 			syscall.Kill(currentPid, syscall.SIGTERM)
 		}
 		cleanupErr := c.CleanupContainer(container)
 		if cleanupErr != nil {
-			fmt.Printf("Warning: error during container cleanup %s: %v\n", container.CpakId, cleanupErr)
+			logger.Printf("Warning: error during container cleanup %s: %v", container.CpakId, cleanupErr)
 		}
 	}
 	return
@@ -339,7 +339,7 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 
 	cmd := exec.Command(c.Options.NsenterBinPath, cmds...)
-	fmt.Println("Executing command:", cmd.String())
+	logger.Println("Executing command:", cmd.String())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -368,7 +368,7 @@ func getPidFromEnvContainerId(containerCpakId string) (pid int, err error) {
 		return
 	}
 	if isVerbose {
-		fmt.Println("PID found:", pid)
+		logger.Println("PID found:", pid)
 	}
 	return
 }
@@ -484,19 +484,19 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 		Setsid: true,
 	}
 
-	fmt.Printf("Starting hostexec server: %s %v\n", cpakBinary, args)
+	logger.Printf("Starting hostexec server: %s %v", cpakBinary, args)
 	err = cmd.Start()
 	if err != nil {
 		return 0, fmt.Errorf("failed to start hostexec server process: %w", err)
 	}
 
 	pid = cmd.Process.Pid
-	fmt.Printf("Hostexec server process started with PID: %d, logging to %s\n", pid, logFile)
+	logger.Printf("Hostexec server process started with PID: %d, logging to %s", pid, logFile)
 
 	// Release the process handle so the parent (this function) can return.
 	err = cmd.Process.Release()
 	if err != nil {
-		log.Printf("Warning: Failed to release hostexec server process %d: %v. Attempting to kill.", pid, err)
+		logger.Printf("Warning: Failed to release hostexec server process %d: %v. Attempting to kill.", pid, err)
 		process, findErr := os.FindProcess(pid)
 		if findErr == nil {
 			_ = process.Kill()
@@ -513,16 +513,16 @@ func stopHostExecServer(pid int) {
 	}
 	process, err := os.FindProcess(pid)
 	if err == nil {
-		log.Printf("Stopping hostexec server (PID: %d)...", pid)
+		logger.Printf("Stopping hostexec server (PID: %d)...", pid)
 		err = process.Signal(syscall.SIGTERM)
 		if err != nil {
 			if !strings.Contains(err.Error(), "process already finished") && !strings.Contains(err.Error(), "no such process") {
-				log.Printf("Failed to send SIGTERM to hostexec server %d: %v.", pid, err)
+				logger.Printf("Failed to send SIGTERM to hostexec server %d: %v.", pid, err)
 			}
 		} else {
-			log.Printf("Sent SIGTERM to hostexec server %d.", pid)
+			logger.Printf("Sent SIGTERM to hostexec server %d.", pid)
 		}
 	} else {
-		log.Printf("Hostexec server process %d not found (already stopped?).", pid)
+		logger.Printf("Hostexec server process %d not found (already stopped?).", pid)
 	}
 }

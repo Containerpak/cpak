@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +53,7 @@ func RemovePackage(cmd *cobra.Command, args []string) error {
 	// if all version parameters are empty, we default to the main branch
 	// assuming it is the default branch of the repository
 	if versionParamsCount == 0 {
-		fmt.Println("No version specified, using main branch if available")
+		logger.Println("No version specified, using main branch if available")
 		branch = "main"
 	}
 
@@ -61,6 +62,6 @@ func RemovePackage(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("an error occurred while removing cpak: %s", err)
 	}
 
-	fmt.Printf("Cpak %s removed\n", remote)
+	logger.Printf("Cpak %s removed", remote)
 	return nil
 }

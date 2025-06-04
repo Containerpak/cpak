@@ -7,11 +7,11 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	hrun_server "github.com/containerpak/hrun/pkg/server"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -41,14 +41,14 @@ func runHostExecServer(cmd *cobra.Command, args []string) error {
 
 	_ = os.Remove(socketPath)
 
-	log.Printf("Starting hrun server on socket: %s with allowed commands: %v", socketPath, allowedCmds)
+	logger.Printf("Starting hrun server on socket: %s with allowed commands: %v", socketPath, allowedCmds)
 	err := hrun_server.StartServer(allowedCmds, socketPath)
 
 	if err != nil {
-		log.Printf("hrun server exited with error: %v", err)
+		logger.Printf("hrun server exited with error: %v", err)
 		return fmt.Errorf("hostexec server failed: %w", err)
 	}
 
-	log.Println("hrun server finished successfully.")
+	logger.Println("hrun server finished successfully.")
 	return nil
 }

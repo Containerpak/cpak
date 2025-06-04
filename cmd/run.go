@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +49,7 @@ func RunPackage(cmd *cobra.Command, args []string) (err error) {
 	binary := args[1]
 	extraArgs := args[2:]
 
-	fmt.Println("Running cpak from remote:", remote)
+	logger.Println("Running cpak from remote:", remote)
 
 	version, _ := cmd.Flags().GetString("branch")
 

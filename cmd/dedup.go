@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/dabadee/pkg/dabadee"
 	"github.com/mirkobrombin/dabadee/pkg/hash"
 	"github.com/mirkobrombin/dabadee/pkg/processor"
@@ -34,14 +35,16 @@ func dedupRun(cmd *cobra.Command, args []string) (err error) {
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	path, _ := cmd.Flags().GetString("path")
 
-	fmt.Printf("Deduplicating path %s in the DaBaDee storage..\n", path)
+	logger.Printf("Deduplicating path %s in the DaBaDee storage..", path)
 
 	if path == "" {
-		return fmt.Errorf("path is mandatory")
+		err := fmt.Errorf("path is mandatory")
+		logger.Error(err)
+		return err
 	}
 
 	if verbose {
-		fmt.Printf("Deduplicating path %s\n", path)
+		logger.Printf("Deduplicating path %s", path)
 	}
 
 	c, err := cpak.NewCpak()
@@ -63,6 +66,6 @@ func dedupRun(cmd *cobra.Command, args []string) (err error) {
 		return
 	}
 
-	fmt.Printf("Deduplication completed successfully\n")
+	logger.Printf("Deduplication completed successfully")
 	return nil
 }

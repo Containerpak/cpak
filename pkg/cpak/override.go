@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -221,13 +222,13 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 
 	file, err := os.Open(filepath.Join(overridePath, "cpak.json"))
 	if err != nil {
-		fmt.Println(err)
+		logger.Println(err)
 		return
 	}
 
 	err = json.NewDecoder(file).Decode(&override)
 	if err != nil {
-		fmt.Println(err)
+		logger.Println(err)
 		return
 	}
 

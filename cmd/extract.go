@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
@@ -182,6 +183,6 @@ func ExtractPackage(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("\nExtracted %s to %s\n", origin, output)
+	logger.Printf("\nExtracted %s to %s", origin, output)
 	return nil
 }

@@ -8,7 +8,7 @@ package cmd
 // TODO: implement the update command
 
 import (
-	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 
 	"github.com/spf13/cobra"
 )
@@ -25,6 +25,6 @@ func UpdatePackages(cmd *cobra.Command, args []string) error {
 		branch = args[1]
 	}
 
-	fmt.Printf("Updating packages. Remote: %s, Branch: %s\n", remote, branch)
+	logger.Printf("Updating packages. Remote: %s, Branch: %s", remote, branch)
 	return nil
 }

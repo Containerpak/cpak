@@ -14,6 +14,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/mirkobrombin/cpak/pkg/logger"
 )
 
 //go:embed rootlesskit.tar.gz
@@ -38,7 +40,7 @@ func EnsureUnixDeps(binPath string, rootlessImplementation string) error {
 
 	_, err = os.Stat(filepath.Join(binPath, "nsenter"))
 	if err != nil {
-		fmt.Println("nsenter not found, installing it from embedded binary")
+		logger.Println("nsenter not found, installing it from embedded binary")
 		err = os.WriteFile(filepath.Join(binPath, "nsenter"), nsenter, 0755)
 		if err != nil {
 			return fmt.Errorf("error writing nsenter: %w", err)
@@ -52,7 +54,7 @@ func EnsureUnixDeps(binPath string, rootlessImplementation string) error {
 			return nil
 		}
 
-		fmt.Println("rootlesskit not found, installing it from embedded binary")
+		logger.Println("rootlesskit not found, installing it from embedded binary")
 
 		gzipReader, err := gzip.NewReader(bytes.NewReader(rootlesskit))
 		if err != nil {

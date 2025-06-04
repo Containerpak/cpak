@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-struct-flags/v1/binder"
 	"github.com/spf13/cobra"
@@ -107,6 +108,6 @@ func RunOverride(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Override %s=%s saved for %s\n", key, value, appOrigin)
+	logger.Printf("Override %s=%s saved for %s", key, value, appOrigin)
 	return nil
 }

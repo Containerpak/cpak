@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/invopop/jsonschema"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/spf13/cobra"
 	"github.com/xeipuuv/gojsonschema"
@@ -43,13 +44,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !result.Valid() {
-		fmt.Println("Manifest validation errors:")
+		logger.Println("Manifest validation errors:")
 		for _, desc := range result.Errors() {
-			fmt.Printf(" - %s\n", desc)
+			logger.Printf(" - %s", desc)
 		}
 		return fmt.Errorf("validation failed with %d errors", len(result.Errors()))
 	}
 
-	fmt.Println("Manifest is valid against the schema.")
+	logger.Println("Manifest is valid against the schema.")
 	return nil
 }
