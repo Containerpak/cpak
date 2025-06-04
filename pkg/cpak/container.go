@@ -474,6 +474,7 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 	if err != nil {
 		return 0, fmt.Errorf("failed to open log file %s for hostexec server: %w", logFile, err)
 	}
+	defer logF.Close()
 
 	cmd := exec.Command(cpakBinary, args...)
 	cmd.Stdout = logF
@@ -486,7 +487,6 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 	fmt.Printf("Starting hostexec server: %s %v\n", cpakBinary, args)
 	err = cmd.Start()
 	if err != nil {
-		logF.Close()
 		return 0, fmt.Errorf("failed to start hostexec server process: %w", err)
 	}
 
@@ -501,7 +501,6 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 		if findErr == nil {
 			_ = process.Kill()
 		}
-		logF.Close()
 		return 0, fmt.Errorf("failed to release hostexec server process %d: %w", pid, err)
 	}
 	return pid, nil

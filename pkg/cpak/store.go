@@ -23,11 +23,10 @@ func (c *Cpak) GetInStoreDir(sub string, args ...string) string {
 // and creates it if it does not exist.
 func (c *Cpak) GetInStoreDirMkdir(sub string, args ...string) (path string, err error) {
 	path = c.GetInStoreDir(sub, args...)
-	realPath := path
 	if filepath.Ext(path) != "" {
 		path = filepath.Dir(path)
 	}
-	err = os.MkdirAll(realPath, 0755)
+	err = os.MkdirAll(path, 0755)
 
 	if sub == "states" && len(args) == 1 {
 		_, err = c.GetInStoreDirMkdir("states", args[0], "up")
@@ -54,12 +53,11 @@ func (c *Cpak) GetInCacheDir(args ...string) string {
 // and creates it if it does not exist.
 func (c *Cpak) GetInCacheDirMkdir(args ...string) (path string, err error) {
 	path = c.GetInCacheDir(args...)
-	realPath := path
 	if filepath.Ext(path) != "" {
 		path = filepath.Dir(path)
 	}
 
-	err = os.MkdirAll(realPath, 0755)
+	err = os.MkdirAll(path, 0755)
 	return
 }
 
@@ -91,12 +89,11 @@ func (c *Cpak) GetInManifestsDirMkdir(origin string, args ...string) (path strin
 	}
 
 	path = c.GetInManifestsDir(cpakLocalName, args...)
-	realPath := path
 	if filepath.Ext(path) != "" {
 		path = filepath.Dir(path)
 	}
 
-	err = os.MkdirAll(realPath, 0755)
+	err = os.MkdirAll(path, 0755)
 	return
 }
 
