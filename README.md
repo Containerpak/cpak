@@ -73,7 +73,7 @@ Use "cpak [command] --help" for more information about a command.
 ### Container's lifecycle
 
 cpak uses `rootlesskit` to spawn a new namespace, and then uses `unshare` to
-enter it and run the cpan `spawn` command. This command is responsible for
+enter it and run the cpak `spawn` command. This command is responsible for
 creating the container's filesystem, mounting all the OCI image layers, setting
 up the pivot_root and finally executing the requested command.
 
