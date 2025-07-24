@@ -1,7 +1,7 @@
-# FPAL — Fabricators Public Access License v1.0
+# FPAL — Fabricators Public Access License v1.0 (Timed Conversion Variant)
 
 Copyright (c) 2025 FABRICATORS S.R.L.
-All rights reserved. https://fabricators.ltd
+All rights reserved. [https://fabricators.ltd](https://fabricators.ltd)
 
 **For the purposes of this license:**
 
@@ -13,7 +13,7 @@ All rights reserved. https://fabricators.ltd
 
 ## 0. Notice on License Classification
 
-This license provides full access to the source code, encourages public auditing and community collaboration, and imposes copyleft rules. However, because it includes a restriction on replicating the core purpose of *the Product*, it does **not** meet the Open Source Definition (OSD) by the Open Source Initiative (OSI).
+This license provides full access to the source code, encourages public auditing and community collaboration, and imposes copyleft rules. However, because it includes a restriction on replicating the core purpose of *the Product*, it does **not** meet the Open Source Definition (OSD) by the Open Source Initiative (OSI), anyway, the point 6b ensures the license will eventually convert to an OSI-approved license.
 
 **FPAL** is best described as a **source-available**, **copyleft**, and **business-protective** license.
 
@@ -80,6 +80,14 @@ This clause shall not prohibit:
 Determination of "core business purpose" shall be based on technical scope, user-facing objectives, and positioning in public or commercial contexts.
 
 Violation of this clause constitutes a material breach and triggers immediate termination of rights granted by this license.
+
+---
+
+## 6b. Timed Conversion Clause
+
+In the absence of a registered trademark for *the Product* within **five (5) years** from the initial release date of the Software under this license, this license shall automatically convert to the latest OSI-approved version of the FPAL license (if any), or otherwise default to the Mozilla Public License 2.0. The conversion date shall be set to **January 1st of the sixth calendar year** following the first public release.
+
+This mechanism ensures long-term openness and clarity while allowing for a transitional period of brand protection.
 
 ---
 
