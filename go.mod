@@ -25,7 +25,7 @@ require (
 	github.com/containerd/stargz-snapshotter/estargz v0.14.3 // indirect
 	github.com/docker/cli v24.0.0+incompatible // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
-	github.com/docker/docker v25.0.6+incompatible // indirect
+	github.com/docker/docker v25.0.13+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.7.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
@@ -44,7 +44,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.0-rc3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-        github.com/sirupsen/logrus v1.9.1
+	github.com/sirupsen/logrus v1.9.1
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
