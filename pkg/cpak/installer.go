@@ -390,7 +390,6 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err != nil {
 		return
 	}
-	defer store.Close()
 
 	switch {
 	case branch != "":
@@ -404,7 +403,11 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	}
 
 	if err != nil {
+		_ = store.Close()
 		return fmt.Errorf("failed to remove application from store: %w", err)
+	}
+	if err = store.Close(); err != nil {
+		return
 	}
 
 	err = c.removeExports(appToRemove)
