@@ -42,6 +42,11 @@ func GetNvidiaLibs() ([]string, error) {
 			continue
 		}
 		files = append(files, res...)
+		for _, file := range res {
+			if target, resolveErr := filepath.EvalSymlinks(file); resolveErr == nil && target != file {
+				files = append(files, target)
+			}
+		}
 	}
 
 	// Remove duplicates and files with hidden components.
@@ -111,9 +116,9 @@ var group2Patterns = []string{
 	"egl/egl_external_platform.d/10_nvidia_wayland.json",
 	"egl/egl_external_platform.d/15_nvidia_gbm.json",
 	"nvidia/nvoptix.bin",
-	"vulkan/icd.d/nvidia_icd.json",
-	"vulkan/icd.d/nvidia_layers.json",
-	"vulkan/implicit_layer.d/nvidia_layers.json",
+	"vulkan/icd.d/nvidia_icd",
+	"vulkan/icd.d/nvidia_layers",
+	"vulkan/implicit_layer.d/nvidia_layers",
 	"nvidia.icd",
 	"nvidia.yaml",
 	"nvidia.json",

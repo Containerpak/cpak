@@ -10,6 +10,18 @@ import (
 	"testing"
 )
 
+func TestMatchNonLibConfigRecognizesVersionedVulkanFiles(t *testing.T) {
+	for _, path := range []string{
+		"/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json",
+		"/usr/share/vulkan/icd.d/nvidia_layers.i686.json",
+		"/usr/share/vulkan/implicit_layer.d/nvidia_layers.json",
+	} {
+		if !matchNonLibConfig(path, nil) {
+			t.Fatalf("matchNonLibConfig(%q) returned false", path)
+		}
+	}
+}
+
 func TestGetNvidiaLibraryDirs(t *testing.T) {
 	files := []string{
 		"/usr/lib64/libnvidia-glsi.so.565.77",
