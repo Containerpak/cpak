@@ -416,7 +416,7 @@ func (c *SpawnCmd) pivotRoot(rootFs string) error {
 
 func (c *SpawnCmd) startSleepProcess(cmdArgs []string, envVars []string) error {
 	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
-	l := exec.Command("ldconfig")
+	l := exec.Command("/sbin/ldconfig")
 	err := l.Run()
 	if err != nil {
 		return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
