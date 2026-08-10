@@ -82,6 +82,9 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	} else {
 		if o.DeviceDri {
 			mounts = append(mounts, "/dev/dri/")
+			if devices, err := filepath.Glob("/dev/nvidia*"); err == nil {
+				mounts = append(mounts, devices...)
+			}
 		}
 
 		if o.DeviceKvm {

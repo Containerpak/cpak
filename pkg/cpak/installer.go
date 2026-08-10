@@ -66,12 +66,6 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		return
 	}
 
-	store, err := NewStore(c.Options.StorePath)
-	if err != nil {
-		return
-	}
-	defer store.Close()
-
 	var version string
 	var sourceType string
 	switch {
@@ -90,49 +84,26 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		version = commit
 	}
 
-	existingApp, _ := store.GetApplicationByOrigin(origin, version, branch, commit, release)
+	existingApp, _ := c.getStoredApplication(origin, version, branch, commit, release)
 	if existingApp.CpakId != "" {
 		logger.Println("application already installed, perform an Audit if this application is not working as expected")
 		return
 	}
 
 	// first we resolve its dependencies
-	var parsedManifestDependencies []types.Dependency
-	for _, depManifest := range manifest.Dependencies {
-		depOrigin := depManifest.Origin
-		if !isURL(depOrigin) {
-			logger.Printf("dependency %s is not a valid cpak url, assuming it comes from the same origin", depOrigin)
-			parentOrigin := origin[:strings.LastIndex(origin, "/")]
-			depOrigin = parentOrigin + "/" + depOrigin
-		}
-
-		depBranch := "main"
-		if depManifest.Branch != "" {
-			depBranch = depManifest.Branch
-		}
-
-		errInstallDep := c.Install(depOrigin, depBranch, depManifest.Release, depManifest.Commit)
-		if errInstallDep != nil {
-			return fmt.Errorf("failed to install dependency %s: %w", depOrigin, errInstallDep)
-		}
-
-		installedDepApp, errGetDep := store.GetApplicationByOrigin(depOrigin, depBranch, "", depManifest.Commit, depManifest.Release)
-		if errGetDep != nil || installedDepApp.CpakId == "" {
-			return fmt.Errorf("failed to retrieve installed dependency %s after installation attempt: %w", depOrigin, errGetDep)
-		}
-		parsedManifestDependencies = append(parsedManifestDependencies, types.Dependency{
-			Id:      installedDepApp.CpakId,
-			Origin:  installedDepApp.Origin,
-			Branch:  installedDepApp.Branch,
-			Release: installedDepApp.Release,
-			Commit:  installedDepApp.Commit,
-		})
+	parsedManifestDependencies, err := c.installDependencies(origin, manifest)
+	if err != nil {
+		return
 	}
 
 	imageIdBase := manifest.Name + ":" + sourceType + ":" + version + ":" + origin
 	cpakImageId := base64.StdEncoding.EncodeToString([]byte(imageIdBase))
 
 	layers, config, err := c.Pull(manifest.Image, cpakImageId)
+	if err != nil {
+		return
+	}
+	layers, err = c.BuildRuntimeLayers(layers, manifest.RuntimeSources)
 	if err != nil {
 		return
 	}
@@ -151,6 +122,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		ParsedDependencies:   parsedManifestDependencies,
 		ParsedAddons:         manifest.Addons,
 		ParsedLayers:         layers,
+		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,
 		ParsedOverride:       manifest.Override,
 	}
@@ -160,12 +132,88 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		return
 	}
 
-	err = store.NewApplication(app)
+	err = c.storeApplication(app)
 	if err != nil {
 		return
 	}
 
 	return nil
+}
+
+// installDependencies installs the dependencies declared in the given manifest
+// and returns them in their parsed form.
+//
+// Note: the store is opened only once every dependency has been installed,
+// since it cannot be opened twice at the same time.
+func (c *Cpak) installDependencies(origin string, manifest *types.CpakManifest) (dependencies []types.Dependency, err error) {
+	if len(manifest.Dependencies) == 0 {
+		return nil, nil
+	}
+
+	refs := []types.Dependency{}
+	for _, depManifest := range manifest.Dependencies {
+		depOrigin := depManifest.Origin
+		if !isURL(depOrigin) {
+			logger.Printf("dependency %s is not a valid cpak url, assuming it comes from the same origin", depOrigin)
+			parentOrigin := origin[:strings.LastIndex(origin, "/")]
+			depOrigin = parentOrigin + "/" + depOrigin
+		}
+
+		branch, release, commit := dependencySelectors(depManifest)
+		errInstallDep := c.Install(depOrigin, branch, release, commit)
+		if errInstallDep != nil {
+			return nil, fmt.Errorf("failed to install dependency %s: %w", depOrigin, errInstallDep)
+		}
+
+		refs = append(refs, types.Dependency{
+			Origin:  depOrigin,
+			Branch:  branch,
+			Release: release,
+			Commit:  commit,
+		})
+	}
+
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+
+	for _, ref := range refs {
+		installedDepApp, errGetDep := findInstalledDependency(store, ref)
+		if errGetDep != nil || installedDepApp.CpakId == "" {
+			return nil, fmt.Errorf("failed to retrieve installed dependency %s after installation attempt: %w", ref.Origin, errGetDep)
+		}
+		dependencies = append(dependencies, types.Dependency{
+			Id:      installedDepApp.CpakId,
+			Origin:  installedDepApp.Origin,
+			Branch:  installedDepApp.Branch,
+			Release: installedDepApp.Release,
+			Commit:  installedDepApp.Commit,
+		})
+	}
+
+	return dependencies, nil
+}
+
+// dependencySelectors returns the selectors of a dependency, which are
+// mutually exclusive, defaulting to the main branch.
+func dependencySelectors(dependency types.Dependency) (branch, release, commit string) {
+	switch {
+	case dependency.Release != "":
+		return "", dependency.Release, ""
+	case dependency.Commit != "":
+		return "", "", dependency.Commit
+	case dependency.Branch != "":
+		return dependency.Branch, "", ""
+	}
+	return "main", "", ""
+}
+
+// findInstalledDependency returns the stored application matching the
+// selectors of the given dependency.
+func findInstalledDependency(store *Store, dependency types.Dependency) (types.Application, error) {
+	return store.GetApplicationByOrigin(dependency.Origin, "", dependency.Branch, dependency.Commit, dependency.Release)
 }
 
 func isURL(s string) bool {
@@ -175,12 +223,17 @@ func isURL(s string) bool {
 // createExports creates the exports for a given application.
 func (c *Cpak) createExports(app types.Application) (err error) {
 	for _, entry := range app.ParsedDesktopEntries {
-		for _, layer := range app.ParsedLayers {
+		var exportErr error
+		for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
+			layer := app.ParsedLayers[i]
 			layerDir := c.GetInStoreDir("layers", layer)
-			err = c.exportDesktopEntry(layerDir, app, entry)
-			if err == nil {
+			exportErr = c.exportDesktopEntry(layerDir, app, entry)
+			if exportErr == nil {
 				break
 			}
+		}
+		if exportErr != nil {
+			return exportErr
 		}
 	}
 
@@ -245,7 +298,8 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	}
 
 	var absIconPath string
-	for _, layer := range app.ParsedLayers {
+	for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
+		layer := app.ParsedLayers[i]
 		layerDir := c.GetInStoreDir("layers", layer)
 		cand := filepath.Clean(layerDir + iconName)
 		if _, err := os.Stat(cand); err == nil {
@@ -381,20 +435,92 @@ func (c *Cpak) removeExports(app types.Application) error {
 	}
 
 	for _, binary := range app.ParsedBinaries {
-		dst := filepath.Join(append([]string{c.Options.ExportsPath}, strings.Split(app.Origin, "/")...)...)
-		dst = filepath.Join(dst, filepath.Base(binary))
-		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-			logger.Printf("Warning: could not remove binary export %s: %v", dst, err)
+		if err := c.removeBinaryExport(app.Origin, filepath.Base(binary)); err != nil {
+			logger.Printf("Warning: could not remove binary export %s: %v", binary, err)
+		}
+	}
+
+	return nil
+}
+
+// removeBinaryExport removes an exported binary and prunes the directories
+// left empty by its removal.
+func (c *Cpak) removeBinaryExport(origin, name string) error {
+	destinationItems := []string{c.Options.ExportsPath}
+	destinationItems = append(destinationItems, strings.Split(origin, "/")...)
+	destinationItems = append(destinationItems, name)
+	destinationPath := filepath.Join(destinationItems...)
+
+	if err := os.Remove(destinationPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	dir := filepath.Dir(destinationPath)
+	for dir != c.Options.ExportsPath && dir != "/" {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		os.Remove(dir)
+		dir = filepath.Dir(dir)
+	}
+
+	return nil
+}
+
+// removeStaleExports removes the exports of a replaced application which are
+// not provided anymore by the one that took its place.
+func (c *Cpak) removeStaleExports(old types.Application, updated types.Application) error {
+	home := os.Getenv("HOME")
+
+	if old.CpakId != updated.CpakId {
+		desktopDir := filepath.Join(home, ".local", "share", "applications", old.CpakId)
+		if err := os.RemoveAll(desktopDir); err != nil {
+			return err
 		}
 
-		dir := filepath.Dir(dst)
-		for dir != c.Options.ExportsPath && dir != "/" {
-			entries, err := os.ReadDir(dir)
-			if err != nil || len(entries) > 0 {
-				break
+		iconsDir := filepath.Join(home, ".local", "share", "icons")
+		entries, err := os.ReadDir(iconsDir)
+		if err == nil {
+			for _, entry := range entries {
+				if !strings.HasPrefix(entry.Name(), old.CpakId+".") {
+					continue
+				}
+				if err := os.Remove(filepath.Join(iconsDir, entry.Name())); err != nil && !os.IsNotExist(err) {
+					return err
+				}
 			}
-			os.Remove(dir)
-			dir = filepath.Dir(dir)
+		}
+	} else {
+		keptEntries := make(map[string]bool, len(updated.ParsedDesktopEntries))
+		for _, entry := range updated.ParsedDesktopEntries {
+			keptEntries[filepath.Base(entry)] = true
+		}
+
+		desktopDir := filepath.Join(home, ".local", "share", "applications", old.CpakId)
+		for _, entry := range old.ParsedDesktopEntries {
+			name := filepath.Base(entry)
+			if keptEntries[name] {
+				continue
+			}
+			if err := os.Remove(filepath.Join(desktopDir, name)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+
+	kept := map[string]bool{}
+	for _, binary := range updated.ParsedBinaries {
+		kept[filepath.Base(binary)] = true
+	}
+
+	for _, binary := range old.ParsedBinaries {
+		name := filepath.Base(binary)
+		if kept[name] {
+			continue
+		}
+		if err := c.removeBinaryExport(old.Origin, name); err != nil {
+			return err
 		}
 	}
 

@@ -6,17 +6,34 @@
 package cpak
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// ErrLatestReleaseUnsupported is returned when the repository host does not
+// offer a way to safely determine its latest release.
+var ErrLatestReleaseUnsupported = errors.New("latest release lookup is not supported for this host")
 
 type RepoProvider struct {
 	Origin string
 	GitDir string
+
+	// Scheme is the protocol used to reach the remote host.
+	Scheme string
+
+	// APIBaseURL is the base URL of the host API used to resolve releases,
+	// when empty it is derived from the origin host.
+	APIBaseURL string
+
+	// Client is the HTTP client used for every remote call.
+	Client *http.Client
 }
 
 // NewRepoProvider creates a new RepoProvider instance. This is used to
@@ -33,7 +50,84 @@ func NewRepoProvider(origin, gitDir string) (repoProvider *RepoProvider, err err
 	return &RepoProvider{
 		Origin: origin,
 		GitDir: GitDir,
+		Scheme: "https",
+		Client: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return nil
+			},
+		},
 	}, nil
+}
+
+func (r *RepoProvider) scheme() string {
+	if r.Scheme == "" {
+		return "https"
+	}
+	return r.Scheme
+}
+
+func (r *RepoProvider) client() *http.Client {
+	if r.Client == nil {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	return r.Client
+}
+
+// GetLatestRelease returns the tag of the latest release published for the
+// origin repository. Only GitHub is supported, any other host returns
+// ErrLatestReleaseUnsupported so that the caller can report it instead of
+// guessing a version.
+func (r *RepoProvider) GetLatestRelease() (release string, err error) {
+	url, err := r.latestReleaseURL()
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := r.client().Get(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to get latest release: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to get latest release: %s", resp.Status)
+	}
+
+	var payload struct {
+		TagName    string `json:"tag_name"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("failed to decode latest release: %w", err)
+	}
+
+	if payload.TagName == "" {
+		return "", fmt.Errorf("latest release of %s has no tag name", r.Origin)
+	}
+	if payload.Draft || payload.Prerelease {
+		return "", fmt.Errorf("latest release %s of %s is not a stable release", payload.TagName, r.Origin)
+	}
+
+	return payload.TagName, nil
+}
+
+func (r *RepoProvider) latestReleaseURL() (url string, err error) {
+	parts := strings.Split(r.Origin, "/")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid git url: %s", r.Origin)
+	}
+
+	base := strings.TrimRight(r.APIBaseURL, "/")
+	if base == "" {
+		if !strings.EqualFold(parts[0], "github.com") {
+			return "", fmt.Errorf("%w: %s", ErrLatestReleaseUnsupported, parts[0])
+		}
+		base = "https://api.github.com"
+	}
+
+	return fmt.Sprintf("%s/repos/%s/%s/releases/latest", base, parts[1], parts[2]), nil
 }
 
 // generateGitDir generates the local path for the given git repository.
@@ -60,13 +154,7 @@ func generateGitDir(gitURL string, gitDir string) (gitPath string, err error) {
 // stores it in the given cache directory, returning the file content as
 // a byte slice.
 func (r *RepoProvider) fetchFileContent(url, gitDir string) (fileContent []byte, err error) {
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return nil
-		},
-	}
-
-	resp, err := client.Get(url)
+	resp, err := r.client().Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file content: %w", err)
 	}
@@ -102,8 +190,8 @@ func (r *RepoProvider) fetchFileContent(url, gitDir string) (fileContent []byte,
 // I am not really happy with this implementation, but it works for now.
 func (r *RepoProvider) getFileInDirectory(filePath, reference, gitDir string) (fileContent []byte, err error) {
 	// Generate URLs for the file in both GitHub and GitLab formats
-	githubURL := fmt.Sprintf("https://%s/raw/%s/%s", r.Origin, reference, filePath)
-	gitlabURL := fmt.Sprintf("https://%s/-/raw/%s/%s", r.Origin, reference, filePath)
+	githubURL := fmt.Sprintf("%s://%s/raw/%s/%s", r.scheme(), r.Origin, reference, filePath)
+	gitlabURL := fmt.Sprintf("%s://%s/-/raw/%s/%s", r.scheme(), r.Origin, reference, filePath)
 
 	// Generate the local path for the given directory
 	dirPath := filepath.Join(r.GitDir, gitDir)
@@ -143,4 +231,14 @@ func (r *RepoProvider) GetFileInRelease(filePath, release string) (fileContent [
 // from a remote git repository, in the given commit.
 func (r *RepoProvider) GetFileInCommit(filePath, commit string) (fileContent []byte, err error) {
 	return r.getFileInDirectory(filePath, commit, filepath.Join("commits", commit))
+}
+
+// GetLatestRelease returns the tag of the latest release published for the
+// given origin.
+func (c *Cpak) GetLatestRelease(origin string) (release string, err error) {
+	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create repo provider: %w", err)
+	}
+	return repoProvider.GetLatestRelease()
 }

@@ -12,50 +12,33 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/tools"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-func NewListCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all installed packages",
-		Args:  cobra.NoArgs,
-		RunE:  ListPackages,
-	}
+type ListCmd struct {
+	JSON bool `cli:"json,j" help:"Print output in JSON format"`
 
-	cmd.Flags().BoolP("json", "j", false, "Print output in JSON format")
-
-	return cmd
+	cli.Base
 }
 
-func listError(iErr error) (err error) {
-	err = fmt.Errorf("an error occurred while listing cpak(s): %s", iErr)
-	return
-}
-
-func ListPackages(cmd *cobra.Command, args []string) error {
-	jsonFlag, err := cmd.Flags().GetBool("json")
+func (c *ListCmd) Run() error {
+	cp, err := cpak.NewCpak()
 	if err != nil {
-		return listError(err)
+		return fmt.Errorf("an error occurred while listing cpak(s): %s", err)
 	}
 
-	c, err := cpak.NewCpak()
+	store, err := cpak.NewStore(cp.Options.StorePath)
 	if err != nil {
-		return listError(err)
-	}
-
-	store, err := cpak.NewStore(c.Options.StorePath)
-	if err != nil {
-		return listError(fmt.Errorf("failed to open store: %w", err))
+		return fmt.Errorf("an error occurred while listing cpak(s): failed to open store: %w", err)
 	}
 	defer store.Close()
 
 	apps, err := store.GetApplications()
 	if err != nil {
-		return listError(err)
+		return fmt.Errorf("an error occurred while listing cpak(s): %s", err)
 	}
 
-	if !jsonFlag {
+	if !c.JSON {
 		header := []string{"Name", "Version", "Timestamp", "Origin", "Source"}
 		data := [][]string{}
 		for _, app := range apps {
@@ -65,7 +48,7 @@ func ListPackages(cmd *cobra.Command, args []string) error {
 	} else {
 		jsonBytes, err := json.MarshalIndent(apps, "", "  ")
 		if err != nil {
-			return listError(err)
+			return fmt.Errorf("an error occurred while listing cpak(s): %s", err)
 		}
 		fmt.Println(string(jsonBytes))
 	}

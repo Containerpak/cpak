@@ -11,43 +11,24 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 	"github.com/mirkobrombin/go-struct-flags/v1/binder"
-	"github.com/spf13/cobra"
 )
 
-// NewOverrideCommand returns the cobra command for setting a single override key/value
-func NewOverrideCommand() *cobra.Command {
-	var key, value string
-	cmd := &cobra.Command{
-		Use:   "override APP_ORIGIN -k key -v value",
-		Short: "Set override key/value for a cpak application",
-		Long: `Set a single override key to a given value for an installed cpak application.
-Use JSON field names for KEY (e.g. socketX11, fsExtra, env, etc.).
-For list fields (fsExtra, env, allowedHostCommands), separate items with ':'`,
-		Args: cobra.ExactArgs(1),
-		RunE: RunOverride,
-	}
+type OverrideCmd struct {
+	AppOrigin string `arg:"app_origin" help:"APP_ORIGIN"`
+	Key       string `cli:"key,k" help:"Override key (required)"`
+	Value     string `cli:"value,v" help:"Override value (required)"`
 
-	cmd.Flags().StringVarP(&key, "key", "k", "", "Override key (required)")
-	cmd.Flags().StringVarP(&value, "value", "v", "", "Override value (required)")
-	_ = cmd.MarkFlagRequired("key")
-	_ = cmd.MarkFlagRequired("value")
-	return cmd
+	cli.Base
 }
 
-// RunOverride sets the override key/value for a cpak application
-func RunOverride(cmd *cobra.Command, args []string) error {
-	appOrigin := strings.ToLower(args[0])
+func (c *OverrideCmd) Run() error {
+	appOrigin := strings.ToLower(c.AppOrigin)
 
-	key, err := cmd.Flags().GetString("key")
-	if err != nil {
-		return fmt.Errorf("a key is required")
-	}
-	value, err := cmd.Flags().GetString("value")
-	if err != nil {
-		return fmt.Errorf("a value is required")
+	if c.Key == "" || c.Value == "" {
+		return fmt.Errorf("key and value are required")
 	}
 
 	// Initialize cpak and store
@@ -88,18 +69,18 @@ func RunOverride(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize the flag binder
-	binder, err := binder.NewBinder(&over, os.TempDir(), true)
+	b, err := binder.NewBinder(&over, os.TempDir(), true)
 	if err != nil {
 		return err
 	}
 
-	argsList := []string{value}
-	if key == "fsExtra" || key == "env" || key == "allowedHostCommands" {
-		argsList = strings.Split(value, ":")
+	argsList := []string{c.Value}
+	if c.Key == "fsExtra" || c.Key == "env" || c.Key == "allowedHostCommands" {
+		argsList = strings.Split(c.Value, ":")
 	}
 
 	// Register the key with the binder
-	if err := binder.Run(key, argsList); err != nil {
+	if err := b.Run(c.Key, argsList); err != nil {
 		return err
 	}
 
@@ -108,6 +89,6 @@ func RunOverride(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	logger.Printf("Override %s=%s saved for %s", key, value, appOrigin)
+	c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
 	return nil
 }

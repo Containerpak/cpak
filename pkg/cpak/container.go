@@ -35,6 +35,15 @@ import (
 // use the user's home directory for that or expose other system directories
 // where data can be stored.
 func (c *Cpak) PrepareContainer(app types.Application, override types.Override) (container types.Container, err error) {
+	return c.prepareContainer(app, override, app.CpakId)
+}
+
+func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Override) (types.Container, error) {
+	scope := app.CpakId + ":nested:" + uuid.NewString()
+	return c.prepareContainer(app, override, scope)
+}
+
+func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope string) (container types.Container, err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
@@ -42,7 +51,9 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 	defer store.Close()
 
 	// Check if a container already exists for the given application
-	containers, err := store.GetApplicationContainers(app)
+	scopedApp := app
+	scopedApp.CpakId = scope
+	containers, err := store.GetApplicationContainers(scopedApp)
 	if err != nil {
 		return
 	}
@@ -90,7 +101,7 @@ func (c *Cpak) PrepareContainer(app types.Application, override types.Override) 
 
 	container = types.Container{
 		CpakId:            newContainerCpakId,
-		ApplicationCpakId: app.CpakId,
+		ApplicationCpakId: scope,
 		StatePath:         statePath,
 		CreateTimestamp:   time.Now(),
 	}
@@ -179,6 +190,13 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
 	cmds = append(cmds, "--extra-links", cpakBinary+":"+cpakInContainerPath)
+	dependencyLinks, err := c.dependencyLinks(app)
+	if err != nil {
+		return "", 0, err
+	}
+	for _, link := range dependencyLinks {
+		cmds = append(cmds, "--extra-links", link)
+	}
 
 	// Pass AllowedHostCommands and SocketPath via environment variables to spawn
 	if container.HostExecSocketPath != "" {
@@ -190,7 +208,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	allowedCmdsStr := strings.Join(override.AllowedHostCommands, ":")
 	cmds = append(cmds, "--env", "CPAK_ALLOWED_HOST_CMDS=xdg-open:"+allowedCmdsStr)
 
-	for _, envVar := range config.Config.Env {
+	containerEnv := append([]string{}, config.Config.Env...)
+	containerEnv = append(containerEnv, override.Env...)
+	for _, envVar := range containerEnv {
 		cmds = append(cmds, "--env", envVar)
 	}
 
@@ -202,14 +222,13 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--mount-shims", shim)
 	}
 
-	// following is where dependencies and addons are exported
-	cmds = append(cmds, "--env", "PATH="+fmt.Sprintf("%s/%s", c.Options.ExportsPath, app.CpakId)+":$PATH")
+	cmds = append(cmds, "--env", "PATH="+buildContainerPath(config.Config.Env))
 
 	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), config.Config.Env...)
+	cmd.Env = append(os.Environ(), containerEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Foreground: false,
 		Setsid:     true,
@@ -347,15 +366,69 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 
 	err = cmd.Run()
 	if err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if ok {
-			if exitErr.ExitCode() == 2 {
-				err = nil
-			}
+		code, codeErr := exitCodeFromError(err)
+		if codeErr != nil {
+			return codeErr
 		}
-		return
+		return &types.ExitError{Code: code}
 	}
 	return
+}
+
+const defaultContainerPath = "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
+func buildContainerPath(imageEnv []string) string {
+	imagePath := ""
+	for _, envVar := range imageEnv {
+		if strings.HasPrefix(envVar, "PATH=") {
+			imagePath = strings.TrimPrefix(envVar, "PATH=")
+		}
+	}
+	if imagePath == "" {
+		imagePath = defaultContainerPath
+	}
+	entries := append([]string{"/usr/local/bin"}, strings.Split(imagePath, ":")...)
+	entries = append(entries, strings.Split(defaultContainerPath, ":")...)
+	seen := make(map[string]bool, len(entries))
+	path := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry == "" || strings.Contains(entry, "$") || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		path = append(path, entry)
+	}
+	return strings.Join(path, ":")
+}
+
+func (c *Cpak) dependencyLinks(app types.Application) ([]string, error) {
+	if len(app.ParsedDependencies) == 0 {
+		return nil, nil
+	}
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+
+	links := make([]string, 0)
+	names := make(map[string]string)
+	for _, dependency := range app.ParsedDependencies {
+		child, getErr := store.GetApplicationByCpakId(dependency.Id)
+		if getErr != nil {
+			return nil, fmt.Errorf("cannot load dependency %s: %w", dependency.Origin, getErr)
+		}
+		for _, binary := range child.ParsedBinaries {
+			name := filepath.Base(binary)
+			if owner, exists := names[name]; exists {
+				return nil, fmt.Errorf("dependency binary %s is exported by both %s and %s", name, owner, child.Origin)
+			}
+			names[name] = child.Origin
+			source := filepath.Join(append([]string{c.Options.ExportsPath}, append(strings.Split(child.Origin, "/"), name)...)...)
+			links = append(links, source+":"+filepath.Join("/usr/local/bin", name))
+		}
+	}
+	return links, nil
 }
 
 // getPidFromEnvContainerId returns the pid of the process with the given containerId
@@ -397,6 +470,22 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	return
 }
 
+func (c *Cpak) cleanupNestedContainer(container types.Container) {
+	if container.Pid != 0 {
+		_ = syscall.Kill(container.Pid, syscall.SIGTERM)
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := getPidFromEnvContainerId(container.CpakId); err != nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if err := c.CleanupContainer(container); err != nil {
+		logger.Printf("Cannot clean nested container %s: %v", container.CpakId, err)
+	}
+}
+
 // getCpakBinary returns the path to the cpak binary.
 func getCpakBinary() (cpakBinary string, err error) {
 	cpakBinary = os.Args[0]
@@ -422,25 +511,14 @@ func getCpakBinary() (cpakBinary string, err error) {
 	return
 }
 
-// getNested checks if the /tmp/.cpak file exists and returns the parent
-// application id from it.
-func getNested() (parentAppCpakId string, nested bool) {
-	nested = false
-	parentAppCpakId = ""
-	if _, err := os.Stat("/tmp/.cpak"); err == nil {
-		nested = true
-		file, errOpen := os.Open("/tmp/.cpak")
-		if errOpen != nil {
-			return parentAppCpakId, true
-		}
-		defer file.Close()
+var nestedMarkerPath = "/tmp/.cpak"
 
-		_, errScan := fmt.Fscanln(file, &parentAppCpakId)
-		if errScan != nil {
-			return parentAppCpakId, true
-		}
+func getNested() (parentAppCpakId string, nested bool) {
+	content, err := os.ReadFile(nestedMarkerPath)
+	if err != nil {
+		return "", false
 	}
-	return
+	return strings.TrimSpace(string(content)), true
 }
 
 // startHostExecServerProcess starts the 'cpak hostexec-server' in the background.

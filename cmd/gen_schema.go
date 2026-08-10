@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2025 FABRICATORS S.R.L.
+ * Licensed under the Fabricators Public Access License (FPAL-TCV) v1.0.
+ * See https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md for details.
+ */
 package cmd
 
 import (
@@ -6,26 +11,15 @@ import (
 	"os"
 
 	"github.com/invopop/jsonschema"
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-// NewGenSchemaCommand creates the `gen-schema` command for generating JSON
-// Schema for the CpakManifest type.
-func NewGenSchemaCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    "gen-schema",
-		Short:  "Generate JSON Schema for CpakManifest (hidden)",
-		Hidden: true,
-		RunE:   runGenSchema,
-	}
-	return cmd
+type GenSchemaCmd struct {
+	cli.Base
 }
 
-// runGenSchema generates a JSON Schema for the CpakManifest type and writes it
-// to manifest.schema.json.
-func runGenSchema(cmd *cobra.Command, args []string) error {
+func (c *GenSchemaCmd) Run() error {
 	reflector := &jsonschema.Reflector{
 		ExpandedStruct: true,
 	}
@@ -41,6 +35,6 @@ func runGenSchema(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write schema to %s: %w", schemaPath, err)
 	}
 
-	logger.Println("Schema generated at", schemaPath)
+	c.Logger.Info("Schema generated at %s", schemaPath)
 	return nil
 }

@@ -6,5 +6,6 @@ podman-launcher
 /tools/rootlesskit.tar.gz
 go.work
 go.work.sum
-/tools/host-spawn
-/tools/nsenter
+/pkg/tools/host-spawn
+/pkg/tools/nsenter
+/pkg/tools/rootlesskit.tar.gz

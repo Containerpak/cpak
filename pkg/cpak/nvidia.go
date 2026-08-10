@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -58,6 +59,23 @@ func GetNvidiaLibs() ([]string, error) {
 	}
 
 	return cleaned, nil
+}
+
+func GetNvidiaLibraryDirs(files []string) []string {
+	dirs := make(map[string]struct{})
+	for _, file := range files {
+		if !matchLibraryName(filepath.Base(file)) {
+			continue
+		}
+		dirs[filepath.Dir(file)] = struct{}{}
+	}
+
+	result := make([]string, 0, len(dirs))
+	for dir := range dirs {
+		result = append(result, dir)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // walkAndFilter walks through the directory tree rooted at 'root'
@@ -121,7 +139,10 @@ func matchBinary(path string, d fs.DirEntry) bool {
 // matchLibrary returns true if the file is a library matching Nvidia or CUDA patterns.
 // It checks for specific prefixes and substring conditions in the file name.
 func matchLibrary(path string, d fs.DirEntry) bool {
-	name := d.Name()
+	return matchLibraryName(d.Name())
+}
+
+func matchLibraryName(name string) bool {
 	if strings.HasPrefix(name, "libnvcuvid") || strings.HasPrefix(name, "libnvoptix") {
 		return true
 	}

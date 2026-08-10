@@ -7,79 +7,82 @@ package types
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type Application struct {
-	gorm.Model
+	ID        uint      `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
 	// CpakId is the unique identifier of the application, it is expected to be
 	// unique across all the applications in the store.
-	CpakId string `gorm:"uniqueIndex;not null"`
+	CpakId string `json:"cpak_id"`
 
 	// Name is the name of the application.
-	Name string
+	Name string `json:"name"`
 
 	// Version is the version of the application. It is expected to be unique
 	// for each application's origin.
 	// Note: the version is not required to be in a specific format. Currently
 	// there are no checks for its uniqueness.
-	Version string
+	Version string `json:"version"`
 
 	// Followings are the remote (branch, release, commit) that the application
 	// was installed from.
-	Branch  string
-	Release string
-	Commit  string
+	Branch  string `json:"branch"`
+	Release string `json:"release"`
+	Commit  string `json:"commit"`
 
 	// Origin is the origin of the application. It is expected to be unique
 	// for each application's version, and should be a git repository URL
 	// without the protocol and the trailing .git.
-	Origin string `gorm:"index"`
+	Origin string `json:"origin"`
 
 	// InstallTimestamp is the timestamp of the application creation in the store.
-	InstallTimestamp time.Time
+	InstallTimestamp time.Time `json:"install_timestamp"`
 
 	// Binaries is the list of exported binaries of the application.
-	Binaries string
+	Binaries string `json:"binaries"`
 
 	// DesktopEntries is the list of exported desktop entries of the application.
-	DesktopEntries string
+	DesktopEntries string `json:"desktop_entries"`
 
 	// Addons is the list of additional applications which it supports.
-	Addons string
+	Addons string `json:"addons"`
 
 	// Layers is the list of layers of the application.
-	Layers string
+	Layers string `json:"layers"`
 
 	// Config is the configuration of the application.
-	Config string
+	Config string `json:"config"`
 
 	// Containers is the list of containers created for the application.
-	Containers []Container `gorm:"foreignKey:ApplicationCpakId;references:CpakId"`
+	Containers []Container `json:"containers"`
 
 	// ParsedBinaries is the list of exported binaries of the application.
-	ParsedBinaries []string `gorm:"-"`
+	ParsedBinaries []string `json:"parsed_binaries"`
 
 	// ParsedDesktopEntries is the list of exported desktop entries of the application.
-	ParsedDesktopEntries []string `gorm:"-"`
+	ParsedDesktopEntries []string `json:"parsed_desktop_entries"`
 
 	// ParsedDependencies is the list of cpak dependencies needed by the application
 	// to work properly.
-	ParsedDependencies []Dependency `gorm:"-"`
+	ParsedDependencies []Dependency `json:"parsed_dependencies"`
 
 	// ParsedAddons is the list of additional applications which it supports.
-	ParsedAddons []string `gorm:"-"`
+	ParsedAddons []string `json:"parsed_addons"`
 
 	// ParsedLayers is the list of layers of the application.
-	ParsedLayers []string `gorm:"-"`
+	ParsedLayers []string `json:"parsed_layers"`
+
+	RuntimeSources []RuntimeSource `json:"runtime_sources"`
 
 	// ParsedOverride is a set of permissions
-	ParsedOverride Override `gorm:"-"`
+	ParsedOverride Override `json:"parsed_override"`
 
 	// Raw fields
-	DependenciesRaw string
-	OverrideRaw     string
+	DependenciesRaw string `json:"dependencies_raw"`
+	OverrideRaw     string `json:"override_raw"`
 }
 
 func (a Application) SourceType() string {
@@ -100,4 +103,37 @@ type Dependency struct {
 	Branch  string
 	Release string
 	Commit  string
+}
+
+// UpdateStatus is the outcome of an update attempt on a single application.
+type UpdateStatus string
+
+const (
+	UpdateStatusUpdated  UpdateStatus = "updated"
+	UpdateStatusUpToDate UpdateStatus = "up-to-date"
+
+	// UpdateStatusPinned is reported for applications bound to an immutable
+	// commit, which are never moved.
+	UpdateStatusPinned UpdateStatus = "pinned"
+
+	// UpdateStatusUnsupported is reported when the target version cannot be
+	// resolved for the repository host.
+	UpdateStatusUnsupported UpdateStatus = "unsupported"
+
+	// UpdateStatusFailed is reported when the update did not complete and the
+	// previous installation was preserved.
+	UpdateStatusFailed UpdateStatus = "failed"
+)
+
+// UpdateResult describes what happened to a single application during an
+// update, it is meant to be formatted by the caller.
+type UpdateResult struct {
+	Origin     string       `json:"origin"`
+	Name       string       `json:"name"`
+	SourceType string       `json:"source_type"`
+	Status     UpdateStatus `json:"status"`
+	OldVersion string       `json:"old_version"`
+	NewVersion string       `json:"new_version"`
+	Reason     string       `json:"reason,omitempty"`
+	Err        error        `json:"-"`
 }

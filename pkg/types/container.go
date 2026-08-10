@@ -7,34 +7,35 @@ package types
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // Container is the struct that represents a container in the store and
 // in the cpak context.
 type Container struct {
-	gorm.Model
+	ID        uint      `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
 	// CpakId is the unique identifier of the container, it is expected to be
 	// unique across all the containers in the store.
-	CpakId string `gorm:"uniqueIndex;not null"`
+	CpakId string `json:"cpak_id"`
 
 	// ApplicationCpakId is the application the container is based on.
-	ApplicationCpakId string `gorm:"index;not null"`
+	ApplicationCpakId string `json:"application_cpak_id"`
 
 	// Pid is the pid of the main spawned container process inside the namespace.
-	Pid int
+	Pid int `json:"pid"`
 
 	// CreateTimestamp is the time the container was created in the store.
-	CreateTimestamp time.Time
+	CreateTimestamp time.Time `json:"create_timestamp"`
 
 	// StatePath is the path to the state directory of the container, the
 	// actual workdir for the layer mounts.
-	StatePath string
+	StatePath string `json:"state_path"`
 
 	// HostExecPid is the PID of the 'cpak hostexec-server' process running on the host for this container.
-	HostExecPid int
+	HostExecPid int `json:"host_exec_pid"`
 
 	// HostExecSocketPath is the path to the Unix domain socket used by the hostexec server/client.
-	HostExecSocketPath string
+	HostExecSocketPath string `json:"host_exec_socket_path"`
 }

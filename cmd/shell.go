@@ -10,52 +10,33 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-func NewShellCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "shell <remote>",
-		Short: "Shell into a cpak",
-		Args:  cobra.MinimumNArgs(1),
-		RunE:  ShellPackage,
-	}
-	cmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
-	cmd.Flags().StringP("branch", "b", "", "Specify a branch")
-	cmd.Flags().StringP("commit", "c", "", "Specify a commit")
-	cmd.Flags().StringP("release", "r", "", "Specify a release")
+type ShellCmd struct {
+	Remote  string `arg:"remote" help:"Remote Git repository"`
+	Verbose bool   `cli:"verbose,v" help:"Enable verbose output"`
+	Branch  string `cli:"branch,b" help:"Specify a branch"`
+	Commit  string `cli:"commit,c" help:"Specify a commit"`
+	Release string `cli:"release,r" help:"Specify a release"`
 
-	return cmd
+	cli.Base
 }
 
-func shellError(iErr error) (err error) {
-	err = fmt.Errorf("an error occurred while opening the cpak shell: %s", iErr)
-	return
-}
-
-func ShellPackage(cmd *cobra.Command, args []string) (err error) {
-	remote := strings.ToLower(args[0])
-
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	branch, _ := cmd.Flags().GetString("branch")
-	commit, _ := cmd.Flags().GetString("commit")
-	release, _ := cmd.Flags().GetString("release")
-
+func (c *ShellCmd) Run() error {
+	remote := strings.ToLower(c.Remote)
 	binary := "@sh"
 
-	logger.Println("Running cpak from remote:", remote)
+	c.Logger.Info("Running cpak from remote: %s", remote)
 
-	version, _ := cmd.Flags().GetString("branch")
-
-	cpak, err := cpak.NewCpak()
+	cp, err := cpak.NewCpak()
 	if err != nil {
-		return shellError(err)
+		return fmt.Errorf("an error occurred while opening the cpak shell: %s", err)
 	}
 
-	err = cpak.Run(remote, version, branch, commit, release, binary, verbose, "-i")
+	err = cp.Run(remote, c.Branch, c.Branch, c.Commit, c.Release, binary, c.Verbose, "-i")
 	if err != nil {
-		return shellError(err)
+		return fmt.Errorf("an error occurred while opening the cpak shell: %s", err)
 	}
 
 	return nil

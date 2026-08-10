@@ -10,27 +10,18 @@ import (
 	"os"
 
 	hrun_client "github.com/containerpak/hrun/pkg/client"
-	"github.com/mirkobrombin/cpak/pkg/logger"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-func NewHostExecClientCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:                   "hostexec-client -- [command] [args...]",
-		Short:                 "Executes a command on the host via the hostexec server (internal)",
-		RunE:                  runHostExecClient,
-		Args:                  cobra.MinimumNArgs(1),
-		DisableFlagsInUseLine: true,
-		Hidden:                true,
-	}
+type HostExecClientCmd struct {
+	SocketPath string   `cli:"socket-path" help:"Path for the Unix domain socket"`
+	Command    []string `arg:"command" help:"Command and arguments to execute"`
 
-	cmd.Flags().String("socket-path", "", "Path for the Unix domain socket")
-
-	return cmd
+	cli.Base
 }
 
-func runHostExecClient(cmd *cobra.Command, args []string) error {
-	socketPath, _ := cmd.Flags().GetString("socket-path")
+func (c *HostExecClientCmd) Run() error {
+	socketPath := c.SocketPath
 	if socketPath == "" {
 		socketPath = os.Getenv("CPAK_HOSTEXEC_SOCKET")
 		if socketPath == "" {
@@ -38,15 +29,13 @@ func runHostExecClient(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	commandAndArgs := args
-
-	logger.Printf("Starting hrun client for command %v on socket %s", commandAndArgs, socketPath)
-	err := hrun_client.StartClient(commandAndArgs, socketPath)
+	c.Logger.Info("Starting hrun client for command %v on socket %s", c.Command, socketPath)
+	err := hrun_client.StartClient(c.Command, socketPath)
 
 	if err != nil {
 		return fmt.Errorf("hrun client execution failed: %w", err)
 	}
 
-	logger.Println("hrun client finished successfully.")
+	c.Logger.Success("hrun client finished successfully.")
 	return nil
 }

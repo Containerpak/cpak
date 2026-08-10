@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2025 FABRICATORS S.R.L.
+ * Licensed under the Fabricators Public Access License (FPAL-TCV) v1.0.
+ * See https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md for details.
+ */
 package cmd
 
 import (
@@ -5,28 +10,19 @@ import (
 	"fmt"
 
 	"github.com/invopop/jsonschema"
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 	"github.com/xeipuuv/gojsonschema"
 )
 
-// NewValidateCommand creates the `validate` command for verifying a cpak.json
-// manifest against the JSON Schema.
-func NewValidateCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "validate [manifest]",
-		Short: "Validate a cpak.json manifest against manifest.schema.json",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runValidate,
-	}
-	return cmd
+type ValidateCmd struct {
+	Manifest string `arg:"manifest" help:"Path to the manifest file"`
+
+	cli.Base
 }
 
-// runValidate checks the provided manifest against the JSON Schema and reports
-// any validation errors.
-func runValidate(cmd *cobra.Command, args []string) error {
-	manifestPath := args[0]
+func (c *ValidateCmd) Run() error {
+	manifestPath := c.Manifest
 
 	reflector := &jsonschema.Reflector{ExpandedStruct: true}
 	schema := reflector.Reflect(&types.CpakManifest{})
@@ -44,13 +40,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !result.Valid() {
-		logger.Println("Manifest validation errors:")
+		c.Logger.Error("Manifest validation errors:")
 		for _, desc := range result.Errors() {
-			logger.Printf(" - %s", desc)
+			c.Logger.Error(" - %s", desc)
 		}
 		return fmt.Errorf("validation failed with %d errors", len(result.Errors()))
 	}
 
-	logger.Println("Manifest is valid against the schema.")
+	c.Logger.Success("Manifest is valid against the schema.")
 	return nil
 }

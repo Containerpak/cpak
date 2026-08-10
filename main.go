@@ -6,43 +6,53 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/mirkobrombin/cpak/cmd"
-	"github.com/mirkobrombin/cpak/pkg/logger"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
+
+type CLI struct {
+	Install        cmd.InstallCmd        `cmd:"install" help:"Install a package from a remote Git repository"`
+	Update         cmd.UpdateCmd         `cmd:"update" help:"Update one or all the packages in the local store"`
+	Remove         cmd.RemoveCmd         `cmd:"remove" help:"Remove a package from the local store"`
+	List           cmd.ListCmd           `cmd:"list" help:"List all the packages in the local store"`
+	Shell          cmd.ShellCmd          `cmd:"shell" help:"Spawn a shell inside a container"`
+	Run            cmd.RunCmd            `cmd:"run" help:"Run a package from a remote Git repository"`
+	Spawn          cmd.SpawnCmd          `cmd:"spawn" help:"Spawn a container for a package"`
+	Service        cmd.ServiceCmd        `cmd:"service" help:"Manage cpak services"`
+	Stop           cmd.StopCmd           `cmd:"stop" help:"Stop a running container"`
+	Dedup          cmd.DedupCmd          `cmd:"dedup" help:"Deduplicate layers in the local store"`
+	Audit          cmd.AuditCmd          `cmd:"audit" help:"Audit the local store for integrity"`
+	Override       cmd.OverrideCmd       `cmd:"override" help:"Manage application overrides"`
+	Extract        cmd.ExtractCmd        `cmd:"extract" help:"Extract a package to a local directory"`
+	Init           cmd.InitCmd           `cmd:"init" help:"Initialize a new cpak package in the current directory"`
+	GenSchema      cmd.GenSchemaCmd      `cmd:"gen-schema" help:"Generate the JSON schema for the cpak manifest"`
+	Validate       cmd.ValidateCmd       `cmd:"validate" help:"Validate a cpak manifest"`
+	HostExecServer cmd.HostExecServerCmd `cmd:"hostexec-server" help:"Start the hostexec server"`
+	HostExecClient cmd.HostExecClientCmd `cmd:"hostexec-client" help:"Start the hostexec client"`
+
+	cli.Base
+}
 
 var version = "0.0.1"
 
 func main() {
-	rootCmd := &cobra.Command{
-		Use:   "cpak",
-		Short: "package manager built around containers, Git, and OCI images",
-		Long:  `cpak is a package manager built around containers, Git, and OCI images`,
+	app, err := cli.New(&CLI{}, cli.WithVersion(version))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
-
-	rootCmd.AddCommand(cmd.NewInstallCommand())
-	rootCmd.AddCommand(cmd.NewRemoveCommand())
-	rootCmd.AddCommand(cmd.NewListCommand())
-	rootCmd.AddCommand(cmd.NewShellCommand())
-	rootCmd.AddCommand(cmd.NewRunCommand())
-	rootCmd.AddCommand(cmd.NewSpawnCommand())
-	rootCmd.AddCommand(cmd.NewServiceCommand())
-	rootCmd.AddCommand(cmd.NewStopCommand())
-	rootCmd.AddCommand(cmd.NewDedupCommand())
-	rootCmd.AddCommand(cmd.NewAuditCommand())
-	rootCmd.AddCommand(cmd.NewOverrideCommand())
-	rootCmd.AddCommand(cmd.NewExtractCommand())
-	rootCmd.AddCommand(cmd.NewInitCommand())
-	rootCmd.AddCommand(cmd.NewGenSchemaCommand())
-	rootCmd.AddCommand(cmd.NewValidateCommand())
-	rootCmd.AddCommand(cmd.NewHostExecServerCommand())
-	rootCmd.AddCommand(cmd.NewHostExecClientCommand())
-
-	rootCmd.Version = version
-	if err := rootCmd.Execute(); err != nil {
-		logger.Error(err)
+	app.SetName("cpak")
+	if err := app.Run(); err != nil {
+		var exitErr *types.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }

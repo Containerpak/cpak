@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2025 FABRICATORS S.R.L.
+ * Licensed under the Fabricators Public Access License (FPAL-TCV) v1.0.
+ * See https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md for details.
+ */
 package cmd
 
 import (
@@ -6,71 +11,47 @@ import (
 	"os"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-// NewInitCommand creates the `init` command for scaffolding a cpak manifest.
-func NewInitCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize a new cpak manifest in the current directory",
-		RunE:  initRun,
-	}
+type InitCmd struct {
+	ManifestVersion string   `cli:"manifest-version,m" help:"Manifest version (default: 1.0)"`
+	Name            string   `cli:"name,n" help:"Name of the application (required)"`
+	Version         string   `cli:"version,v" help:"Version of the application, e.g. v1.0.0 (required)"`
+	Description     string   `cli:"description,d" help:"Short description of the application (required)"`
+	Image           string   `cli:"image,i" help:"OCI image reference (required)"`
+	Binary          []string `cli:"binary,b" help:"Path to a binary to expose (can be repeated, must be absolute paths, required)"`
+	DesktopEntry    []string `cli:"desktop-entry,e" help:"Path to a desktop entry file (can be repeated)"`
+	Dependency      []string `cli:"dependency,D" help:"Origin of a cpak dependency (can be repeated)"`
+	Addon           []string `cli:"addon,a" help:"Name of an addon (can be repeated)"`
+	IdleTime        int      `cli:"idle-time,I" help:"Idle time in minutes after which to destroy the container"`
 
-	// flags required...
-	cmd.Flags().StringP("manifest-version", "m", "1.0", "Manifest version (default: 1.0)")
-
-	cmd.Flags().StringP("name", "n", "", "Name of the application (required)")
-	cmd.MarkFlagRequired("name")
-
-	cmd.Flags().StringP("version", "v", "", "Version of the application, e.g. v1.0.0 (required)")
-	cmd.MarkFlagRequired("version")
-
-	cmd.Flags().StringP("description", "d", "", "Short description of the application (required)")
-	cmd.MarkFlagRequired("description")
-
-	cmd.Flags().StringP("image", "i", "", "OCI image reference (required)")
-	cmd.MarkFlagRequired("image")
-	cmd.Flags().StringSliceP("binary", "b", []string{}, "Path to a binary to expose (can be repeated, must be absolute paths, required)")
-
-	// Optional manifest fields
-	cmd.Flags().StringSliceP("desktop-entry", "e", []string{}, "Path to a desktop entry file (can be repeated)")
-	cmd.Flags().StringSliceP("dependency", "D", []string{}, "Origin of a cpak dependency (can be repeated)")
-	cmd.Flags().StringSliceP("addon", "a", []string{}, "Name of an addon (can be repeated)")
-	cmd.Flags().IntP("idle-time", "I", 0, "Idle time in minutes after which to destroy the container")
-
-	return cmd
+	cli.Base
 }
 
-// initRun executes the scaffolding of cpak.json based on provided flags.
-func initRun(cmd *cobra.Command, args []string) error {
-	manifestVersion, _ := cmd.Flags().GetString("manifest-version")
-	name, _ := cmd.Flags().GetString("name")
-	version, _ := cmd.Flags().GetString("version")
-	desc, _ := cmd.Flags().GetString("description")
-	image, _ := cmd.Flags().GetString("image")
-	binaries, _ := cmd.Flags().GetStringSlice("binary")
-	desktops, _ := cmd.Flags().GetStringSlice("desktop-entry")
-	deps, _ := cmd.Flags().GetStringSlice("dependency")
-	addons, _ := cmd.Flags().GetStringSlice("addon")
-	idle, _ := cmd.Flags().GetInt("idle-time")
+func (c *InitCmd) Run() error {
+	if c.Name == "" || c.Version == "" || c.Description == "" || c.Image == "" {
+		return fmt.Errorf("name, version, description and image are mandatory")
+	}
 
 	manifest := types.CpakManifest{
-		ManifestVersion: manifestVersion,
-		Name:            name,
-		Description:     desc,
-		Version:         version,
-		Image:           image,
-		Binaries:        binaries,
-		DesktopEntries:  desktops,
+		ManifestVersion: c.ManifestVersion,
+		Name:            c.Name,
+		Description:     c.Description,
+		Version:         c.Version,
+		Image:           c.Image,
+		Binaries:        c.Binary,
+		DesktopEntries:  c.DesktopEntry,
 		Dependencies:    []types.Dependency{},
-		Addons:          addons,
-		IdleTime:        idle,
+		Addons:          c.Addon,
+		IdleTime:        c.IdleTime,
 		Override:        types.NewOverride(),
 	}
-	for _, origin := range deps {
+	if manifest.ManifestVersion == "" {
+		manifest.ManifestVersion = "1.0"
+	}
+	for _, origin := range c.Dependency {
 		manifest.Dependencies = append(manifest.Dependencies, types.Dependency{Origin: origin})
 	}
 
@@ -86,6 +67,6 @@ func initRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write cpak.json: %w", err)
 	}
 
-	logger.Println("Created cpak.json successfully.")
+	c.Logger.Success("Created cpak.json successfully.")
 	return nil
 }

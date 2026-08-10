@@ -14,113 +14,50 @@ import (
 	"syscall"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
-
-var verbose = false
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
 const hostExecShimPath = "/usr/local/bin/cpak-hostexec-shim"
 
-func NewSpawnCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    "spawn",
-		Short:  "Spawn a new namespace",
-		RunE:   SpawnPackage,
-		Hidden: true,
-	}
+type SpawnCmd struct {
+	Verbose        bool     `cli:"verbose,v" help:"enable verbose output"`
+	UserUid        int      `cli:"user-uid" help:"set the user uid"`
+	AppId          string   `cli:"app-id" help:"set the app id"`
+	ContainerId    string   `cli:"container-id" help:"set the container id"`
+	Rootfs         string   `cli:"rootfs" help:"set the rootfs"`
+	Env            []string `cli:"env,e" help:"set environment variables"`
+	Layers         string   `cli:"layers" help:"set the layers"`
+	StateDir       string   `cli:"state-dir" help:"set the state directory"`
+	ImageDir       string   `cli:"image-dir" help:"set the image directory"`
+	LayersDir      string   `cli:"layers-dir" help:"set the layers directory"`
+	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
+	MountShims     []string `cli:"mount-shims,M" help:"set the mount shims"`
+	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
+	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
+	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
+	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
 
-	cmd.Flags().BoolP("verbose", "v", false, "enable verbose output")
-	cmd.Flags().Int("user-uid", 0, "set the user uid")
-	cmd.Flags().String("app-id", "a", "set the app id")
-	cmd.Flags().String("container-id", "c", "set the container id")
-	cmd.Flags().String("rootfs", "r", "set the rootfs")
-	cmd.Flags().StringArrayP("env", "e", []string{}, "set environment variables")
-	cmd.Flags().String("layers", "l", "set the layers")
-	cmd.Flags().String("state-dir", "s", "set the state directory")
-	cmd.Flags().String("image-dir", "i", "set the image directory")
-	cmd.Flags().String("layers-dir", "d", "set the layers directory")
-	cmd.Flags().StringArrayP("mount-overrides", "m", []string{}, "set the mount overrides")
-	cmd.Flags().StringArrayP("mount-shims", "M", []string{}, "set the mount shims")
-	cmd.Flags().StringArrayP("extra-links", "x", []string{}, "set the extra links")
-
-	return cmd
+	cli.Base
 }
 
-func spawnError(prefix string, iErr error) (err error) {
-	if prefix != "" {
-		prefix = prefix + ": "
-	}
-	err = fmt.Errorf(prefix, "an error occurred while spawning the namespace: %s", iErr)
-	return
-}
-
-func spawnVerbose(args ...any) {
-	if verbose {
-		msg := []any{"[verbose]: "}
-		msg = append(msg, args...)
-		logger.Println(msg...)
+func (c *SpawnCmd) spawnVerbose(args ...any) {
+	if c.Verbose {
+		msg := fmt.Sprint(args...)
+		c.Logger.Info("[verbose]: %s", msg)
 	}
 }
 
-func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
-	verbose, _ = cmd.Flags().GetBool("verbose")
-
-	logger.Println("Spawning a new cpak namespace...")
-
-	userUid, err := cmd.Flags().GetInt("user-uid")
-	if err != nil {
-		return spawnError("user-uid flag", err)
-	}
-	appId, err := cmd.Flags().GetString("app-id")
-	if err != nil {
-		return spawnError("app-id flag", err)
-	}
-	containerId, err := cmd.Flags().GetString("container-id")
-	if err != nil {
-		return spawnError("container-id flag", err)
-	}
-	rootFs, err := cmd.Flags().GetString("rootfs") // This is the HOST path to the rootfs mount point
-	if err != nil {
-		return spawnError("rootfs flag", err)
-	}
-	envVars, err := cmd.Flags().GetStringArray("env")
-	if err != nil {
-		return spawnError("env flag", err)
-	}
-	layers, err := cmd.Flags().GetString("layers")
-	if err != nil {
-		return spawnError("layers flag", err)
-	}
-	stateDir, err := cmd.Flags().GetString("state-dir")
-	if err != nil {
-		return spawnError("state-dir flag", err)
-	}
-	layersDir, err := cmd.Flags().GetString("layers-dir")
-	if err != nil {
-		return spawnError("layers-dir flag", err)
-	}
-	overrideMounts, err := cmd.Flags().GetStringArray("mount-overrides")
-	if err != nil {
-		return spawnError("mount-overrides flag", err)
-	}
-	overrideMountShims, err := cmd.Flags().GetStringArray("mount-shims")
-	if err != nil {
-		return spawnError("mount-shims flag", err)
-	}
-	extraLinks, err := cmd.Flags().GetStringArray("extra-links")
-	if err != nil {
-		return spawnError("extra-links flag", err)
-	}
+func (c *SpawnCmd) Run() error {
+	c.Logger.Info("Spawning a new cpak namespace...")
 
 	var hostExecSocketPath string
 	var allowedHostCmdsStr string
 	finalEnvVarsForContainer := []string{}
-	for _, envVar := range envVars {
+	for _, envVar := range c.Env {
 		if strings.HasPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=") {
-			logger.Println("Found hostexec socket path in env:", envVar)
+			c.Logger.Info("Found hostexec socket path in env: %s", envVar)
 			hostExecSocketPath = strings.TrimPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=")
 			finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
 		} else if strings.HasPrefix(envVar, "CPAK_ALLOWED_HOST_CMDS=") {
@@ -134,70 +71,74 @@ func SpawnPackage(cmd *cobra.Command, args []string) (err error) {
 		allowedHostCmds = strings.Split(allowedHostCmdsStr, ":")
 	}
 
-	spawnVerbose("Remounting as private")
-	err = syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
+	c.spawnVerbose("Remounting as private")
+	err := syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
 	if err != nil {
-		return spawnError("mount", err)
+		return fmt.Errorf("mount: an error occurred while spawning the namespace: %s", err)
 	}
 
-	layersAsList := parseLayers(layers)
-	err = mountLayers(rootFs, layersDir, stateDir, layersAsList)
+	layersAsList := parseLayers(c.Layers)
+	err = mountLayers(c.Rootfs, c.LayersDir, c.StateDir, layersAsList)
+	if err != nil {
+		return err
+	}
+	if c.BuildLayer {
+		if err = c.setupBuildMountPoints(c.Rootfs); err != nil {
+			return err
+		}
+		if err = c.setupExtraLinks(c.Rootfs, c.ExtraLinks); err != nil {
+			return err
+		}
+		if err = c.pivotRoot(c.Rootfs); err != nil {
+			return err
+		}
+		return c.installRuntimePackages(c.RuntimePackage)
+	}
+
+	err = c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides)
 	if err != nil {
 		return err
 	}
 
-	err = setupMountPoints(userUid, rootFs, overrideMounts)
+	err = c.injectConfigurationFiles(c.Rootfs)
 	if err != nil {
 		return err
 	}
 
-	err = injectConfigurationFiles(rootFs)
-	if err != nil {
-		return err
-	}
-
-	err = setupExtraLinks(rootFs, extraLinks)
+	err = c.setupExtraLinks(c.Rootfs, c.ExtraLinks)
 	if err != nil {
 		return err
 	}
 
 	// Append shims obtained by overrides, to the allowed commands
-	if len(overrideMountShims) > 0 {
-		logger.Println("Found mount shims in overrides:", overrideMountShims)
-		allowedHostCmds = append(allowedHostCmds, overrideMountShims...)
+	if len(c.MountShims) > 0 {
+		c.Logger.Info("Found mount shims in overrides: %v", c.MountShims)
+		allowedHostCmds = append(allowedHostCmds, c.MountShims...)
 	}
 
 	if len(allowedHostCmds) > 0 && hostExecSocketPath != "" {
-		spawnVerbose("Creating hostexec shim and symlinks")
-		err = createHostExecShimAndLinks(rootFs, allowedHostCmds)
+		c.spawnVerbose("Creating hostexec shim and symlinks")
+		err = c.createHostExecShimAndLinks(c.Rootfs, allowedHostCmds)
 		if err != nil {
 			return err
 		}
-		spawnVerbose("Hostexec shim script and symlinks created.")
+		c.spawnVerbose("Hostexec shim script and symlinks created.")
 	} else {
-		spawnVerbose("Skipping hostexec shim creation (no allowed commands or socket path).")
+		c.spawnVerbose("Skipping hostexec shim creation (no allowed commands or socket path).")
 	}
 
-	err = pivotRoot(rootFs)
+	err = c.pivotRoot(c.Rootfs)
 	if err != nil {
 		return err
 	}
 
-	err = createCpakFile(appId, rootFs)
+	err = c.createCpakFile(c.AppId, c.Rootfs)
 	if err != nil {
 		return err
 	}
 
-	// hostname is not set because it will raise problems with the StartUpWMClass
-	// in the exported desktop file(s), resulting in a new icon for each container
-	// instead of grouping them, e.g. in the GNOME shell dock
-	// err = setHostname(containerId)
-	// if err != nil {
-	// 	return err
-	// }
-
-	_envVars := setEnvironmentVariables(containerId, rootFs, finalEnvVarsForContainer, stateDir, layersDir, layers)
-	err = startSleepProcess(args, _envVars)
+	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, c.LayersDir, c.Layers)
+	err = c.startSleepProcess(c.ExtraArgs, _envVars)
 	if err != nil {
 		return err
 	}
@@ -214,23 +155,22 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 	return envVars
 }
 
-// the .cpak file is used to check if we are inside a cpak container
-func createCpakFile(appId string, rootFs string) error {
-	spawnVerbose("Creating cpak file")
+func (c *SpawnCmd) createCpakFile(appId string, rootFs string) error {
+	c.spawnVerbose("Creating cpak file")
 
 	err := os.MkdirAll(filepath.Join(rootFs, "/tmp"), 0755)
 	if err != nil {
-		return spawnError("mkdir:/tmp", err)
+		return fmt.Errorf("mkdir:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
 	file, err := os.Create(filepath.Join(rootFs, "/tmp", ".cpak"))
 	if err != nil {
-		return spawnError("create", err)
+		return fmt.Errorf("create: an error occurred while spawning the namespace: %s", err)
 	}
 	defer file.Close()
 
 	_, err = file.WriteString(appId)
 	if err != nil {
-		return spawnError("write", err)
+		return fmt.Errorf("write: an error occurred while spawning the namespace: %s", err)
 	}
 
 	return nil
@@ -249,115 +189,119 @@ func parseLayers(layers string) []string {
 }
 
 func mountLayers(rootFs, layersDir string, stateDir string, layersList []string) error {
-	layersDirs := ""
-
-	for _, layer := range layersList {
-		layerDir := filepath.Join(layersDir, layer)
-		layersDirs = layersDirs + ":" + layerDir
+	if len(layersList) == 0 {
+		return fmt.Errorf("mount:layers: no layers specified")
 	}
 
-	layersDirs = layersDirs[1:]
+	layerDirs := layerDirectories(layersDir, layersList)
+	layersDirs := strings.Join(layerDirs, ":")
 
 	err := tools.MountOverlay(rootFs, layersDirs, filepath.Join(stateDir, "up"), filepath.Join(stateDir, "work"))
 	if err != nil {
-		return spawnError("mount:layers "+layersDirs, err)
+		return fmt.Errorf("mount:layers %s: an error occurred while spawning the namespace: %s", layersDirs, err)
 	}
 	return nil
 }
 
-func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error {
-	// /tmp is mounted as a new one
-	spawnVerbose("Mounting: /tmp")
+func layerDirectories(layersDir string, layers []string) []string {
+	directories := make([]string, 0, len(layers))
+	for i := len(layers) - 1; i >= 0; i-- {
+		directories = append(directories, filepath.Join(layersDir, layers[i]))
+	}
+	return directories
+}
+
+func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
+	if err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp")); err != nil {
+		return fmt.Errorf("mount:/tmp: an error occurred while building the layer: %s", err)
+	}
+	for _, mount := range []string{"/proc/", "/sys/"} {
+		if err := tools.MountBind(mount, filepath.Join(rootFs, mount)); err != nil {
+			return fmt.Errorf("mount:%s: an error occurred while building the layer: %s", mount, err)
+		}
+	}
+	return nil
+}
+
+func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string) error {
+	c.spawnVerbose("Mounting: /tmp")
 	err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp"))
 	if err != nil {
-		return spawnError("mount:/tmp", err)
+		return fmt.Errorf("mount:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
 
 	mounts := []string{
-		"/proc/", // TODO: there is a problem with spawning processes without /proc
+		"/proc/",
 		"/sys/",
-		//"/dev",
-		//"/dev/pts",
-		//"/dev/shm",
-		//"/tmp/",
-		//"/run",
-		//homeDir,
 	}
 	mounts = append(mounts, overrideMounts...)
 
 	for _, mount := range mounts {
-		spawnVerbose("(override) Mounting: ", mount)
+		c.spawnVerbose("(override) Mounting: ", mount)
 
-		// we skip mounts that do not exist on the host, this should be
-		// safe because those mounts come from the overrides list which
-		// are expected to be dbus and other sockets, this will just disable
-		// the feature of the container to use those sockets
 		_, err := os.Stat(mount)
 		if os.IsNotExist(err) {
-			spawnVerbose(mount, "does not exist, that's probably unsupported by the host, ignoring")
+			c.spawnVerbose(mount, " does not exist, that's probably unsupported by the host, ignoring")
 			continue
 		}
 
 		_, err = os.Stat(filepath.Join(rootFs, mount))
 		if os.IsNotExist(err) {
-			spawnVerbose("does not exist", mount)
+			c.spawnVerbose("does not exist ", mount)
 			if strings.HasSuffix(mount, "/") {
-				spawnVerbose("is dir, creating", mount)
+				c.spawnVerbose("is dir, creating ", mount)
 				err = os.MkdirAll(filepath.Join(rootFs, mount), 0755)
 				if err != nil {
-					return spawnError("mkdir:"+mount, err)
+					return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 			} else {
-				spawnVerbose("is file, creating", mount)
+				c.spawnVerbose("is file, creating ", mount)
 				parentDir := filepath.Dir(mount)
-				spawnVerbose("parentDir", parentDir)
+				c.spawnVerbose("parentDir ", parentDir)
 				err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 				if err != nil {
-					return spawnError("mkdir:"+parentDir, err)
+					return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
 				}
-				spawnVerbose("creating file", mount)
+				c.spawnVerbose("creating file ", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
-					return spawnError("create:"+mount, err)
+					return fmt.Errorf("create:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 				err = file.Close()
 				if err != nil {
-					return spawnError("close:"+mount, err)
+					return fmt.Errorf("close:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 			}
 		} else if err == nil {
-			spawnVerbose("exists", mount)
+			c.spawnVerbose("exists ", mount)
 			if !strings.HasSuffix(mount, "/") {
-				spawnVerbose("is file, creating", mount)
+				c.spawnVerbose("is file, creating ", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
-					return spawnError("create:"+mount, err)
+					return fmt.Errorf("create:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 				err = file.Close()
 				if err != nil {
-					return spawnError("close:"+mount, err)
+					return fmt.Errorf("close:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 			}
 		}
 
 		err = tools.MountBind(mount, filepath.Join(rootFs, mount))
 		if err != nil {
-			return spawnError("mount:"+mount, err)
+			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
 		}
 	}
 
-	// the cpak socket is mounted as last because it is created by another
-	// process and we need to wait for it to be available. However, it should
-	// be available at this point
 	cpakSockPath := "/tmp/cpak.sock"
-	spawnVerbose("Waiting for: ", cpakSockPath, "to be available...")
+	c.spawnVerbose("Waiting for: ", cpakSockPath, " to be available...")
 	for {
 		_, err := os.Stat(cpakSockPath)
 		if err == nil {
-			spawnVerbose("Mounting: ", cpakSockPath)
+			c.spawnVerbose("Mounting: ", cpakSockPath)
 			err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath))
 			if err != nil {
-				return spawnError("mount:"+cpakSockPath, err)
+				return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockPath, err)
 			}
 			break
 		}
@@ -366,10 +310,10 @@ func setupMountPoints(userUid int, rootFs string, overrideMounts []string) error
 	return nil
 }
 
-func injectConfigurationFiles(rootFs string) error {
+func (c *SpawnCmd) injectConfigurationFiles(rootFs string) error {
 	nvidiaLibs, err := cpak.GetNvidiaLibs()
 	if err != nil {
-		return spawnError("", err)
+		return fmt.Errorf("an error occurred while spawning the namespace: %s", err)
 	}
 
 	files := []string{
@@ -382,86 +326,103 @@ func injectConfigurationFiles(rootFs string) error {
 		parentDir := filepath.Dir(conf)
 		err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 		if err != nil {
-			return spawnError("mkdir:"+parentDir, err)
+			return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
 		}
 
-		spawnVerbose("Mounting: ", conf)
+		c.spawnVerbose("Mounting: ", conf)
 		err = tools.MountBind(conf, filepath.Join(rootFs, conf))
 		if err != nil {
-			return spawnError("mount:"+conf, err)
+			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
 	}
 
 	for _, lib := range nvidiaLibs {
-		spawnVerbose("Mounting: ", lib)
-		// TODO: errors are ignored since also temp directories are returned
-		//	   so they could not exist at the time of the mount
-		tools.MountBind(lib, filepath.Join(rootFs, lib))
+		c.spawnVerbose("Mounting: ", lib)
+		if err = tools.MountBind(lib, filepath.Join(rootFs, lib)); err != nil {
+			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", lib, err)
+		}
 	}
 
-	// host root is mounted in /run/host for debugging purposes
+	nvidiaLibraryDirs := cpak.GetNvidiaLibraryDirs(nvidiaLibs)
+	if len(nvidiaLibraryDirs) > 0 {
+		ldConfigDir := filepath.Join(rootFs, "/etc/ld.so.conf.d")
+		if err = os.MkdirAll(ldConfigDir, 0755); err != nil {
+			return fmt.Errorf("mkdir:/etc/ld.so.conf.d: an error occurred while spawning the namespace: %s", err)
+		}
+		ldConfig := strings.Join(nvidiaLibraryDirs, "\n") + "\n"
+		if err = os.WriteFile(filepath.Join(ldConfigDir, "cpak-nvidia.conf"), []byte(ldConfig), 0644); err != nil {
+			return fmt.Errorf("write:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
+		}
+	}
+
 	err = tools.MountBind("/", filepath.Join(rootFs, "/run/host"))
 	if err != nil {
-		return spawnError("mount:/", err)
+		return fmt.Errorf("mount:/: an error occurred while spawning the namespace: %s", err)
 	}
 
 	return nil
 }
 
-func setupExtraLinks(rootFs string, extraLinks []string) error {
+func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) error {
 	for _, link := range extraLinks {
-		linkParts := strings.Split(link, ":")
+		linkParts := strings.SplitN(link, ":", 2)
 		if len(linkParts) != 2 {
-			return spawnError("invalid link format", nil)
+			return fmt.Errorf("invalid link format: an error occurred while spawning the namespace: %s", link)
 		}
 
-		spawnVerbose("Linking: ", linkParts[0], linkParts[1])
+		c.spawnVerbose("Linking: ", linkParts[0], " ", linkParts[1])
 		err := tools.MountBind(linkParts[0], filepath.Join(rootFs, linkParts[1]))
 		if err != nil {
-			return spawnError("mount:"+linkParts[0]+":"+linkParts[1], err)
+			return fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", linkParts[0], linkParts[1], err)
 		}
 	}
 	return nil
 }
 
-func pivotRoot(rootFs string) error {
-	spawnVerbose("Pivoting: ", rootFs)
+func (c *SpawnCmd) installRuntimePackages(packages []string) error {
+	if len(packages) == 0 {
+		return fmt.Errorf("no runtime packages specified")
+	}
+	args := append([]string{"--install"}, packages...)
+	cmd := exec.Command("dpkg", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("dpkg failed to install runtime packages: %w", err)
+	}
+	return nil
+}
+
+func (c *SpawnCmd) pivotRoot(rootFs string) error {
+	c.spawnVerbose("Pivoting: ", rootFs)
 	pivotDir := filepath.Join(rootFs, ".pivot_root")
 	err := os.MkdirAll(pivotDir, 0755)
 	if err != nil {
-		return spawnError("mkdir:"+pivotDir, err)
+		return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", pivotDir, err)
 	}
 
 	err = syscall.PivotRoot(rootFs, pivotDir)
 	if err != nil {
-		return spawnError("pivot_root", err)
+		return fmt.Errorf("pivot_root: an error occurred while spawning the namespace: %s", err)
 	}
 
 	err = os.Chdir("/")
 	if err != nil {
-		return spawnError("chdir", err)
+		return fmt.Errorf("chdir: an error occurred while spawning the namespace: %s", err)
 	}
 	return nil
 }
 
-// func setHostname(containerId string) error {
-// 	spawnVerbose("Setting hostname: ", containerId)
-// 	err := syscall.Sethostname([]byte(fmt.Sprintf("cpak-%s", containerId[:12])))
-// 	if err != nil {
-// 		return spawnError("sethostname", err)
-// 	}
-// 	return nil
-// }
-
-func startSleepProcess(cmdArgs []string, envVars []string) error {
-	spawnVerbose("Reconfiguring dynamic linker run-time bindings")
+func (c *SpawnCmd) startSleepProcess(cmdArgs []string, envVars []string) error {
+	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
 	l := exec.Command("ldconfig")
 	err := l.Run()
 	if err != nil {
-		return spawnError("ldconfig", err)
+		return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
 	}
 
-	spawnVerbose("Starting sleep process")
+	c.spawnVerbose("Starting sleep process")
 	args := []string{}
 	if len(cmdArgs) > 0 {
 		args = append(args, cmdArgs...)
@@ -471,55 +432,52 @@ func startSleepProcess(cmdArgs []string, envVars []string) error {
 	}
 
 	envv := append(os.Environ(), envVars...)
-	c := exec.Command(args[0], args[1:]...)
-	c.Stdin = os.Stdin
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	c.Env = envv
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = envv
 
 	for _, env := range envv {
 		if strings.HasPrefix(env, "CPAK_") {
-			spawnVerbose("CPAK env var found:", env)
+			c.spawnVerbose("CPAK env var found: ", env)
 		}
 	}
 
-	err = c.Start()
+	err = cmd.Start()
 	if err != nil {
-		return spawnError("start", err)
+		return fmt.Errorf("start: an error occurred while spawning the namespace: %s", err)
 	}
 
-	err = c.Process.Release()
+	err = cmd.Process.Release()
 	if err != nil {
-		return spawnError("release", err)
+		return fmt.Errorf("release: an error occurred while spawning the namespace: %s", err)
 	}
 
 	return nil
 }
 
-// createHostExecShimAndLinks creates the shim script and symlinks for allowed commands.
-func createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {
+func (c *SpawnCmd) createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {
 	shimFilePath := filepath.Join(rootFs, strings.TrimPrefix(hostExecShimPath, "/"))
 	shimDir := filepath.Dir(shimFilePath)
 
-	spawnVerbose("Creating hostexec shim directory:", shimDir)
+	c.spawnVerbose("Creating hostexec shim directory: ", shimDir)
 	if err := os.MkdirAll(shimDir, 0755); err != nil && !os.IsExist(err) {
-		return spawnError("create shim dir "+shimDir, err)
+		return fmt.Errorf("create shim dir %s: an error occurred while spawning the namespace: %s", shimDir, err)
 	}
 
-	// Render the shim script content
 	content, err := cpak.RenderShim(cpakInContainerPath)
 	if err != nil {
-		return spawnError("render shim template", err)
+		return fmt.Errorf("render shim template: an error occurred while spawning the namespace: %s", err)
 	}
 	if err := os.WriteFile(shimFilePath, content, 0755); err != nil {
-		return spawnError("write shim file "+shimFilePath, err)
+		return fmt.Errorf("write shim file %s: an error occurred while spawning the namespace: %s", shimFilePath, err)
 	}
 
-	// Create symlinks for allowed commands
 	linkTargetDir := filepath.Join(rootFs, "/usr/bin")
-	spawnVerbose("Creating symlink directory:", linkTargetDir)
+	c.spawnVerbose("Creating symlink directory: ", linkTargetDir)
 	if err := os.MkdirAll(linkTargetDir, 0755); err != nil && !os.IsExist(err) {
-		return spawnError("create link target dir "+linkTargetDir, err)
+		return fmt.Errorf("create link target dir %s: an error occurred while spawning the namespace: %s", linkTargetDir, err)
 	}
 
 	for _, cmdName := range allowedCmds {
@@ -527,19 +485,16 @@ func createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {
 			continue
 		}
 		linkPath := filepath.Join(linkTargetDir, cmdName)
-		// Calculate relative path from link location to shim script
 		relShimPath, err := filepath.Rel(linkTargetDir, shimFilePath)
 		if err != nil {
-			// Should not happen if paths are constructed correctly
-			return spawnError(fmt.Sprintf("calculate relative path for shim from %s", linkTargetDir), err)
+			return fmt.Errorf("calculate relative path for shim from %s: an error occurred while spawning the namespace: %s", linkTargetDir, err)
 		}
 
-		spawnVerbose("Creating symlink:", linkPath, "->", relShimPath)
-		// Remove existing file/link if present before creating new one
+		c.spawnVerbose("Creating symlink: ", linkPath, " -> ", relShimPath)
 		_ = os.Remove(linkPath)
 		err = os.Symlink(relShimPath, linkPath)
 		if err != nil {
-			return spawnError(fmt.Sprintf("create symlink %s -> %s", linkPath, relShimPath), err)
+			return fmt.Errorf("create symlink %s -> %s: an error occurred while spawning the namespace: %s", linkPath, relShimPath, err)
 		}
 	}
 

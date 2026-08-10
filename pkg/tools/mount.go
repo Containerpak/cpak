@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -43,11 +44,20 @@ func Mount(src, dest string, mode uintptr) error {
 	}
 
 	if info.IsDir() {
-		_ = os.MkdirAll(dest, 0o755)
+		if err = os.MkdirAll(dest, 0o755); err != nil {
+			return err
+		}
 	} else {
-		file, _ := os.Create(dest)
-
-		defer func() { _ = file.Close() }()
+		if err = os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		file, createErr := os.Create(dest)
+		if createErr != nil {
+			return createErr
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			return closeErr
+		}
 	}
 
 	return syscall.Mount(src, dest, "bind", mode, "")

@@ -9,63 +9,52 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/dabadee/pkg/dabadee"
 	"github.com/mirkobrombin/dabadee/pkg/hash"
 	"github.com/mirkobrombin/dabadee/pkg/processor"
 	"github.com/mirkobrombin/dabadee/pkg/storage"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-func NewDedupCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    "dedup",
-		Short:  "Deduplicate a path in the cpak dabadee store",
-		RunE:   dedupRun,
-		Hidden: true,
-	}
+type DedupCmd struct {
+	Verbose bool   `cli:"verbose,v" help:"enable verbose output"`
+	Path    string `cli:"path" help:"the path to deduplicate"`
 
-	cmd.Flags().BoolP("verbose", "v", false, "enable verbose output")
-	cmd.Flags().String("path", "", "the path to deduplicate")
-
-	return cmd
+	cli.Base
 }
 
-func dedupRun(cmd *cobra.Command, args []string) (err error) {
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	path, _ := cmd.Flags().GetString("path")
+func (c *DedupCmd) Run() error {
+	c.Logger.Info("Deduplicating path %s in the DaBaDee storage..", c.Path)
 
-	logger.Printf("Deduplicating path %s in the DaBaDee storage..", path)
-
-	if path == "" {
+	if c.Path == "" {
 		err := fmt.Errorf("path is mandatory")
-		logger.Error(err)
+		c.Logger.Error(err.Error())
 		return err
 	}
 
-	if verbose {
-		logger.Printf("Deduplicating path %s", path)
+	if c.Verbose {
+		c.Logger.Info("Deduplicating path %s", c.Path)
 	}
 
-	c, err := cpak.NewCpak()
+	cp, err := cpak.NewCpak()
 	if err != nil {
-		return
+		return err
 	}
 
-	s, err := storage.NewStorage(c.Options.DaBaDeeStoreOptions)
+	s, err := storage.NewStorage(cp.Options.DaBaDeeStoreOptions)
 	if err != nil {
-		return
+		return err
 	}
 
 	h := hash.NewSHA256Generator()
-	p := processor.NewDedupProcessor(path, "", s, h, 2)
+	p := processor.NewDedupProcessor(c.Path, "", s, h, 2)
 
-	d := dabadee.NewDaBaDee(p, verbose)
+	d := dabadee.NewDaBaDee(p, c.Verbose)
 	err = d.Run()
 	if err != nil {
-		return
+		return err
 	}
 
-	logger.Printf("Deduplication completed successfully")
+	c.Logger.Success("Deduplication completed successfully")
 	return nil
 }

@@ -9,37 +9,26 @@ import (
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
-	"github.com/spf13/cobra"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-func NewServiceCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    "start-service",
-		RunE:   RunService,
-		Hidden: true,
-	}
-	return cmd
+type ServiceCmd struct {
+	cli.Base
 }
 
-func runSError(iErr error) (err error) {
-	err = fmt.Errorf("an error occurred while starting the cpak service: %s", iErr)
-	return
-}
-
-func RunService(cmd *cobra.Command, args []string) (err error) {
-	cpak, err := cpak.NewCpak()
+func (c *ServiceCmd) Run() error {
+	cp, err := cpak.NewCpak()
 	if err != nil {
-		logger.Println("cpak service exited with error!", err)
-		return runSError(err)
+		c.Logger.Error("cpak service exited with error! %v", err)
+		return fmt.Errorf("an error occurred while starting the cpak service: %s", err)
 	}
 
-	err = cpak.StartSocketListener()
+	err = cp.StartSocketListener()
 	if err != nil {
-		logger.Println("cpak service exited with error!", err)
-		return runSError(err)
+		c.Logger.Error("cpak service exited with error! %v", err)
+		return fmt.Errorf("an error occurred while starting the cpak service: %s", err)
 	}
 
-	logger.Println("cpak service exited successfully!")
+	c.Logger.Success("cpak service exited successfully!")
 	return nil
 }

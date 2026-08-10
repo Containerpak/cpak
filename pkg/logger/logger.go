@@ -1,50 +1,54 @@
+/*
+ * Copyright (c) 2025 FABRICATORS S.R.L.
+ * Licensed under the Fabricators Public Access License (FPAL-TCV) v1.0.
+ * See https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md for details.
+ */
 package logger
 
 import (
-	"os"
+	"fmt"
 
-	"github.com/sirupsen/logrus"
+	clilog "github.com/mirkobrombin/go-cli-builder/v3/pkg/log"
 )
 
-var log = logrus.New()
-
-func init() {
-	log.SetOutput(os.Stdout)
-	log.SetFormatter(&logrus.TextFormatter{
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02 15:04:05",
-		ForceColors:     true,
-	})
-}
+var l clilog.Logger = clilog.New()
 
 func Info(args ...interface{}) {
-	log.Info(args...)
+	l.Info(fmt.Sprint(args...))
 }
 
 func Infof(format string, args ...interface{}) {
-	log.Infof(format, args...)
+	l.Info(format, args...)
+}
+
+func Success(args ...interface{}) {
+	l.Success(fmt.Sprint(args...))
+}
+
+func Successf(format string, args ...interface{}) {
+	l.Success(format, args...)
 }
 
 func Warn(args ...interface{}) {
-	log.Warn(args...)
+	l.Warning(fmt.Sprint(args...))
 }
 
 func Warnf(format string, args ...interface{}) {
-	log.Warnf(format, args...)
+	l.Warning(format, args...)
 }
 
 func Error(args ...interface{}) {
-	log.Error(args...)
+	l.Error(fmt.Sprint(args...))
 }
 
 func Errorf(format string, args ...interface{}) {
-	log.Errorf(format, args...)
+	l.Error(format, args...)
 }
 
 func Println(args ...interface{}) {
-	log.Info(args...)
+	l.Info(fmt.Sprint(args...))
 }
 
 func Printf(format string, args ...interface{}) {
-	log.Infof(format, args...)
+	l.Info(format, args...)
 }

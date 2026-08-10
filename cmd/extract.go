@@ -15,36 +15,23 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 	"github.com/schollz/progressbar/v3"
-	"github.com/spf13/cobra"
 )
 
-func NewExtractCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "extract <remote>",
-		Short: "Extract a cpak rootfs into a tarball",
-		Long: `Extract a cpak rootfs into a tarball.
-Questo comando crea un archivio .tar.gz unendo i layer dell'applicazione nell'ordine definito,
-skippando le directory di sistema e ignorando eventuali permission errors.`,
-		Args: cobra.ExactArgs(1),
-		RunE: ExtractPackage,
-	}
+type ExtractCmd struct {
+	Remote  string `arg:"remote" help:"Remote Git repository"`
+	Branch  string `cli:"branch,b" help:"Specify a branch"`
+	Commit  string `cli:"commit,c" help:"Specify a commit"`
+	Release string `cli:"release,r" help:"Specify a release"`
+	Output  string `cli:"output,o" help:"Output tar.gz path (default: cpak-<remote>.tar.gz)"`
 
-	cmd.Flags().StringP("branch", "b", "", "Specify a branch")
-	cmd.Flags().StringP("commit", "c", "", "Specify a commit")
-	cmd.Flags().StringP("release", "r", "", "Specify a release")
-	cmd.Flags().StringP("output", "o", "", "Output tar.gz path (default: cpak-<remote>.tar.gz)")
-
-	return cmd
+	cli.Base
 }
 
-func ExtractPackage(cmd *cobra.Command, args []string) error {
-	origin := strings.ToLower(args[0])
-	branch, _ := cmd.Flags().GetString("branch")
-	commit, _ := cmd.Flags().GetString("commit")
-	release, _ := cmd.Flags().GetString("release")
-	output, _ := cmd.Flags().GetString("output")
+func (c *ExtractCmd) Run() error {
+	origin := strings.ToLower(c.Remote)
+	output := c.Output
 
 	if output == "" {
 		base := strings.ReplaceAll(origin, "/", "-")
@@ -62,7 +49,7 @@ func ExtractPackage(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	app, err := store.GetApplicationByOrigin(origin, "", branch, commit, release)
+	app, err := store.GetApplicationByOrigin(origin, "", c.Branch, c.Commit, c.Release)
 	if err != nil {
 		return fmt.Errorf("application not found for origin %q: %w", origin, err)
 	}
@@ -183,6 +170,6 @@ func ExtractPackage(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	logger.Printf("\nExtracted %s to %s", origin, output)
+	c.Logger.Success("\nExtracted %s to %s", origin, output)
 	return nil
 }

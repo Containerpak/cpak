@@ -29,15 +29,18 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if len(manifest.Binaries) == 0 {
 		return errors.New("binaries is mandatory and must be populated")
 	}
+	for _, source := range manifest.RuntimeSources {
+		if err = ValidateRuntimeSource(source); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // fetchManifest fetches the manifest file from the given origin.
 func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *types.CpakManifest, err error) {
 	// remove trailing .git if present
-	if origin[len(origin)-4:] == ".git" {
-		origin = origin[:len(origin)-4]
-	}
+	origin = strings.TrimSuffix(origin, ".git")
 
 	// if any protocol is specified, we release a failuer since we force
 	// the use of https and the user should not specify any protocol

@@ -49,4 +49,14 @@ type CpakManifest struct {
 	// application, even if this is called "override", it is also used to
 	// set the default permissions.
 	Override Override `json:"override" jsonschema:"description=Permissions override settings"`
+
+	RuntimeSources []RuntimeSource `json:"runtime_sources,omitempty" jsonschema:"description=External artifacts fetched at install time"`
+}
+
+type RuntimeSource struct {
+	Name      string `json:"name,omitempty" jsonschema:"description=File name of the artifact"`
+	URL       string `json:"url" jsonschema:"pattern=^https://,description=HTTPS URL of the artifact"`
+	SHA256    string `json:"sha256" jsonschema:"pattern=^[A-Fa-f0-9]{64}$,description=SHA256 checksum of the artifact"`
+	Size      int64  `json:"size" jsonschema:"minimum=1,description=Size of the artifact in bytes"`
+	Installer string `json:"installer" jsonschema:"enum=dpkg,description=Native installer used inside the cpak environment"`
 }
