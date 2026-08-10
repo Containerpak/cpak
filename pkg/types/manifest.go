@@ -22,7 +22,7 @@ type CpakManifest struct {
 
 	// Image is the image of the application. It is expected to be a valid
 	// OCI image (full image reference).
-	Image string `json:"image" jsonschema:"pattern=^[a-z0-9]+(?:[._-][a-z0-9]+)*/[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$,description=OCI image reference"`
+	Image string `json:"image" jsonschema:"pattern=^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9._-]+)?$,description=OCI image reference"`
 
 	// Binaries is the list of exported binaries of the application.
 	Binaries []string `json:"binaries" jsonschema:"minItems=1,items.pattern=^/,description=Absolute paths to binaries"`
