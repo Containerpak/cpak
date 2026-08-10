@@ -370,11 +370,14 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err != nil {
 		return
 	}
-	defer store.Close()
 
 	appToRemove, err := store.GetApplicationByOrigin(origin, "", branch, commit, release)
 	if err != nil || appToRemove.CpakId == "" {
+		_ = store.Close()
 		return fmt.Errorf("application %s not found for specified criteria: %w", origin, err)
+	}
+	if err = store.Close(); err != nil {
+		return
 	}
 
 	// Stop all containers associated with the application
@@ -382,6 +385,12 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err != nil {
 		return fmt.Errorf("failed to stop containers for %s: %w", appToRemove.Name, err)
 	}
+
+	store, err = NewStore(c.Options.StorePath)
+	if err != nil {
+		return
+	}
+	defer store.Close()
 
 	switch {
 	case branch != "":
