@@ -142,6 +142,11 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
+	if err = store.SetContainerPid(container.CpakId, container.Pid); err != nil {
+		_ = store.Close()
+		c.CleanupContainer(container)
+		return types.Container{}, err
+	}
 
 	logger.Println("Container prepared:", container.CpakId)
 	return
@@ -250,16 +255,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	// The pid of the container is the pid of the init process
 	// and it is stored so that we can attach to it later
 	pid, err = getPidFromEnvContainerId(container.CpakId)
-	if err != nil {
-		return
-	}
-	store, err := NewStore(c.Options.StorePath)
-	if err != nil {
-		return
-	}
-	defer store.Close()
-
-	err = store.SetContainerPid(container.CpakId, pid)
 	if err != nil {
 		return
 	}
