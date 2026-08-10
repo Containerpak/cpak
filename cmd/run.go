@@ -20,6 +20,7 @@ type RunCmd struct {
 	Extra  []string `arg:"extra" help:"Extra arguments for the binary"`
 
 	Verbose       bool   `cli:"verbose,v" help:"Enable verbose output"`
+	Instance      string `cli:"instance,i" help:"Application instance"`
 	Branch        string `cli:"branch,b" help:"Specify a branch"`
 	Commit        string `cli:"commit,c" help:"Specify a commit"`
 	Release       string `cli:"release,r" help:"Specify a release"`
@@ -44,7 +45,7 @@ func (c *RunCmd) Run() error {
 	remote := strings.ToLower(c.Remote)
 	logger.Println("Running cpak from remote:", remote)
 
-	err = cp.Run(remote, "", c.Branch, c.Commit, c.Release, c.Binary, c.Verbose, c.Extra...)
+	err = cp.RunInstance(remote, "", c.Branch, c.Commit, c.Release, c.Instance, c.Binary, c.Verbose, c.Extra...)
 	if err != nil {
 		return c.runError(err)
 	}

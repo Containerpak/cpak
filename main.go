@@ -22,6 +22,7 @@ type CLI struct {
 	List           cmd.ListCmd           `cmd:"list" help:"List all the packages in the local store"`
 	Shell          cmd.ShellCmd          `cmd:"shell" help:"Spawn a shell inside a container"`
 	Run            cmd.RunCmd            `cmd:"run" help:"Run a package from a remote Git repository"`
+	Logs           cmd.LogsCmd           `cmd:"logs" help:"Show output from a running application"`
 	Spawn          cmd.SpawnCmd          `cmd:"spawn" help:"Spawn a container for a package"`
 	Service        cmd.ServiceCmd        `cmd:"service" help:"Manage cpak services"`
 	Stop           cmd.StopCmd           `cmd:"stop" help:"Stop a running container"`

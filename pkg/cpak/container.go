@@ -8,6 +8,7 @@ package cpak
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,15 +36,27 @@ import (
 // use the user's home directory for that or expose other system directories
 // where data can be stored.
 func (c *Cpak) PrepareContainer(app types.Application, override types.Override) (container types.Container, err error) {
-	return c.prepareContainer(app, override, app.CpakId)
+	return c.prepareContainer(app, override, app.CpakId, "")
+}
+
+func (c *Cpak) PrepareContainerInstance(app types.Application, override types.Override, instance string) (types.Container, error) {
+	scope := ApplicationScope(app.CpakId, instance)
+	return c.prepareContainer(app, override, scope, instance)
+}
+
+func ApplicationScope(applicationCpakId, instance string) string {
+	if instance == "" {
+		return applicationCpakId
+	}
+	return applicationCpakId + ":instance:" + instance
 }
 
 func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Override) (types.Container, error) {
 	scope := app.CpakId + ":nested:" + uuid.NewString()
-	return c.prepareContainer(app, override, scope)
+	return c.prepareContainer(app, override, scope, "")
 }
 
-func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope string) (container types.Container, err error) {
+func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string) (container types.Container, err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
@@ -109,7 +122,9 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	container = types.Container{
 		CpakId:            newContainerCpakId,
 		ApplicationCpakId: scope,
+		Instance:          instance,
 		StatePath:         statePath,
+		LogPath:           filepath.Join(statePath, "application.log"),
 		CreateTimestamp:   time.Now(),
 	}
 
@@ -263,6 +278,13 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 // StopContainer stops the containers related to the given application.
 func (c *Cpak) StopContainer(app types.Application) (err error) {
+	return c.StopContainerInstance(app, "")
+}
+
+func (c *Cpak) StopContainerInstance(app types.Application, instance string) (err error) {
+	if instance != "" {
+		app.CpakId = ApplicationScope(app.CpakId, instance)
+	}
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
@@ -297,6 +319,10 @@ func (c *Cpak) StopContainer(app types.Application) (err error) {
 // Stop is a convenient wrapper around the StopContainer function that
 // takes the origin and version of the application to stop.
 func (c *Cpak) Stop(origin, version, branch, commit, release string) (err error) {
+	return c.StopInstance(origin, version, branch, commit, release, "")
+}
+
+func (c *Cpak) StopInstance(origin, version, branch, commit, release, instance string) (err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
@@ -315,7 +341,7 @@ func (c *Cpak) Stop(origin, version, branch, commit, release string) (err error)
 		return
 	}
 
-	err = c.StopContainer(app)
+	err = c.StopContainerInstance(app, instance)
 	if err != nil {
 		return
 	}
@@ -370,8 +396,14 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 	cmd := exec.Command(c.Options.NsenterBinPath, cmds...)
 	logger.Println("Executing command:", cmd.String())
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	logFile, logErr := os.OpenFile(container.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if logErr != nil {
+		return fmt.Errorf("open application log: %w", logErr)
+	}
+	defer logFile.Close()
+	output := io.MultiWriter(os.Stdout, logFile)
+	cmd.Stdout = output
+	cmd.Stderr = output
 	cmd.Env = envVars
 
 	err = cmd.Run()

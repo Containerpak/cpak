@@ -38,4 +38,10 @@ type Container struct {
 
 	// HostExecSocketPath is the path to the Unix domain socket used by the hostexec server/client.
 	HostExecSocketPath string `json:"host_exec_socket_path"`
+
+	// Instance identifies the optional application instance.
+	Instance string `json:"instance"`
+
+	// LogPath is the host path where command output is retained.
+	LogPath string `json:"log_path"`
 }

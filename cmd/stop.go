@@ -13,11 +13,12 @@ import (
 )
 
 type StopCmd struct {
-	Remote  string `arg:"remote" help:"Remote Git repository"`
-	Version string `cli:"version,v" help:"Specify a version"`
-	Branch  string `cli:"branch,b" help:"Specify a branch"`
-	Commit  string `cli:"commit,c" help:"Specify a commit"`
-	Release string `cli:"release,r" help:"Specify a release"`
+	Remote   string `arg:"remote" help:"Remote Git repository"`
+	Version  string `cli:"version,v" help:"Specify a version"`
+	Instance string `cli:"instance,i" help:"Application instance"`
+	Branch   string `cli:"branch,b" help:"Specify a branch"`
+	Commit   string `cli:"commit,c" help:"Specify a commit"`
+	Release  string `cli:"release,r" help:"Specify a release"`
 
 	cli.Base
 }
@@ -30,7 +31,7 @@ func (c *StopCmd) Run() error {
 		return err
 	}
 
-	err = cp.Stop(c.Remote, c.Version, c.Branch, c.Commit, c.Release)
+	err = cp.StopInstance(c.Remote, c.Version, c.Branch, c.Commit, c.Release, c.Instance)
 	if err != nil {
 		return fmt.Errorf("an error occurred while stopping the cpak container: %s", err)
 	}

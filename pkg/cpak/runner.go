@@ -57,6 +57,10 @@ var isVerbose bool
 // for debugging purposes and handle the error case when the binary is not
 // available, e.g. in shell scripts.
 func (c *Cpak) Run(origin string, version string, branch string, commit string, release string, binary string, verbose bool, extraArgs ...string) (err error) {
+	return c.RunInstance(origin, version, branch, commit, release, "", binary, verbose, extraArgs...)
+}
+
+func (c *Cpak) RunInstance(origin string, version string, branch string, commit string, release string, instance string, binary string, verbose bool, extraArgs ...string) (err error) {
 	isVerbose = verbose
 	parentAppCpakId, isNested := getNested()
 	if isNested {
@@ -83,7 +87,7 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 		return err
 	}
 
-	return c.runApplication(app, resolvedOverride(app), binary, verbose, false, extraArgs...)
+	return c.runApplicationInstance(app, resolvedOverride(app), instance, binary, verbose, false, extraArgs...)
 }
 
 func (c *Cpak) RunAuthorized(params types.RequestParams, verbose bool) error {
@@ -96,13 +100,17 @@ func (c *Cpak) RunAuthorized(params types.RequestParams, verbose bool) error {
 }
 
 func (c *Cpak) runApplication(app types.Application, override types.Override, binary string, verbose, nested bool, extraArgs ...string) error {
+	return c.runApplicationInstance(app, override, "", binary, verbose, nested, extraArgs...)
+}
+
+func (c *Cpak) runApplicationInstance(app types.Application, override types.Override, instance, binary string, verbose, nested bool, extraArgs ...string) error {
 	startTime := time.Now()
 	var container types.Container
 	var err error
 	if nested {
 		container, err = c.PrepareNestedContainer(app, override)
 	} else {
-		container, err = c.PrepareContainer(app, override)
+		container, err = c.PrepareContainerInstance(app, override, instance)
 	}
 	if err != nil {
 		return err
