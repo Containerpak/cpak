@@ -267,10 +267,13 @@ func (c *Cpak) StopContainer(app types.Application) (err error) {
 	if err != nil {
 		return
 	}
-	defer store.Close()
 
 	containers, err := store.GetApplicationContainers(app)
 	if err != nil {
+		_ = store.Close()
+		return
+	}
+	if err = store.Close(); err != nil {
 		return
 	}
 
@@ -298,14 +301,18 @@ func (c *Cpak) Stop(origin, version, branch, commit, release string) (err error)
 	if err != nil {
 		return
 	}
-	defer store.Close()
 
 	app, err := store.GetApplicationByOrigin(origin, version, branch, commit, release)
 	if err != nil {
+		_ = store.Close()
 		return
 	}
 	if app.CpakId == "" {
+		_ = store.Close()
 		return fmt.Errorf("application not found for stopping: %s", origin)
+	}
+	if err = store.Close(); err != nil {
+		return
 	}
 
 	err = c.StopContainer(app)
