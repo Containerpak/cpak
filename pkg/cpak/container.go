@@ -48,7 +48,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	if err != nil {
 		return
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Check if a container already exists for the given application
 	scopedApp := app
@@ -74,7 +74,14 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		container.Pid, err = getPidFromEnvContainerId(container.CpakId)
 		if err != nil || container.Pid == 0 {
 			logger.Println("Container not running, cleaning it up:", container.CpakId)
+			if err = store.Close(); err != nil {
+				return
+			}
 			err = c.CleanupContainer(container)
+			if err != nil {
+				return
+			}
+			store, err = NewStore(c.Options.StorePath)
 			if err != nil {
 				return
 			}
@@ -131,6 +138,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 	_, container.Pid, err = c.StartContainer(container, app, config, override)
 	if err != nil {
+		_ = store.Close()
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
