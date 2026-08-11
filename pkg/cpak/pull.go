@@ -258,9 +258,22 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 		return
 	}
 
-	if err = os.Rename(layerInStoreDir, c.GetInStoreDir("layers", digest)); err != nil {
+	if err = c.publishLayer(layerInStoreDir, digest); err != nil {
 		return
 	}
 
 	return
+}
+
+func (c *Cpak) publishLayer(source, digest string) error {
+	target := c.GetInStoreDir("layers", digest)
+	if err := os.Rename(source, target); err == nil {
+		return nil
+	} else if available, checkErr := c.layerAvailable(digest); checkErr != nil {
+		return checkErr
+	} else if !available {
+		return err
+	}
+
+	return os.RemoveAll(source)
 }

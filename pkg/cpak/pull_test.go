@@ -51,3 +51,39 @@ func TestUnpackImageLayersReturnsExistingLayers(t *testing.T) {
 		t.Fatalf("existing layer missing from result: %v", layers)
 	}
 }
+
+func TestPublishLayerAcceptsExistingLayer(t *testing.T) {
+	c := newTestCpak(t)
+	target := c.GetInStoreDir("layers", "abc")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.MkdirTemp(c.GetInStoreDir("layers"), "abc.partial-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.publishLayer(source, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("temporary layer still exists: %v", err)
+	}
+}
+
+func TestPublishLayerRejectsExistingFile(t *testing.T) {
+	c := newTestCpak(t)
+	target := c.GetInStoreDir("layers", "abc")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("invalid"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.MkdirTemp(c.GetInStoreDir("layers"), "abc.partial-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.publishLayer(source, "abc"); err == nil {
+		t.Fatal("expected an existing file to reject the layer")
+	}
+}
