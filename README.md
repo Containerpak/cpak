@@ -58,6 +58,22 @@ cpak audit
 cpak audit --repair
 ```
 
+## Aliases
+
+Aliases name installed applications without changing their stored origin:
+
+```sh
+cpak alias set bottles github.com/containerpak/bottles
+cpak run bottles bottles
+cpak update bottles
+cpak alias list --json
+cpak alias remove bottles
+```
+
+Alias names are case-insensitive and stored as lowercase letters, digits and
+hyphens. They are local to the Cpak store and resolve only for installed
+applications.
+
 Applications can be pinned to a branch, release or commit. If none is selected,
 Cpak follows the `main` branch.
 
@@ -97,7 +113,7 @@ and declared features that Cpak cannot apply are rejected.
   "override": {
     "socketWayland": true,
     "deviceDri": true,
-    "fsHostHome": true,
+    "filesystem": [{"path": "home", "access": "read-write"}],
     "network": true
   }
 }

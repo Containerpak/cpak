@@ -7,7 +7,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
@@ -25,15 +24,18 @@ type ShellCmd struct {
 }
 
 func (c *ShellCmd) Run() error {
-	remote := strings.ToLower(c.Remote)
 	binary := "@sh"
-
-	c.Logger.Info("Running cpak from remote: %s", remote)
 
 	cp, err := cpak.NewCpak()
 	if err != nil {
 		return fmt.Errorf("an error occurred while opening the cpak shell: %s", err)
 	}
+	remote, err := resolveApplicationOrigin(cp, c.Remote)
+	if err != nil {
+		return fmt.Errorf("an error occurred while opening the cpak shell: %s", err)
+	}
+
+	c.Logger.Info("Running cpak from remote: %s", remote)
 
 	err = cp.RunInstance(remote, c.Branch, c.Branch, c.Commit, c.Release, c.Instance, binary, c.Verbose, "-i")
 	if err != nil {

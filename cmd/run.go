@@ -7,7 +7,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/logger"
@@ -42,7 +41,10 @@ func (c *RunCmd) Run() error {
 		return c.runError(cp.RunAuthorized(params, c.Verbose))
 	}
 
-	remote := strings.ToLower(c.Remote)
+	remote, err := resolveApplicationOrigin(cp, c.Remote)
+	if err != nil {
+		return c.runError(err)
+	}
 	logger.Println("Running cpak from remote:", remote)
 
 	err = cp.RunInstance(remote, "", c.Branch, c.Commit, c.Release, c.Instance, c.Binary, c.Verbose, c.Extra...)

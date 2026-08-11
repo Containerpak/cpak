@@ -25,11 +25,16 @@ type UpdateCmd struct {
 }
 
 func (c *UpdateCmd) Run() error {
-	remote := strings.ToLower(c.Remote)
-
 	cp, err := cpak.NewCpak()
 	if err != nil {
 		return fmt.Errorf("an error occurred while updating cpak(s): %s", err)
+	}
+	remote := ""
+	if c.Remote != "" {
+		remote, err = resolveApplicationOrigin(cp, c.Remote)
+		if err != nil {
+			return fmt.Errorf("an error occurred while updating cpak(s): %s", err)
+		}
 	}
 
 	results, err := cp.UpdateWithOptions(remote, cpak.UpdateOptions{

@@ -35,6 +35,7 @@ type CLI struct {
 	Lock            cmd.LockCmd            `cmd:"lock" help:"Resolve a reproducible package lock file"`
 	Dev             cmd.DevCmd             `cmd:"dev" help:"Install and launch a local package in isolation"`
 	Test            cmd.TestCmd            `cmd:"test" help:"Validate a local package in isolation"`
+	Alias           cmd.AliasCmd           `cmd:"alias" help:"Manage aliases for installed applications"`
 	Override        cmd.OverrideCmd        `cmd:"override" help:"Manage application overrides"`
 	Addon           cmd.AddonCmd           `cmd:"addon" help:"Manage application addons"`
 	Extract         cmd.ExtractCmd         `cmd:"extract" help:"Extract a package to a local directory"`

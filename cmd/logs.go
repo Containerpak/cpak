@@ -36,11 +36,15 @@ func (c *LogsCmd) Run() error {
 	if err != nil {
 		return err
 	}
+	remote, err := resolveApplicationOrigin(cp, c.Remote)
+	if err != nil {
+		return err
+	}
 	store, err := cpak.NewStore(cp.Options.StorePath)
 	if err != nil {
 		return err
 	}
-	app, err := store.GetApplicationByOrigin(strings.ToLower(c.Remote), "", "", "", "")
+	app, err := store.GetApplicationByOrigin(remote, "", "", "", "")
 	if err != nil {
 		_ = store.Close()
 		return fmt.Errorf("application not found: %w", err)

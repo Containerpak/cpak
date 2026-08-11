@@ -22,9 +22,11 @@ type RemoveCmd struct {
 }
 
 func (c *RemoveCmd) Run() error {
-	remote := c.Remote
-
 	cp, err := cpak.NewCpak()
+	if err != nil {
+		return fmt.Errorf("an error occurred while removing cpak: %s", err)
+	}
+	remote, err := resolveApplicationOrigin(cp, c.Remote)
 	if err != nil {
 		return fmt.Errorf("an error occurred while removing cpak: %s", err)
 	}

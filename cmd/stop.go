@@ -24,14 +24,17 @@ type StopCmd struct {
 }
 
 func (c *StopCmd) Run() error {
-	c.Logger.Info("Stopping cpak from remote: %s", c.Remote)
-
 	cp, err := cpak.NewCpak()
 	if err != nil {
 		return err
 	}
+	remote, err := resolveApplicationOrigin(cp, c.Remote)
+	if err != nil {
+		return err
+	}
+	c.Logger.Info("Stopping cpak from remote: %s", remote)
 
-	err = cp.StopInstance(c.Remote, c.Version, c.Branch, c.Commit, c.Release, c.Instance)
+	err = cp.StopInstance(remote, c.Version, c.Branch, c.Commit, c.Release, c.Instance)
 	if err != nil {
 		return fmt.Errorf("an error occurred while stopping the cpak container: %s", err)
 	}
