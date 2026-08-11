@@ -234,11 +234,13 @@ func execute(request Request, options Options) error {
 		if err != nil {
 			return fmt.Errorf("system integration backend is unavailable: %s", options.openURICommand())
 		}
-		if err := exec.CommandContext(ctx, path, request.Args...).Run(); err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("system integration backend timed out: %s", options.openURICommand())
-			}
+		command := exec.Command(path, request.Args...)
+		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := command.Start(); err != nil {
 			return fmt.Errorf("system integration backend failed: %s", options.openURICommand())
+		}
+		if err := command.Process.Release(); err != nil {
+			return fmt.Errorf("release system integration backend: %s", options.openURICommand())
 		}
 		return nil
 	}

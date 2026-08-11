@@ -70,6 +70,23 @@ func TestCallUsesOnlyPermittedOperations(t *testing.T) {
 	}
 }
 
+func TestOpenURIReturnsAfterStartingTheDesktopBackend(t *testing.T) {
+	backend := filepath.Join(t.TempDir(), "open-uri")
+	if err := os.WriteFile(backend, []byte("#!/bin/sh\nsleep 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	options := testOptions(t)
+	options.OpenURICommand = backend
+	startBroker(t, options)
+	started := time.Now()
+	if err := Call(options.SocketPath, options.Token, OperationOpenURI, []string{"https://usecpak.org"}); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("URI backend blocked the broker for %s", elapsed)
+	}
+}
+
 func TestCallRejectsWrongToken(t *testing.T) {
 	options := testOptions(t)
 	startBroker(t, options)
