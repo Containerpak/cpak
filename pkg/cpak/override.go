@@ -86,7 +86,7 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 		}
 
 		if o.DeviceKvm {
-			mounts = append(mounts, "/dev/kvm/")
+			mounts = append(mounts, "/dev/kvm")
 		}
 
 		if o.DeviceShm {

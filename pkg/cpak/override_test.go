@@ -29,6 +29,16 @@ func TestBluetoothUsesOneSystemBusMount(t *testing.T) {
 	}
 }
 
+func TestKvmUsesDevicePath(t *testing.T) {
+	mounts, _ := GetOverrideMounts(types.Override{DeviceKvm: true})
+	if !slicesContain(mounts, "/dev/kvm") {
+		t.Fatalf("KVM mounts %v do not contain the device path", mounts)
+	}
+	if slicesContain(mounts, "/dev/kvm/") {
+		t.Fatalf("KVM mounts %v treat the device as a directory", mounts)
+	}
+}
+
 func TestAtSpiUsesSessionAddress(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	want := "/run/user/" + uid + "/at-spi/bus_9"
