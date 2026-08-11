@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -49,6 +50,18 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if manifest.Override.SocketBluetooth && !manifest.Override.Network {
 		return errors.New("Bluetooth access requires network namespace sharing")
 	}
+	if manifest.ManifestVersion == "1.0" {
+		if manifest.FilesystemDeclared() || len(manifest.Override.Filesystem) > 0 {
+			return errors.New("filesystem permissions require manifest version 2.0")
+		}
+	} else {
+		if fields := legacyFilesystemFields(manifest); len(fields) > 0 {
+			return fmt.Errorf("legacy filesystem permissions are not supported in manifest version 2.0: %s", strings.Join(fields, ", "))
+		}
+		if err = types.ValidateFilesystemPermissions(manifest.Override.Filesystem); err != nil {
+			return err
+		}
+	}
 	return ValidateManifest(manifest)
 }
 
@@ -67,11 +80,26 @@ func DecodeManifest(content []byte) (*types.CpakManifest, error) {
 	if manifest.ManifestVersion == "" {
 		manifest.ManifestVersion = "1.0"
 	}
+	var raw struct {
+		Override map[string]json.RawMessage `json:"override"`
+	}
+	if err := json.Unmarshal(content, &raw); err != nil {
+		return nil, err
+	}
+	legacy := make([]string, 0, len(raw.Override))
+	for _, field := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra"} {
+		if _, ok := raw.Override[field]; ok {
+			legacy = append(legacy, field)
+		}
+	}
+	manifest.SetLegacyFilesystemFields(legacy)
+	_, filesystemDeclared := raw.Override["filesystem"]
+	manifest.SetFilesystemDeclared(filesystemDeclared)
 	return manifest, nil
 }
 
-// MigrateManifest upgrades a v1 manifest to v2. Version 2 starts with no
-// granted permissions so the author can add only the permissions it needs.
+// MigrateManifest upgrades a v1 manifest to v2 while preserving its effective
+// permissions and replacing legacy filesystem fields with typed grants.
 func MigrateManifest(manifest *types.CpakManifest) error {
 	if manifest.ManifestVersion == "" {
 		manifest.ManifestVersion = "1.0"
@@ -82,9 +110,61 @@ func MigrateManifest(manifest *types.CpakManifest) error {
 	if manifest.ManifestVersion != "1.0" {
 		return fmt.Errorf("unsupported manifest version: %s", manifest.ManifestVersion)
 	}
+	override := manifest.Override
+	filesystem := make([]types.FilesystemPermission, 0, len(override.FsExtra)+3)
+	if override.FsHost {
+		filesystem = append(filesystem, types.FilesystemPermission{Path: "host", Access: "read-only"})
+	}
+	if override.FsHostEtc {
+		filesystem = append(filesystem, types.FilesystemPermission{Path: "/etc", Access: "read-only"})
+	}
+	if override.FsHostHome {
+		filesystem = append(filesystem, types.FilesystemPermission{Path: "home", Access: "read-write"})
+	}
+	for _, path := range override.FsExtra {
+		filesystem = append(filesystem, types.FilesystemPermission{Path: path, Access: "read-write"})
+	}
+	if err := types.ValidateFilesystemPermissions(filesystem); err != nil {
+		return fmt.Errorf("migrate filesystem permissions: %w", err)
+	}
+	override.Filesystem = filesystem
+	override.FsHost = false
+	override.FsHostEtc = false
+	override.FsHostHome = false
+	override.FsExtra = nil
 	manifest.ManifestVersion = "2.0"
-	manifest.Override = types.Override{}
+	manifest.Override = override
+	manifest.SetLegacyFilesystemFields(nil)
+	manifest.SetFilesystemDeclared(len(filesystem) > 0)
 	return nil
+}
+
+func legacyFilesystemFields(manifest *types.CpakManifest) []string {
+	fields := manifest.LegacyFilesystemFields()
+	if manifest.Override.FsHost {
+		fields = append(fields, "fsHost")
+	}
+	if manifest.Override.FsHostEtc {
+		fields = append(fields, "fsHostEtc")
+	}
+	if manifest.Override.FsHostHome {
+		fields = append(fields, "fsHostHome")
+	}
+	if len(manifest.Override.FsExtra) > 0 {
+		fields = append(fields, "fsExtra")
+	}
+	sort.Strings(fields)
+	return uniqueManifestFields(fields)
+}
+
+func uniqueManifestFields(fields []string) []string {
+	result := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if len(result) == 0 || result[len(result)-1] != field {
+			result = append(result, field)
+		}
+	}
+	return result
 }
 
 // fetchManifest fetches the manifest file from the given origin.

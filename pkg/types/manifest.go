@@ -48,6 +48,25 @@ type CpakManifest struct {
 	Override Override `json:"override" jsonschema:"description=Permissions override settings"`
 
 	RuntimeSources []RuntimeSource `json:"runtime_sources,omitempty" jsonschema:"description=External artifacts fetched at install time"`
+
+	legacyFilesystemFields []string
+	filesystemDeclared     bool
+}
+
+func (m *CpakManifest) SetLegacyFilesystemFields(fields []string) {
+	m.legacyFilesystemFields = append([]string{}, fields...)
+}
+
+func (m CpakManifest) LegacyFilesystemFields() []string {
+	return append([]string{}, m.legacyFilesystemFields...)
+}
+
+func (m *CpakManifest) SetFilesystemDeclared(declared bool) {
+	m.filesystemDeclared = declared
+}
+
+func (m CpakManifest) FilesystemDeclared() bool {
+	return m.filesystemDeclared
 }
 
 type RuntimeSource struct {

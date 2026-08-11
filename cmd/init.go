@@ -46,7 +46,7 @@ func (c *InitCmd) Run() error {
 		Dependencies:    []types.Dependency{},
 		Addons:          c.Addon,
 		IdleTime:        c.IdleTime,
-		Override:        types.NewOverride(),
+		Override:        types.Override{},
 	}
 	if manifest.ManifestVersion == "" {
 		manifest.ManifestVersion = "2.0"

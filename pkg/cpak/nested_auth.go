@@ -7,8 +7,10 @@ package cpak
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -126,6 +128,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		DeviceUsb:           parent.DeviceUsb && child.DeviceUsb,
 		DeviceAll:           parent.DeviceAll && child.DeviceAll,
 		Notification:        parent.Notification && child.Notification,
+		Filesystem:          intersectFilesystem(parent.Filesystem, child.Filesystem),
 		FsHost:              parent.FsHost && child.FsHost,
 		FsHostEtc:           parent.FsHostEtc && child.FsHostEtc,
 		FsHostHome:          parent.FsHostHome && child.FsHostHome,
@@ -133,9 +136,81 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		Env:                 intersectStrings(parent.Env, child.Env),
 		Network:             parent.Network && child.Network,
 		Process:             parent.Process && child.Process,
+		MemoryMaxMB:         minimumLimit(parent.MemoryMaxMB, child.MemoryMaxMB),
+		CPUQuota:            minimumLimit(parent.CPUQuota, child.CPUQuota),
+		PidsMax:             minimumLimit(parent.PidsMax, child.PidsMax),
 		AsRoot:              parent.AsRoot && child.AsRoot,
 		AllowedHostCommands: intersectStrings(parent.AllowedHostCommands, child.AllowedHostCommands),
 	}
+}
+
+func intersectFilesystem(parent, child []types.FilesystemPermission) []types.FilesystemPermission {
+	permissions := make(map[string]string, len(child))
+	for _, requested := range child {
+		access := ""
+		for _, granted := range parent {
+			if !filesystemContains(granted.Path, requested.Path) {
+				continue
+			}
+			candidate := requested.Access
+			if granted.Access == "read-only" || requested.Access == "read-only" {
+				candidate = "read-only"
+			}
+			if access == "" || candidate == "read-only" {
+				access = candidate
+			}
+		}
+		if access != "" {
+			permissions[requested.Path] = access
+		}
+	}
+	paths := make([]string, 0, len(permissions))
+	for path := range permissions {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	result := make([]types.FilesystemPermission, 0, len(paths))
+	for _, path := range paths {
+		result = append(result, types.FilesystemPermission{Path: path, Access: permissions[path]})
+	}
+	return result
+}
+
+func filesystemContains(parent, child string) bool {
+	if parent == "host" {
+		return true
+	}
+	if child == "host" {
+		return parent == "host"
+	}
+	if parent == "home" && child == "home" {
+		return true
+	}
+	if parent == "home" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		parent = home
+	}
+	if child == "home" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		child = home
+	}
+	return parent == child || strings.HasPrefix(child, parent+"/")
+}
+
+func minimumLimit(parent, child int) int {
+	if parent == 0 {
+		return child
+	}
+	if child == 0 || parent < child {
+		return parent
+	}
+	return child
 }
 
 func intersectStrings(parent, child []string) []string {

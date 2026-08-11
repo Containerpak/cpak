@@ -23,6 +23,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/tools"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -40,6 +41,7 @@ type SpawnCmd struct {
 	StateDir       string   `cli:"state-dir" help:"set the state directory"`
 	ImageDir       string   `cli:"image-dir" help:"set the image directory"`
 	LayersDir      string   `cli:"layers-dir" help:"set the layers directory"`
+	Filesystem     []string `cli:"filesystem" help:"encoded filesystem permission"`
 	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
 	MountShims     []string `cli:"mount-shims,M" help:"set the mount shims"`
 	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
@@ -108,7 +110,11 @@ func (c *SpawnCmd) Run() error {
 		return c.installRuntimePackages(c.RuntimePackage)
 	}
 
-	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, hostExecSocketPath, c.MountHostRoot)
+	filesystem, err := decodeFilesystemPermissions(c.Filesystem)
+	if err != nil {
+		return err
+	}
+	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, filesystem, hostExecSocketPath, c.MountHostRoot)
 	if err != nil {
 		return err
 	}
@@ -252,7 +258,7 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	return nil
 }
 
-func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, hostExecSocketPath string, mountHostRoot bool) ([]sandbox.PathGrant, error) {
+func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, filesystem []types.FilesystemPermission, hostExecSocketPath string, mountHostRoot bool) ([]sandbox.PathGrant, error) {
 	grants := []sandbox.PathGrant{
 		{Path: "/tmp"},
 		{Path: "/dev"},
@@ -289,6 +295,13 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 			return nil, fmt.Errorf("mount:/run/host: %w", err)
 		}
 		grants = append(grants, sandbox.PathGrant{Path: "/run/host", ReadOnly: true})
+	}
+	for _, permission := range filesystem {
+		grant, mountErr := c.mountFilesystemPermission(rootFs, permission)
+		if mountErr != nil {
+			return nil, mountErr
+		}
+		grants = append(grants, grant)
 	}
 
 	for _, mount := range overrideMounts {
@@ -376,6 +389,41 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	}
 
 	return grants, nil
+}
+
+func decodeFilesystemPermissions(encoded []string) ([]types.FilesystemPermission, error) {
+	permissions := make([]types.FilesystemPermission, 0, len(encoded))
+	for _, value := range encoded {
+		permission, err := types.DecodeFilesystemPermission(value)
+		if err != nil {
+			return nil, err
+		}
+		permissions = append(permissions, permission)
+	}
+	if err := types.ValidateFilesystemPermissions(permissions); err != nil {
+		return nil, err
+	}
+	return permissions, nil
+}
+
+func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.FilesystemPermission) (sandbox.PathGrant, error) {
+	source, target, err := types.ResolveFilesystemPermission(permission)
+	if err != nil {
+		return sandbox.PathGrant{}, err
+	}
+	if _, err := os.Stat(source); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("filesystem path %s is unavailable: %w", source, err)
+	}
+	destination := filepath.Join(rootFs, target)
+	c.spawnVerbose("(filesystem) Mounting: ", source, " as ", target)
+	if permission.Access == "read-only" {
+		if err := tools.MountBindReadOnly(source, destination, false); err != nil {
+			return sandbox.PathGrant{}, fmt.Errorf("mount filesystem %s: %w", source, err)
+		}
+	} else if err := tools.MountBind(source, destination); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("mount filesystem %s: %w", source, err)
+	}
+	return sandbox.PathGrant{Path: target, ReadOnly: permission.Access == "read-only"}, nil
 }
 
 func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) {

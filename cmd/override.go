@@ -67,6 +67,18 @@ func (c *OverrideCmd) Run() error {
 	if userO, err := cpak.LoadOverride(appOrigin, sel.Version); err == nil {
 		over = userO
 	}
+	if c.Key == "filesystem" {
+		permissions, err := types.DecodeFilesystemPermissionsJSON([]byte(c.Value))
+		if err != nil {
+			return err
+		}
+		over.Filesystem = permissions
+		if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+			return err
+		}
+		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
+		return nil
+	}
 
 	// Initialize the flag binder
 	b, err := binder.NewBinder(&over, os.TempDir(), true)

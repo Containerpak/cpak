@@ -9,10 +9,10 @@ func TestOverrideDiffReportsChangedPermissions(t *testing.T) {
 	before := NewOverride()
 	after := before
 	after.Network = false
-	after.FsExtra = []string{"/run/media"}
+	after.Filesystem = []FilesystemPermission{{Path: "/run/media", Access: "read-write"}}
 
 	changes := before.Diff(after)
-	expected := []string{"fsExtra", "network"}
+	expected := []string{"filesystem", "network"}
 	if !reflect.DeepEqual(changes, expected) {
 		t.Fatalf("expected %v, got %v", expected, changes)
 	}

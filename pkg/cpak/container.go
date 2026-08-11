@@ -251,11 +251,20 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
 	overrideMounts, overrideShims := GetOverrideMounts(override)
+	filesystemArgs := []string{}
+	for _, permission := range override.Filesystem {
+		encoded, encodeErr := types.EncodeFilesystemPermission(permission)
+		if encodeErr != nil {
+			return "", 0, "", encodeErr
+		}
+		filesystemArgs = append(filesystemArgs, "--filesystem", encoded)
+	}
 	cmds := []string{}
 	if isVerbose {
 		cmds = append(cmds, "--debug")
 	}
 	cmds = append(cmds, "spawn")
+	cmds = append(cmds, filesystemArgs...)
 	if isVerbose {
 		cmds = append(cmds, "--verbose")
 	}

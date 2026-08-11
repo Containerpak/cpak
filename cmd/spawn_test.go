@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 func TestWriteNvidiaLoaderConfigurationUsesSoname(t *testing.T) {
@@ -74,5 +76,30 @@ func TestRuntimePackageCommandUsesGuestDpkg(t *testing.T) {
 		if strings.HasPrefix(entry, "CPAK_") {
 			t.Fatalf("host cpak variable leaked into runtime installer: %s", entry)
 		}
+	}
+}
+
+func TestDecodeFilesystemPermissionsRejectsDuplicates(t *testing.T) {
+	permission := types.FilesystemPermission{Path: "/home/user", Access: "read-write"}
+	encoded, err := types.EncodeFilesystemPermission(permission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = decodeFilesystemPermissions([]string{encoded, encoded}); err == nil {
+		t.Fatal("accepted duplicate filesystem permission")
+	}
+}
+
+func TestDecodeFilesystemPermissionsKeepsPortableScope(t *testing.T) {
+	encoded, err := types.EncodeFilesystemPermission(types.FilesystemPermission{Path: "host", Access: "read-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions, err := decodeFilesystemPermissions([]string{encoded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(permissions) != 1 || permissions[0] != (types.FilesystemPermission{Path: "host", Access: "read-only"}) {
+		t.Fatalf("got %v", permissions)
 	}
 }

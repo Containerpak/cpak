@@ -25,10 +25,15 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 		Version:        "1",
 		ParsedBinaries: []string{"/usr/bin/child"},
 		ParsedOverride: types.Override{
-			Network:             true,
-			DeviceDri:           true,
-			FsHostHome:          true,
-			FsExtra:             []string{"/games", "/child-only"},
+			Network:   true,
+			DeviceDri: true,
+			Filesystem: []types.FilesystemPermission{
+				{Path: "/games/title", Access: "read-write"},
+				{Path: "/shared", Access: "read-write"},
+				{Path: "/child-only", Access: "read-write"},
+			},
+			MemoryMaxMB:         1024,
+			PidsMax:             50,
 			Env:                 []string{"SHARED=1", "CHILD=1"},
 			AllowedHostCommands: []string{"xdg-open", "child-tool"},
 		},
@@ -44,10 +49,16 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 			Branch: child.Branch,
 		}},
 		ParsedOverride: types.Override{
-			Network:             false,
-			DeviceDri:           true,
-			FsHostHome:          false,
-			FsExtra:             []string{"/games", "/parent-only"},
+			Network:   false,
+			DeviceDri: true,
+			Filesystem: []types.FilesystemPermission{
+				{Path: "/games", Access: "read-only"},
+				{Path: "/shared", Access: "read-write"},
+				{Path: "/parent-only", Access: "read-write"},
+			},
+			MemoryMaxMB:         512,
+			CPUQuota:            50,
+			PidsMax:             100,
 			Env:                 []string{"SHARED=1", "PARENT=1"},
 			AllowedHostCommands: []string{"xdg-open", "parent-tool"},
 		},
@@ -115,14 +126,17 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 	if authorized.child.CpakId != child.CpakId || authorized.binary != "/usr/bin/child" {
 		t.Fatalf("authorized wrong child: %+v", authorized)
 	}
-	if authorized.override.Network || authorized.override.FsHostHome {
+	if authorized.override.Network {
 		t.Fatalf("child gained parent-denied permissions: %+v", authorized.override)
 	}
 	if !authorized.override.DeviceDri {
 		t.Fatal("a permission granted by both applications was dropped")
 	}
-	if len(authorized.override.FsExtra) != 1 || authorized.override.FsExtra[0] != "/games" {
-		t.Fatalf("filesystem intersection: %v", authorized.override.FsExtra)
+	if len(authorized.override.Filesystem) != 2 || authorized.override.Filesystem[0] != (types.FilesystemPermission{Path: "/games/title", Access: "read-only"}) || authorized.override.Filesystem[1] != (types.FilesystemPermission{Path: "/shared", Access: "read-write"}) {
+		t.Fatalf("filesystem intersection: %v", authorized.override.Filesystem)
+	}
+	if authorized.override.MemoryMaxMB != 512 || authorized.override.CPUQuota != 50 || authorized.override.PidsMax != 50 {
+		t.Fatalf("resource limit intersection: %+v", authorized.override)
 	}
 	if len(authorized.override.Env) != 1 || authorized.override.Env[0] != "SHARED=1" {
 		t.Fatalf("environment intersection: %v", authorized.override.Env)
@@ -142,5 +156,23 @@ func TestAuthorizeNestedRunRejectsUnexportedBinary(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "is not exported") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestIntersectFilesystemPortableScopes(t *testing.T) {
+	homeOnly := intersectFilesystem(
+		[]types.FilesystemPermission{{Path: "home", Access: "read-write"}},
+		[]types.FilesystemPermission{{Path: "home", Access: "read-write"}, {Path: "host", Access: "read-only"}},
+	)
+	if len(homeOnly) != 1 || homeOnly[0] != (types.FilesystemPermission{Path: "home", Access: "read-write"}) {
+		t.Fatalf("home scope intersection: %v", homeOnly)
+	}
+
+	hostReadOnly := intersectFilesystem(
+		[]types.FilesystemPermission{{Path: "host", Access: "read-only"}},
+		[]types.FilesystemPermission{{Path: "home", Access: "read-write"}, {Path: "/tmp", Access: "read-write"}},
+	)
+	if len(hostReadOnly) != 2 || hostReadOnly[0] != (types.FilesystemPermission{Path: "/tmp", Access: "read-only"}) || hostReadOnly[1] != (types.FilesystemPermission{Path: "home", Access: "read-only"}) {
+		t.Fatalf("host scope intersection: %v", hostReadOnly)
 	}
 }

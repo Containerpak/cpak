@@ -34,10 +34,12 @@ type Override struct {
 
 	Notification bool `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
 
-	FsHost     bool     `json:"fsHost" jsonschema:"description=Mount host root read-only,default=false" flag:"fsHost,bool"`
-	FsHostEtc  bool     `json:"fsHostEtc" jsonschema:"description=Mount host /etc,default=false" flag:"fsHostEtc,bool"`
-	FsHostHome bool     `json:"fsHostHome" jsonschema:"description=Mount host home directory,default=true" flag:"fsHostHome,bool"`
-	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Additional paths to mount,items.pattern=^(?:\\./|\\../|/)?(?:[A-Za-z0-9_\\-\\.]+/)*[A-Za-z0-9_\\-\\.]+$,minItems=0" flag:"fsExtra,strings"`
+	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions,default=[]"`
+
+	FsHost     bool     `json:"fsHost,omitempty" jsonschema:"description=Legacy v1 host root permission" flag:"fsHost,bool"`
+	FsHostEtc  bool     `json:"fsHostEtc,omitempty" jsonschema:"description=Legacy v1 host etc permission" flag:"fsHostEtc,bool"`
+	FsHostHome bool     `json:"fsHostHome,omitempty" jsonschema:"description=Legacy v1 host home permission" flag:"fsHostHome,bool"`
+	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Legacy v1 additional paths" flag:"fsExtra,strings"`
 
 	Env     []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
 	Network bool     `json:"network" jsonschema:"description=Enable network namespace,default=true" flag:"network,bool"`
@@ -67,9 +69,10 @@ func NewOverride() Override {
 		DeviceKvm:           true,
 		DeviceShm:           true,
 		DeviceAll:           false,
+		Filesystem:          []FilesystemPermission{},
 		FsHost:              false,
 		FsHostEtc:           false,
-		FsHostHome:          true,
+		FsHostHome:          false,
 		FsExtra:             []string{},
 		Env:                 []string{},
 		Network:             true,
@@ -80,6 +83,11 @@ func NewOverride() Override {
 		AsRoot:              false,
 		AllowedHostCommands: []string{},
 	}
+}
+
+type FilesystemPermission struct {
+	Path   string `json:"path" jsonschema:"pattern=^(?:home|host|/.*)$,description=Host path or portable home and host scope"`
+	Access string `json:"access" jsonschema:"enum=read-only,enum=read-write,description=Filesystem access mode"`
 }
 
 // Diff returns the manifest permission keys whose effective values changed.

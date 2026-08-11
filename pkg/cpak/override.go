@@ -190,34 +190,7 @@ func uniqueStrings(values []string) []string {
 
 // NewOverride returns a new override with default values.
 func NewOverride() types.Override {
-	return types.Override{
-		SocketX11:        true,
-		SocketWayland:    true,
-		SocketPulseAudio: true,
-		SocketSessionBus: true,
-		SocketSystemBus:  true,
-		SocketSshAgent:   false,
-		SocketCups:       true,
-		SocketGpgAgent:   false,
-
-		DeviceDri: true,
-		DeviceKvm: true,
-		DeviceShm: true,
-		DeviceAll: false,
-
-		FsHost:     false,
-		FsHostEtc:  false,
-		FsHostHome: true,
-		FsExtra:    []string{},
-
-		Env:     []string{},
-		Network: true,
-		Process: false,
-
-		MemoryMaxMB: 0,
-		CPUQuota:    0,
-		PidsMax:     0,
-	}
+	return types.NewOverride()
 }
 
 // LoadOverride loads an override from its name.
@@ -255,6 +228,9 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 
 // Save saves the override in the user's home directory.
 func SaveOverride(override types.Override, name, version string) (err error) {
+	if err = types.ValidateFilesystemPermissions(override.Filesystem); err != nil {
+		return err
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return

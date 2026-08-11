@@ -245,7 +245,8 @@ func TestUpdateBranchInstallRefreshesOverride(t *testing.T) {
 	})
 
 	manifest := newTestManifest()
-	manifest.Override.FsExtra = []string{"/etc/machine-id"}
+	manifest.ManifestVersion = "2.0"
+	manifest.Override.Filesystem = []types.FilesystemPermission{{Path: "/etc/machine-id", Access: "read-only"}}
 	stub := &updateStub{manifest: manifest, layers: []string{"layer"}, config: "{}"}
 	results, err := c.updateWithOptions(testOrigin, stub.deps(), UpdateOptions{
 		ConfirmPermissions: func([]types.UpdateResult) bool { return true },
@@ -258,7 +259,7 @@ func TestUpdateBranchInstallRefreshesOverride(t *testing.T) {
 	}
 
 	apps := storedApplications(t, c)
-	if len(apps) != 1 || len(apps[0].ParsedOverride.FsExtra) != 1 || apps[0].ParsedOverride.FsExtra[0] != "/etc/machine-id" {
+	if len(apps) != 1 || len(apps[0].ParsedOverride.Filesystem) != 1 || apps[0].ParsedOverride.Filesystem[0] != (types.FilesystemPermission{Path: "/etc/machine-id", Access: "read-only"}) {
 		t.Fatalf("expected the refreshed override, got %+v", apps)
 	}
 }

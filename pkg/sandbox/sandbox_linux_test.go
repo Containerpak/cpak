@@ -60,6 +60,15 @@ func TestLandlockReadOnlyGrant(t *testing.T) {
 	runSandboxHelper(t, "readonly", readonly, "")
 }
 
+func TestLandlockAllowsWritableChildOfReadOnlyRoot(t *testing.T) {
+	directory := t.TempDir()
+	writable := filepath.Join(directory, "writable")
+	if err := os.MkdirAll(writable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runSandboxHelper(t, "readonly-root", writable, "")
+}
+
 func TestSandboxHelper(t *testing.T) {
 	mode := os.Getenv("CPAK_SANDBOX_HELPER")
 	if mode == "" {
@@ -114,6 +123,18 @@ func TestSandboxHelper(t *testing.T) {
 		}
 		if err := os.WriteFile(filepath.Join(readonly, "new"), []byte("no"), 0o644); !errors.Is(err, unix.EACCES) {
 			failSandboxHelper("write readonly: %v", err)
+		}
+		os.Exit(0)
+	case "readonly-root":
+		writable := os.Getenv("CPAK_SANDBOX_ALLOWED")
+		if _, err := ApplyLandlock([]PathGrant{{Path: "/", ReadOnly: true}, {Path: writable}}); err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				os.Exit(77)
+			}
+			failSandboxHelper(err)
+		}
+		if err := os.WriteFile(filepath.Join(writable, "new"), []byte("ok"), 0o644); err != nil {
+			failSandboxHelper("write writable child: %v", err)
 		}
 		os.Exit(0)
 	default:
