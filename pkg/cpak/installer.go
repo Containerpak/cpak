@@ -377,6 +377,9 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 			cmdPart := strings.TrimPrefix(line, "Exec=")
 			lines[i] = "Exec=cpak run " + app.Origin + " @" + cmdPart
 		}
+		if strings.HasPrefix(line, "TryExec=") {
+			lines[i] = "TryExec=cpak"
+		}
 		if strings.HasPrefix(line, "Icon=") && iconName != "" {
 			lines[i] = "Icon=" + iconName
 		}

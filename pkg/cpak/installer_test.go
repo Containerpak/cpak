@@ -83,7 +83,7 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(entryPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example\n"), 0644); err != nil {
+	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example\nTryExec=/usr/bin/example\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,6 +118,9 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "Exec=cpak run github.com/containerpak/example @/usr/bin/example") {
 		t.Fatalf("desktop entry does not launch through cpak: %q", content)
+	}
+	if !strings.Contains(string(content), "TryExec=cpak") {
+		t.Fatalf("desktop entry checks guest binary availability: %q", content)
 	}
 	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
 		t.Fatalf("legacy desktop entry directory still exists: %s", legacyDir)
