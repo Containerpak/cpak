@@ -403,23 +403,23 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	for _, mount := range overrideMounts {
 		c.spawnVerbose("(override) Mounting: ", mount)
 
-		_, err := os.Stat(mount)
-		if os.IsNotExist(err) {
+		source, found, resolveErr := resolveOverrideMountSource(mount, "/run/host")
+		if resolveErr != nil {
+			return nil, fmt.Errorf("stat:%s: an error occurred while spawning the namespace: %s", mount, resolveErr)
+		}
+		if !found {
 			c.spawnVerbose(mount, " does not exist, that's probably unsupported by the host, ignoring")
 			continue
 		}
-		if err != nil {
-			return nil, fmt.Errorf("stat:%s: an error occurred while spawning the namespace: %s", mount, err)
-		}
-		destination, prepareErr := prepareRootfsMountTarget(rootFs, mount, mount)
+		destination, prepareErr := prepareRootfsMountTarget(rootFs, mount, source)
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", mount, prepareErr)
 		}
 
 		if filepath.Clean(mount) == "/etc" {
-			err = tools.MountBindReadOnlyPrepared(mount, destination, true)
+			err = tools.MountBindReadOnlyPrepared(source, destination, true)
 		} else {
-			err = tools.MountBindPrepared(mount, destination)
+			err = tools.MountBindPrepared(source, destination)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
@@ -463,6 +463,21 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, sandbox.PathGrant{Path: hostExecSocketPath})
 	}
 	return grants, nil
+}
+
+func resolveOverrideMountSource(target, hostRoot string) (string, bool, error) {
+	candidates := []string{target}
+	if filepath.IsAbs(target) && hostRoot != "" {
+		candidates = append(candidates, filepath.Join(hostRoot, strings.TrimPrefix(filepath.Clean(target), "/")))
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true, nil
+		} else if !os.IsNotExist(err) {
+			return "", false, err
+		}
+	}
+	return "", false, nil
 }
 
 func decodeFilesystemPermissions(encoded []string) ([]types.FilesystemPermission, error) {

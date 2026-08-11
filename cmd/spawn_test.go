@@ -158,3 +158,22 @@ func TestDecodeFilesystemPermissionsKeepsPortableScope(t *testing.T) {
 		t.Fatalf("got %v", permissions)
 	}
 }
+
+func TestResolveOverrideMountSourceUsesHostRootFallback(t *testing.T) {
+	hostRoot := t.TempDir()
+	target := filepath.Join(t.TempDir(), "run/dbus/system_bus_socket")
+	source := filepath.Join(hostRoot, strings.TrimPrefix(target, "/"))
+	if err := os.MkdirAll(filepath.Dir(source), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("socket"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := resolveOverrideMountSource(target, hostRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || got != source {
+		t.Fatalf("override source: got %q, found %t, want %q", got, found, source)
+	}
+}
