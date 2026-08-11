@@ -137,6 +137,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		Env:                 intersectStrings(parent.Env, child.Env),
 		Network:             parent.Network && child.Network,
 		Process:             parent.Process && child.Process,
+		UserNamespaces:      parent.UserNamespaces && child.UserNamespaces,
 		MemoryMaxMB:         minimumLimit(parent.MemoryMaxMB, child.MemoryMaxMB),
 		CPUQuota:            minimumLimit(parent.CPUQuota, child.CPUQuota),
 		PidsMax:             minimumLimit(parent.PidsMax, child.PidsMax),

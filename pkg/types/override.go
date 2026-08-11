@@ -42,9 +42,10 @@ type Override struct {
 	FsHostHome bool     `json:"fsHostHome,omitempty" jsonschema:"description=Legacy v1 host home permission" flag:"fsHostHome,bool"`
 	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Legacy v1 additional paths" flag:"fsExtra,strings"`
 
-	Env     []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
-	Network bool     `json:"network" jsonschema:"description=Enable network namespace,default=true" flag:"network,bool"`
-	Process bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
+	Env            []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
+	Network        bool     `json:"network" jsonschema:"description=Enable network namespace,default=true" flag:"network,bool"`
+	Process        bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
+	UserNamespaces bool     `json:"userNamespaces" jsonschema:"description=Allow nested user namespaces for application sandboxes,default=false" flag:"userNamespaces,bool"`
 
 	MemoryMaxMB int `json:"memoryMaxMB" jsonschema:"minimum=0,description=Maximum memory in MiB,default=0" flag:"memoryMaxMB,int"`
 	CPUQuota    int `json:"cpuQuota" jsonschema:"minimum=0,maximum=1000,description=CPU quota as a percentage of one core,default=0" flag:"cpuQuota,int"`
@@ -78,6 +79,7 @@ func NewOverride() Override {
 		Env:                 []string{},
 		Network:             true,
 		Process:             false,
+		UserNamespaces:      false,
 		MemoryMaxMB:         0,
 		CPUQuota:            0,
 		PidsMax:             0,

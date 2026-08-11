@@ -315,6 +315,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if override.DeviceDri || override.DeviceAll {
 		cmds = append(cmds, "--nvidia")
 	}
+	if override.UserNamespaces {
+		cmds = append(cmds, "--user-namespaces")
+	}
 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"

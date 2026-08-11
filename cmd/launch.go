@@ -17,7 +17,8 @@ import (
 )
 
 type LaunchCmd struct {
-	ExtraArgs []string `arg:"extra" help:"command and arguments"`
+	UserNamespaces bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	ExtraArgs      []string `arg:"extra" help:"command and arguments"`
 
 	cli.Base
 }
@@ -26,7 +27,7 @@ func (c *LaunchCmd) Run() error {
 	if len(c.ExtraArgs) == 0 {
 		return fmt.Errorf("command is required")
 	}
-	if err := sandbox.ApplySeccomp(); err != nil {
+	if err := sandbox.ApplySeccomp(c.UserNamespaces); err != nil {
 		if errors.Is(err, sandbox.ErrUnavailable) {
 			c.Logger.Warning("Seccomp is unavailable; continuing without syscall restrictions")
 		} else {

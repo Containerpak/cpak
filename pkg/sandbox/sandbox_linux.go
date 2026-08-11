@@ -68,7 +68,7 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 	return version, nil
 }
 
-func ApplySeccomp() error {
+func ApplySeccomp(allowUserNamespaces bool) error {
 	architecture, supported := auditArchitecture()
 	if !supported {
 		return ErrUnavailable
@@ -76,7 +76,7 @@ func ApplySeccomp() error {
 	if err := enableNoNewPrivileges(); err != nil {
 		return err
 	}
-	filter := seccompFilter(architecture)
+	filter := seccompFilter(architecture, allowUserNamespaces)
 	program := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
 	if err := unix.Prctl(unix.PR_SET_SECCOMP, unix.SECCOMP_MODE_FILTER, uintptr(unsafe.Pointer(&program)), 0, 0); err != nil {
 		if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EOPNOTSUPP) {
@@ -206,7 +206,7 @@ func landlockReadAccess(version int) uint64 {
 	return access
 }
 
-func seccompFilter(architecture uint32) []unix.SockFilter {
+func seccompFilter(architecture uint32, allowUserNamespaces bool) []unix.SockFilter {
 	filter := []unix.SockFilter{
 		bpfLoad(4),
 		bpfJump(unix.BPF_JEQ, architecture, 1, 0),
@@ -219,7 +219,6 @@ func seccompFilter(architecture uint32) []unix.SockFilter {
 	for _, number := range []int{
 		unix.SYS_PTRACE,
 		unix.SYS_SETNS,
-		unix.SYS_UNSHARE,
 		unix.SYS_BPF,
 		unix.SYS_PERF_EVENT_OPEN,
 		unix.SYS_MOUNT,
@@ -243,15 +242,18 @@ func seccompFilter(architecture uint32) []unix.SockFilter {
 		filter = append(filter, bpfDeny(uint32(number), uint32(unix.EPERM))...)
 	}
 
-	filter = append(filter, bpfDeny(uint32(unix.SYS_CLONE3), uint32(unix.ENOSYS))...)
-	filter = append(filter,
-		bpfJump(unix.BPF_JEQ, uint32(unix.SYS_CLONE), 0, 4),
-		bpfLoad(16),
-		unix.SockFilter{Code: unix.BPF_ALU | unix.BPF_AND | unix.BPF_K, K: uint32(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET | syscall.CLONE_NEWCGROUP)},
-		bpfJump(unix.BPF_JEQ, 0, 1, 0),
-		bpfReturn(uint32(unix.SECCOMP_RET_ERRNO|uint32(unix.EPERM))),
-		bpfReturn(unix.SECCOMP_RET_ALLOW),
-	)
+	if !allowUserNamespaces {
+		filter = append(filter, bpfDeny(uint32(unix.SYS_UNSHARE), uint32(unix.EPERM))...)
+		filter = append(filter, bpfDeny(uint32(unix.SYS_CLONE3), uint32(unix.ENOSYS))...)
+		filter = append(filter,
+			bpfJump(unix.BPF_JEQ, uint32(unix.SYS_CLONE), 0, 4),
+			bpfLoad(16),
+			unix.SockFilter{Code: unix.BPF_ALU | unix.BPF_AND | unix.BPF_K, K: uint32(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET | syscall.CLONE_NEWCGROUP)},
+			bpfJump(unix.BPF_JEQ, 0, 1, 0),
+			bpfReturn(uint32(unix.SECCOMP_RET_ERRNO|uint32(unix.EPERM))),
+			bpfReturn(unix.SECCOMP_RET_ALLOW),
+		)
+	}
 	return filter
 }
 

@@ -52,6 +52,7 @@ type SpawnCmd struct {
 	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
 	MountHostRoot  bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
 	Nvidia         bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
+	UserNamespaces bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
 	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
@@ -807,7 +808,12 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 		return
 	}
 
-	args := append([]string{"launch", "--"}, request.Args...)
+	args := []string{"launch"}
+	if c.UserNamespaces {
+		args = append(args, "--user-namespaces")
+	}
+	args = append(args, "--")
+	args = append(args, request.Args...)
 	command := exec.Command(cpakInContainerPath, args...)
 	command.Env = append(append([]string{}, baseEnv...), request.Env...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

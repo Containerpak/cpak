@@ -35,6 +35,10 @@ func TestSeccompBlocksNamespaceSyscalls(t *testing.T) {
 	runSandboxHelper(t, "seccomp", "", "")
 }
 
+func TestSeccompAllowsNestedUserNamespacesWhenRequested(t *testing.T) {
+	runSandboxHelper(t, "seccomp-userns", "", "")
+}
+
 func TestLandlockBlocksUnlistedPaths(t *testing.T) {
 	directory := t.TempDir()
 	allowed := filepath.Join(directory, "allowed")
@@ -77,7 +81,7 @@ func TestSandboxHelper(t *testing.T) {
 
 	switch mode {
 	case "seccomp":
-		if err := ApplySeccomp(); err != nil {
+		if err := ApplySeccomp(false); err != nil {
 			if errors.Is(err, ErrUnavailable) {
 				os.Exit(77)
 			}
@@ -92,6 +96,17 @@ func TestSandboxHelper(t *testing.T) {
 		}
 		if err := exec.Command("/bin/true").Run(); err != nil {
 			failSandboxHelper("exec true: %v", err)
+		}
+		os.Exit(0)
+	case "seccomp-userns":
+		if err := ApplySeccomp(true); err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				os.Exit(77)
+			}
+			failSandboxHelper(err)
+		}
+		if _, _, errno := unix.Syscall(unix.SYS_UNSHARE, uintptr(syscall.CLONE_NEWUSER), 0, 0); errno != 0 {
+			failSandboxHelper("unshare error: %v", errno)
 		}
 		os.Exit(0)
 	case "landlock":

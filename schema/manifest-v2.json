@@ -187,6 +187,11 @@
           "description": "Share host process namespace",
           "default": false
         },
+        "userNamespaces": {
+          "type": "boolean",
+          "description": "Allow nested user namespaces for application sandboxes",
+          "default": false
+        },
         "memoryMaxMB": {
           "type": "integer",
           "minimum": 0,
@@ -246,6 +251,7 @@
         "openURI",
         "network",
         "process",
+        "userNamespaces",
         "memoryMaxMB",
         "cpuQuota",
         "pidsMax",

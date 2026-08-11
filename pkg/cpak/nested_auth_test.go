@@ -25,9 +25,10 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 		Version:        "1",
 		ParsedBinaries: []string{"/usr/bin/child"},
 		ParsedOverride: types.Override{
-			Network:   true,
-			DeviceDri: true,
-			OpenURI:   true,
+			Network:        true,
+			DeviceDri:      true,
+			OpenURI:        true,
+			UserNamespaces: true,
 			Filesystem: []types.FilesystemPermission{
 				{Path: "/games/title", Access: "read-write"},
 				{Path: "/shared", Access: "read-write"},
@@ -50,9 +51,10 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 			Branch: child.Branch,
 		}},
 		ParsedOverride: types.Override{
-			Network:   false,
-			DeviceDri: true,
-			OpenURI:   true,
+			Network:        false,
+			DeviceDri:      true,
+			OpenURI:        true,
+			UserNamespaces: true,
 			Filesystem: []types.FilesystemPermission{
 				{Path: "/games", Access: "read-only"},
 				{Path: "/shared", Access: "read-write"},
@@ -136,6 +138,9 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 	}
 	if !authorized.override.OpenURI {
 		t.Fatal("a system broker permission granted by both applications was dropped")
+	}
+	if !authorized.override.UserNamespaces {
+		t.Fatal("a nested namespace permission granted by both applications was dropped")
 	}
 	if len(authorized.override.Filesystem) != 2 || authorized.override.Filesystem[0] != (types.FilesystemPermission{Path: "/games/title", Access: "read-only"}) || authorized.override.Filesystem[1] != (types.FilesystemPermission{Path: "/shared", Access: "read-write"}) {
 		t.Fatalf("filesystem intersection: %v", authorized.override.Filesystem)

@@ -165,7 +165,8 @@ The runtime applies `no_new_privs`, seccomp and Landlock where the host kernel
 supports it. Filesystem paths, devices, sockets, networking, process sharing and
 host commands are controlled by the manifest and user overrides. `hrun` exposes
 only explicitly allowed host commands and validates the peer process before
-execution.
+execution. Nested user namespaces remain blocked unless an application declares
+`userNamespaces`, which lets browser sandboxes create their inner boundary.
 
 Desktop notifications and external URIs use the system broker instead. It is
 enabled with the `notification` and `openURI` permissions and exposes only the
