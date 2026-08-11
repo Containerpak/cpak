@@ -392,7 +392,7 @@ func (c *Cpak) exportBinary(app types.Application, binary string) error {
 		return err
 	}
 
-	scriptContent := fmt.Sprintf("#!/bin/sh\ncpak run %s @%s \"$@\"\n", app.Origin, binary)
+	scriptContent := fmt.Sprintf("#!/bin/sh\ncpak run %s @%s -- \"$@\"\n", app.Origin, binary)
 	err = os.WriteFile(destinationPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return err

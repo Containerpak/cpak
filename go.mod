@@ -9,7 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mirkobrombin/dabadee v1.0.0
-	github.com/mirkobrombin/go-cli-builder/v3 v3.0.1
+	github.com/mirkobrombin/go-cli-builder/v3 v3.0.2
 	github.com/mirkobrombin/go-foundation/v2 v2.3.2
 	github.com/mirkobrombin/go-slipstream v1.1.0
 	github.com/mirkobrombin/go-struct-flags v1.0.1

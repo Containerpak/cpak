@@ -86,8 +86,8 @@ github.com/minio/highwayhash v1.0.2 h1:Aak5U0nElisjDCfPSG79Tgzkn2gl66NxOMspRrKnA
 github.com/minio/highwayhash v1.0.2/go.mod h1:BQskDq+xkJ12lmlUUi7U0M5Swg3EWR+dLTk+kldvVxY=
 github.com/mirkobrombin/dabadee v1.0.0 h1:64b6U/dAaMyMMjb6D6B+ZN8Wc52fJokXmyKJwcT8zAU=
 github.com/mirkobrombin/dabadee v1.0.0/go.mod h1:vc6n8YWFRJ9LcRFxdDGQ9MjdYZv7s6+R8tlvTZplJrs=
-github.com/mirkobrombin/go-cli-builder/v3 v3.0.1 h1:uCSnG6pE7BP/9QmdXhv+h9lWJcODVrHFC7FVNsPv0Ko=
-github.com/mirkobrombin/go-cli-builder/v3 v3.0.1/go.mod h1:s+7oN/tmololI2kOcrQcNGdAlMqEDlzDcqkeRQ1RNTk=
+github.com/mirkobrombin/go-cli-builder/v3 v3.0.2 h1:ZmKXMRmMkguBdvmIVc8itVkLCmAAZnv0OfzPY7lksI4=
+github.com/mirkobrombin/go-cli-builder/v3 v3.0.2/go.mod h1:s+7oN/tmololI2kOcrQcNGdAlMqEDlzDcqkeRQ1RNTk=
 github.com/mirkobrombin/go-foundation/v2 v2.3.2 h1:aIWAg6s82hhMZlRMjKIex7yPxtsU4qlAkJvO5/A412Q=
 github.com/mirkobrombin/go-foundation/v2 v2.3.2/go.mod h1:fYCg04t/V9/vJ10itHY9kk6qbix7D1POxBoHec0x1CE=
 github.com/mirkobrombin/go-slipstream v1.1.0 h1:S8+m5wtaapqxQt9aG54ENsbm5eVo+nRlWg/d2JE/xAE=

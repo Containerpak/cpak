@@ -8,7 +8,10 @@ package cpak
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 func TestFindIconPrefersScalableIcon(t *testing.T) {
@@ -26,5 +29,28 @@ func TestFindIconPrefersScalableIcon(t *testing.T) {
 
 	if got := findIcon(layerDir, "example"); got != svgPath {
 		t.Fatalf("expected scalable icon %q, got %q", svgPath, got)
+	}
+}
+
+func TestExportBinaryForwardsFlagArguments(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{Origin: "github.com/containerpak/umu"}
+	if err := c.exportBinary(app, "/usr/local/bin/umu-run"); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(
+		c.Options.ExportsPath,
+		"github.com",
+		"containerpak",
+		"umu",
+		"umu-run",
+	)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "@/usr/local/bin/umu-run -- \"$@\"") {
+		t.Fatalf("export does not preserve child flags: %q", content)
 	}
 }
