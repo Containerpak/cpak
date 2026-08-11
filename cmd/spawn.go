@@ -522,8 +522,7 @@ func (c *SpawnCmd) installRuntimePackages(packages []string) error {
 	if len(packages) == 0 {
 		return fmt.Errorf("no runtime packages specified")
 	}
-	args := append([]string{"--install"}, packages...)
-	cmd := exec.Command("dpkg", args...)
+	cmd := runtimePackageCommand(packages)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -531,6 +530,19 @@ func (c *SpawnCmd) installRuntimePackages(packages []string) error {
 		return fmt.Errorf("dpkg failed to install runtime packages: %w", err)
 	}
 	return nil
+}
+
+func runtimePackageCommand(packages []string) *exec.Cmd {
+	args := append([]string{"--install"}, packages...)
+	cmd := exec.Command("/usr/bin/dpkg", args...)
+	cmd.Env = []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/root",
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+		"DEBIAN_FRONTEND=noninteractive",
+	}
+	return cmd
 }
 
 func (c *SpawnCmd) pivotRoot(rootFs string) error {

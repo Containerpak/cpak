@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -53,5 +55,24 @@ func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Fatalf("environment: got %v, want %v", env, want)
+	}
+}
+
+func TestRuntimePackageCommandUsesGuestDpkg(t *testing.T) {
+	command := runtimePackageCommand([]string{"/run/cpak/runtime/demo.deb"})
+	if command.Path != "/usr/bin/dpkg" {
+		t.Fatalf("runtime installer path: %s", command.Path)
+	}
+	wantArgs := []string{"/usr/bin/dpkg", "--install", "/run/cpak/runtime/demo.deb"}
+	if !reflect.DeepEqual(command.Args, wantArgs) {
+		t.Fatalf("runtime installer arguments: %v", command.Args)
+	}
+	if !slices.Contains(command.Env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") {
+		t.Fatalf("guest PATH is missing: %v", command.Env)
+	}
+	for _, entry := range command.Env {
+		if strings.HasPrefix(entry, "CPAK_") {
+			t.Fatalf("host cpak variable leaked into runtime installer: %s", entry)
+		}
 	}
 }
