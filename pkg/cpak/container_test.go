@@ -177,6 +177,19 @@ func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 	}
 }
 
+func TestEffectiveHostCommandsAreExplicitAndDeduplicated(t *testing.T) {
+	commands := effectiveHostCommands(types.Override{
+		Notification:        true,
+		AllowedHostCommands: []string{"xdg-open", "xdg-open"},
+	})
+	if got := strings.Join(commands, ","); got != "xdg-open,notify-send" {
+		t.Fatalf("unexpected host commands: %s", got)
+	}
+	if commands := effectiveHostCommands(types.Override{}); len(commands) != 0 {
+		t.Fatalf("empty policy exposed host commands: %v", commands)
+	}
+}
+
 func slicesContain(entries []string, want string) bool {
 	for _, entry := range entries {
 		if entry == want {

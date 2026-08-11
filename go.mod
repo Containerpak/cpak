@@ -3,7 +3,7 @@ module github.com/mirkobrombin/cpak
 go 1.25.0
 
 require (
-	github.com/containerpak/hrun v0.0.4
+	github.com/containerpak/hrun v0.0.5
 	github.com/creack/pty v1.1.21
 	github.com/google/go-containerregistry v0.21.9
 	github.com/google/uuid v1.6.0

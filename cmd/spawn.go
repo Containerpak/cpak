@@ -156,7 +156,7 @@ func (c *SpawnCmd) Run() error {
 	}
 
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, c.LayersDir, c.Layers)
-	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/"}}, grants...), time.Duration(c.IdleTime)*time.Minute)
+	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute)
 	if err != nil {
 		return err
 	}

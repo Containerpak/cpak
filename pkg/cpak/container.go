@@ -146,16 +146,20 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	container.HostExecSocketPath = filepath.Join(container.StatePath, "hostexec.sock")
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
 
-	// Start the hostexec server process
-	container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, override.AllowedHostCommands)
-	if err != nil {
-		logger.Println("Error starting hostexec server, cleaning up partially created container...")
-		os.Remove(container.HostExecSocketPath)
-		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
-		os.RemoveAll(container.StatePath)
-		return types.Container{}, fmt.Errorf("failed to start hostexec server: %w", err)
+	hostCommands := effectiveHostCommands(override)
+	if len(hostCommands) > 0 {
+		container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, hostCommands)
+		if err != nil {
+			logger.Println("Error starting hostexec server, cleaning up partially created container...")
+			os.Remove(container.HostExecSocketPath)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, fmt.Errorf("failed to start hostexec server: %w", err)
+		}
+		logger.Println("HostExec server started (PID:", container.HostExecPid, "Socket:", container.HostExecSocketPath, ")")
+	} else {
+		container.HostExecSocketPath = ""
 	}
-	logger.Println("HostExec server started (PID:", container.HostExecPid, "Socket:", container.HostExecSocketPath, ")")
 
 	err = store.NewContainer(container)
 	if err != nil {
@@ -197,6 +201,22 @@ func containerPolicyHash(override types.Override) (string, error) {
 	}
 	hash := sha256.Sum256(encoded)
 	return fmt.Sprintf("%x", hash[:]), nil
+}
+
+func effectiveHostCommands(override types.Override) []string {
+	_, shims := GetOverrideMounts(override)
+	commands := append([]string{}, override.AllowedHostCommands...)
+	commands = append(commands, shims...)
+	seen := make(map[string]bool, len(commands))
+	result := make([]string, 0, len(commands))
+	for _, command := range commands {
+		if command == "" || seen[command] {
+			continue
+		}
+		seen[command] = true
+		result = append(result, command)
+	}
+	return result
 }
 
 // StartContainer starts the container with the given config and image.
@@ -253,12 +273,12 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	// Pass AllowedHostCommands and SocketPath via environment variables to spawn
 	if container.HostExecSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
-	} else {
-		logger.Printf("Warning: HostExec socket path is empty for container %s during start.", container.CpakId)
 	}
 	// Join allowed commands into a single string (e.g., colon-separated) for the env var
-	allowedCmdsStr := strings.Join(override.AllowedHostCommands, ":")
-	cmds = append(cmds, "--env", "CPAK_ALLOWED_HOST_CMDS=xdg-open:"+allowedCmdsStr)
+	allowedCmdsStr := strings.Join(effectiveHostCommands(override), ":")
+	if allowedCmdsStr != "" {
+		cmds = append(cmds, "--env", "CPAK_ALLOWED_HOST_CMDS="+allowedCmdsStr)
+	}
 
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
