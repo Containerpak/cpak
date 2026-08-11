@@ -61,7 +61,11 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	if err != nil {
 		return
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	}()
 
 	// Check if a container already exists for the given application
 	scopedApp := app
@@ -150,15 +154,22 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		return types.Container{}, err
 	}
 	logger.Println("Container created:", container.CpakId)
+	if err = store.Close(); err != nil {
+		return types.Container{}, err
+	}
+	store = nil
 
 	_, container.Pid, err = c.StartContainer(container, app, config, override)
 	if err != nil {
-		_ = store.Close()
+		c.CleanupContainer(container)
+		return types.Container{}, err
+	}
+	store, err = NewStore(c.Options.StorePath)
+	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
 	if err = store.SetContainerPid(container.CpakId, container.Pid); err != nil {
-		_ = store.Close()
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
