@@ -69,14 +69,14 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 }
 
 func ApplySeccomp(allowUserNamespaces bool) error {
-	architecture, supported := auditArchitecture()
+	profiles, supported := seccompProfiles()
 	if !supported {
 		return ErrUnavailable
 	}
 	if err := enableNoNewPrivileges(); err != nil {
 		return err
 	}
-	filter := seccompFilter(architecture, allowUserNamespaces)
+	filter := seccompFilter(profiles, allowUserNamespaces)
 	program := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
 	if err := unix.Prctl(unix.PR_SET_SECCOMP, unix.SECCOMP_MODE_FILTER, uintptr(unsafe.Pointer(&program)), 0, 0); err != nil {
 		if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EOPNOTSUPP) {
@@ -206,47 +206,47 @@ func landlockReadAccess(version int) uint64 {
 	return access
 }
 
-func seccompFilter(architecture uint32, allowUserNamespaces bool) []unix.SockFilter {
+type seccompProfile struct {
+	architecture uint32
+	blocked      []uint32
+	unshare      uint32
+	clone3       uint32
+	clone        uint32
+}
+
+func seccompFilter(profiles []seccompProfile, allowUserNamespaces bool) []unix.SockFilter {
+	filter := []unix.SockFilter{bpfLoad(4)}
+	sections := make([][]unix.SockFilter, len(profiles))
+	headerLength := 1 + len(profiles) + 1
+	nextSection := headerLength
+	for index, profile := range profiles {
+		sections[index] = seccompProfileFilter(profile, allowUserNamespaces)
+		offset := nextSection - (1 + index) - 1
+		filter = append(filter, bpfJump(unix.BPF_JEQ, profile.architecture, uint8(offset), 0))
+		nextSection += len(sections[index])
+	}
+	filter = append(filter, bpfReturn(unix.SECCOMP_RET_KILL_PROCESS))
+	for _, section := range sections {
+		filter = append(filter, section...)
+	}
+	return filter
+}
+
+func seccompProfileFilter(profile seccompProfile, allowUserNamespaces bool) []unix.SockFilter {
 	filter := []unix.SockFilter{
-		bpfLoad(4),
-		bpfJump(unix.BPF_JEQ, architecture, 1, 0),
-		bpfReturn(unix.SECCOMP_RET_KILL_PROCESS),
 		bpfLoad(0),
 		bpfJump(unix.BPF_JGE, 0x40000000, 0, 1),
 		bpfReturn(unix.SECCOMP_RET_KILL_PROCESS),
 	}
-
-	for _, number := range []int{
-		unix.SYS_PTRACE,
-		unix.SYS_SETNS,
-		unix.SYS_BPF,
-		unix.SYS_PERF_EVENT_OPEN,
-		unix.SYS_MOUNT,
-		unix.SYS_UMOUNT2,
-		unix.SYS_PIVOT_ROOT,
-		unix.SYS_OPEN_TREE,
-		unix.SYS_MOVE_MOUNT,
-		unix.SYS_FSOPEN,
-		unix.SYS_FSCONFIG,
-		unix.SYS_FSMOUNT,
-		unix.SYS_FSPICK,
-		unix.SYS_MOUNT_SETATTR,
-		unix.SYS_KEXEC_LOAD,
-		unix.SYS_REBOOT,
-		unix.SYS_INIT_MODULE,
-		unix.SYS_FINIT_MODULE,
-		unix.SYS_DELETE_MODULE,
-		unix.SYS_SWAPON,
-		unix.SYS_SWAPOFF,
-	} {
-		filter = append(filter, bpfDeny(uint32(number), uint32(unix.EPERM))...)
+	for _, number := range profile.blocked {
+		filter = append(filter, bpfDeny(number, uint32(unix.EPERM))...)
 	}
 
 	if !allowUserNamespaces {
-		filter = append(filter, bpfDeny(uint32(unix.SYS_UNSHARE), uint32(unix.EPERM))...)
-		filter = append(filter, bpfDeny(uint32(unix.SYS_CLONE3), uint32(unix.ENOSYS))...)
+		filter = append(filter, bpfDeny(profile.unshare, uint32(unix.EPERM))...)
+		filter = append(filter, bpfDeny(profile.clone3, uint32(unix.ENOSYS))...)
 		filter = append(filter,
-			bpfJump(unix.BPF_JEQ, uint32(unix.SYS_CLONE), 0, 4),
+			bpfJump(unix.BPF_JEQ, profile.clone, 0, 4),
 			bpfLoad(16),
 			unix.SockFilter{Code: unix.BPF_ALU | unix.BPF_AND | unix.BPF_K, K: uint32(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET | syscall.CLONE_NEWCGROUP)},
 			bpfJump(unix.BPF_JEQ, 0, 1, 0),
@@ -276,17 +276,61 @@ func bpfDeny(number, errno uint32) []unix.SockFilter {
 	}
 }
 
-func auditArchitecture() (uint32, bool) {
+func seccompProfiles() ([]seccompProfile, bool) {
+	blocked := []uint32{
+		uint32(unix.SYS_PTRACE),
+		uint32(unix.SYS_SETNS),
+		uint32(unix.SYS_BPF),
+		uint32(unix.SYS_PERF_EVENT_OPEN),
+		uint32(unix.SYS_MOUNT),
+		uint32(unix.SYS_UMOUNT2),
+		uint32(unix.SYS_PIVOT_ROOT),
+		uint32(unix.SYS_OPEN_TREE),
+		uint32(unix.SYS_MOVE_MOUNT),
+		uint32(unix.SYS_FSOPEN),
+		uint32(unix.SYS_FSCONFIG),
+		uint32(unix.SYS_FSMOUNT),
+		uint32(unix.SYS_FSPICK),
+		uint32(unix.SYS_MOUNT_SETATTR),
+		uint32(unix.SYS_KEXEC_LOAD),
+		uint32(unix.SYS_REBOOT),
+		uint32(unix.SYS_INIT_MODULE),
+		uint32(unix.SYS_FINIT_MODULE),
+		uint32(unix.SYS_DELETE_MODULE),
+		uint32(unix.SYS_SWAPON),
+		uint32(unix.SYS_SWAPOFF),
+	}
+	native := seccompProfile{
+		blocked: blocked,
+		unshare: uint32(unix.SYS_UNSHARE),
+		clone3:  uint32(unix.SYS_CLONE3),
+		clone:   uint32(unix.SYS_CLONE),
+	}
 	switch runtime.GOARCH {
 	case "amd64":
-		return unix.AUDIT_ARCH_X86_64, true
+		native.architecture = unix.AUDIT_ARCH_X86_64
+		return []seccompProfile{native, linuxI386SeccompProfile()}, true
 	case "arm64":
-		return unix.AUDIT_ARCH_AARCH64, true
+		native.architecture = unix.AUDIT_ARCH_AARCH64
 	case "386":
-		return unix.AUDIT_ARCH_I386, true
+		native.architecture = unix.AUDIT_ARCH_I386
 	case "riscv64":
-		return unix.AUDIT_ARCH_RISCV64, true
+		native.architecture = unix.AUDIT_ARCH_RISCV64
 	default:
-		return 0, false
+		return nil, false
+	}
+	return []seccompProfile{native}, true
+}
+
+func linuxI386SeccompProfile() seccompProfile {
+	return seccompProfile{
+		architecture: unix.AUDIT_ARCH_I386,
+		blocked: []uint32{
+			26, 346, 357, 336, 21, 52, 217, 428, 429, 430, 431,
+			432, 433, 442, 283, 88, 128, 350, 129, 87, 115,
+		},
+		unshare: 310,
+		clone3:  435,
+		clone:   120,
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"syscall"
 	"testing"
 
@@ -40,15 +42,44 @@ func TestSeccompAllowsNestedUserNamespacesWhenRequested(t *testing.T) {
 }
 
 func TestSeccompFiltersEndWithAllow(t *testing.T) {
-	architecture, supported := auditArchitecture()
+	profiles, supported := seccompProfiles()
 	if !supported {
 		t.Skip("unsupported audit architecture")
 	}
 	for _, allowUserNamespaces := range []bool{false, true} {
-		filter := seccompFilter(architecture, allowUserNamespaces)
+		filter := seccompFilter(profiles, allowUserNamespaces)
 		last := filter[len(filter)-1]
 		if last.Code != unix.BPF_RET|unix.BPF_K || last.K != unix.SECCOMP_RET_ALLOW {
 			t.Fatalf("allow user namespaces %t: final instruction does not allow", allowUserNamespaces)
+		}
+	}
+}
+
+func TestSeccompAcceptsTheNativeAndCompatibleAuditArchitectures(t *testing.T) {
+	profiles, supported := seccompProfiles()
+	if !supported {
+		t.Skip("unsupported audit architecture")
+	}
+	switch runtime.GOARCH {
+	case "amd64":
+		if len(profiles) != 2 {
+			t.Fatalf("compatible profiles: %v", profiles)
+		}
+	default:
+		if len(profiles) != 1 {
+			t.Fatalf("native profiles: %v", profiles)
+		}
+	}
+}
+
+func TestLinuxI386SeccompProfileBlocksPrivilegedSyscalls(t *testing.T) {
+	profile := linuxI386SeccompProfile()
+	if profile.architecture != unix.AUDIT_ARCH_I386 || profile.clone != 120 || profile.unshare != 310 || profile.clone3 != 435 {
+		t.Fatalf("i386 profile: %+v", profile)
+	}
+	for _, syscallNumber := range []uint32{21, 26, 88, 128, 217, 283, 336, 346, 357, 428, 442} {
+		if !slices.Contains(profile.blocked, syscallNumber) {
+			t.Fatalf("i386 privileged syscall %d is not blocked", syscallNumber)
 		}
 	}
 }
