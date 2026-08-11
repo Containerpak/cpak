@@ -254,6 +254,15 @@ func prepareRootfsMountTarget(rootFs, target, source string) (string, error) {
 	return tools.PrepareRootfsTarget(rootFs, target, kind)
 }
 
+func prepareRootfsBindTarget(rootFs, target, source string) (string, bool, error) {
+	destination := filepath.Join(rootFs, target)
+	if tools.IsSameFile(source, destination) {
+		return destination, false, nil
+	}
+	destination, err := prepareRootfsMountTarget(rootFs, target, source)
+	return destination, true, err
+}
+
 func layerDirectories(layersDir string, layers []string) []string {
 	directories := make([]string, 0, len(layers))
 	for i := len(layers) - 1; i >= 0; i-- {
@@ -378,11 +387,14 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	cpakSockTarget := "/tmp/cpak.sock"
 	if _, statErr := os.Stat(cpakSockSource); statErr == nil {
 		c.spawnVerbose("Mounting: ", cpakSockSource)
-		destination, prepareErr := prepareRootfsMountTarget(rootFs, cpakSockTarget, cpakSockSource)
+		destination, needsMount, prepareErr := prepareRootfsBindTarget(rootFs, cpakSockTarget, cpakSockSource)
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", cpakSockSource, prepareErr)
 		}
-		if err = tools.MountBindPrepared(cpakSockSource, destination); err != nil {
+		if needsMount {
+			err = tools.MountBindPrepared(cpakSockSource, destination)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockSource, err)
 		}
 		grants = append(grants, sandbox.PathGrant{Path: cpakSockTarget})
@@ -391,11 +403,11 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		if _, statErr := os.Stat(hostExecSocketPath); statErr != nil {
 			return nil, fmt.Errorf("hostexec socket is unavailable: %w", statErr)
 		}
-		destination, prepareErr := prepareRootfsMountTarget(rootFs, hostExecSocketPath, hostExecSocketPath)
+		destination, needsMount, prepareErr := prepareRootfsBindTarget(rootFs, hostExecSocketPath, hostExecSocketPath)
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", hostExecSocketPath, prepareErr)
 		}
-		if !tools.IsSameFile(hostExecSocketPath, destination) {
+		if needsMount {
 			err = tools.MountBindPrepared(hostExecSocketPath, destination)
 		}
 		if err != nil {

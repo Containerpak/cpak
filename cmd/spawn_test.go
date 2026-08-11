@@ -45,6 +45,28 @@ func TestLayerDirectoriesUseOverlayPriority(t *testing.T) {
 	}
 }
 
+func TestPrepareRootfsBindTargetReusesAnExistingMount(t *testing.T) {
+	rootfs := t.TempDir()
+	source := filepath.Join(t.TempDir(), "service.sock")
+	if err := os.WriteFile(source, []byte("socket"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(rootfs, "run/cpak/service.sock")
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	actual, needsMount, err := prepareRootfsBindTarget(rootfs, "/run/cpak/service.sock", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != destination || needsMount {
+		t.Fatalf("existing mount: path %s, needs mount %t", actual, needsMount)
+	}
+}
+
 func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 	env := setEnvironmentVariables("container-id", "/rootfs", []string{"LANG=C"}, "/state", "/layers", "base|")
 	want := []string{
