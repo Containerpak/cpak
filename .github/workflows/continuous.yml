@@ -4,6 +4,7 @@ on:
   push:
     branches: [v2]
     tags: ["v*"]
+  pull_request:
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
@@ -18,12 +19,15 @@ on:
           - continuous
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
+
+env:
+  EUPROVGUARD_VERSION: "v1.2.1"
 
 jobs:
   build:
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -67,6 +71,93 @@ jobs:
           output-file: dist/cpak.spdx.json
           upload-artifact: false
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cpak-${{ steps.version.outputs.value }}
+          path: dist
+          if-no-files-found: error
+
+  compliance:
+    name: Compliance
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install EUProvGuard
+        run: go install github.com/fabricatorsltd/euprovguard@${{ env.EUPROVGUARD_VERSION }}
+
+      - name: Scan Cpak
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p compliance
+          euprovguard \
+            -path . \
+            -name cpak \
+            -version-tag "${{ needs.build.outputs.version }}" \
+            -output compliance/sbom-cpak.json \
+            -bundle compliance/report-cpak 2>&1 | tee compliance/scan-cpak.log
+
+      - name: Fail on compliance findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          sbom="compliance/sbom-cpak.json"
+          log="compliance/scan-cpak.log"
+
+          recorded=$(jq '(.vulnerabilities // []) | length' "${sbom}")
+          cves=$(sed -n 's/.*CVE findings: \([0-9][0-9]*\).*/\1/p' "${log}" | tail -n 1)
+          sast=$(sed -n 's/.*Native SAST completed: found \([0-9][0-9]*\) issues.*/\1/p' "${log}" | tail -n 1)
+
+          echo "cpak: sbom=${recorded} cve=${cves:-missing} sast=${sast:-missing}"
+
+          if [ -z "${cves}" ] || [ -z "${sast}" ]; then
+            echo "::error::cpak: EUProvGuard summary could not be parsed"
+            exit 1
+          fi
+          if grep -q "OSV/EUVD query failed" "${log}"; then
+            echo "::error::cpak: vulnerability databases were unreachable"
+            exit 1
+          fi
+          if [ "${recorded}" -gt 0 ] || [ "${cves}" -gt 0 ] || [ "${sast}" -gt 0 ]; then
+            echo "::error::cpak: EUProvGuard reported findings"
+            exit 1
+          fi
+
+      - name: Upload compliance artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: compliance-reports
+          path: compliance/
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [build, compliance]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cpak-${{ needs.build.outputs.version }}
+          path: dist
+
       - name: Attest binaries
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
@@ -106,9 +197,3 @@ jobs:
           make_latest: false
           name: Continuous Build
           files: dist/*
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: cpak-${{ steps.version.outputs.value }}
-          path: dist
-          if-no-files-found: error
