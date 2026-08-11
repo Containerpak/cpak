@@ -779,6 +779,10 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 		}
 		return 0, fmt.Errorf("failed to release hostexec server process %d: %w", pid, err)
 	}
+	if err = waitForSocket(socketPath, socketWaitTimeout); err != nil {
+		stopHostExecServer(pid)
+		return 0, fmt.Errorf("hostexec server did not become ready: %w", err)
+	}
 	return pid, nil
 }
 
