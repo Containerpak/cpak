@@ -203,31 +203,9 @@ func (c *Cpak) Audit(repair bool) (err error) {
 		}
 	}
 
-	// Garbage collection of layers
-	logger.Println("\nChecking for orphaned layers (Garbage Collection)...")
-	allReferencedLayers := make(map[string]bool)
-	for _, app := range allDbApps {
-		for _, layerDigest := range app.ParsedLayers {
-			allReferencedLayers[layerDigest] = true
-		}
-	}
-
-	layerStorePath := c.GetInStoreDir("layers")
-	diskLayers, err := os.ReadDir(layerStorePath)
-	if err == nil {
-		for _, diskLayerEntry := range diskLayers {
-			if diskLayerEntry.IsDir() {
-				layerDigestOnDisk := diskLayerEntry.Name()
-				if !allReferencedLayers[layerDigestOnDisk] {
-					layerFullPath := filepath.Join(layerStorePath, layerDigestOnDisk)
-					logger.Printf("  Layer %s found on disk but not referenced by any application.", layerFullPath)
-					if repair {
-						logger.Printf("    Repair: Removing orphaned layer %s...", layerFullPath)
-						os.RemoveAll(layerFullPath)
-					}
-				}
-			}
-		}
+	logger.Println("\nChecking store garbage...")
+	if err := c.collectGarbage(allDbApps, repair); err != nil {
+		return fmt.Errorf("audit: garbage collection failed: %w", err)
 	}
 
 	// Containers check
