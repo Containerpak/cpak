@@ -89,6 +89,7 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 		}
 		if available {
 			logger.Printf("Layer %s already present in the store, skipping..", layerDigest)
+			layers = append(layers, layerDigest)
 			continue
 		}
 
