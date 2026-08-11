@@ -6,9 +6,11 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +40,6 @@ const (
 )
 
 var (
-	background = color.RGBA{0x0d, 0x14, 0x24, 0xff}
 	card       = color.RGBA{0x15, 0x1f, 0x33, 0xff}
 	cardLine   = color.RGBA{0x2a, 0x3b, 0x5c, 0xff}
 	primary    = color.RGBA{0x3e, 0x7b, 0xff, 0xff}
@@ -52,30 +53,37 @@ var (
 
 type guiState struct {
 	sync.Mutex
-	phase   int
-	status  string
-	hovered bool
-	frame   int
+	phase        int
+	status       string
+	hovered      bool
+	closeHovered bool
+	frame        int
 }
 
 type guiUpdate struct{}
 
 func runGUI(capsule bootstrap.Capsule) {
 	driver.Main(func(s screen.Screen) {
+		const width, height = 552, 484
+		windowTitle := fmt.Sprintf("cpak-installer-%d", os.Getpid())
 		window, err := s.NewWindow(&screen.NewWindowOptions{
-			Width:  620,
-			Height: 540,
-			Title:  "Install " + capsule.Metadata.Name,
+			Width:  width,
+			Height: height,
+			Title:  windowTitle,
 		})
 		if err != nil {
 			fail(err)
 		}
 		defer window.Release()
+		frame := newX11Frame(windowTitle)
+		if frame != nil {
+			defer frame.Close()
+		}
 
 		state := &guiState{status: "Ready to install"}
 		icon := renderIcon(capsule.Metadata.IconSVG, capsule.Metadata.Name, 108)
 		var dimensions size.Event
-		button := image.Rect(176, 450, 444, 502)
+		button := buttonRect(width, height)
 		for {
 			event := window.NextEvent()
 			switch event := event.(type) {
@@ -92,20 +100,29 @@ func runGUI(capsule bootstrap.Capsule) {
 			case mouse.Event:
 				point := image.Pt(int(event.X), int(event.Y))
 				hovered := point.In(button)
+				closeHovered := point.In(closeRect(dimensions.WidthPx))
 				state.Lock()
-				changed := state.hovered != hovered
+				changed := state.hovered != hovered || state.closeHovered != closeHovered
 				state.hovered = hovered
+				state.closeHovered = closeHovered
 				phase := state.phase
 				state.Unlock()
 				if changed {
 					window.Send(paint.Event{})
 				}
-				if event.Button == mouse.ButtonLeft && event.Direction == mouse.DirPress && hovered {
-					if phase == phaseDone {
+				if event.Button == mouse.ButtonLeft && event.Direction == mouse.DirPress {
+					if closeHovered {
 						return
 					}
-					if phase != phaseInstalling {
-						startGUIInstall(window, capsule, state)
+					if hovered {
+						if phase == phaseDone {
+							return
+						}
+						if phase != phaseInstalling {
+							startGUIInstall(window, capsule, state)
+						}
+					} else if point.Y < 54 && frame != nil {
+						frame.StartMove()
 					}
 				}
 			case key.Event:
@@ -144,6 +161,10 @@ func startGUIInstall(window screen.Window, capsule bootstrap.Capsule, state *gui
 
 	go func() {
 		err := install(capsule, func(message string) {
+			message = guiProgressLabel(message, capsule.Metadata.Name)
+			if message == "" {
+				return
+			}
 			state.Lock()
 			state.status = message
 			state.Unlock()
@@ -169,25 +190,25 @@ func renderGUI(s screen.Screen, window screen.Window, dimensions size.Event, but
 		return
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(background), image.Point{}, draw.Src)
-	drawRounded(canvas, image.Rect(34, 28, width-34, height-28), 24, card)
-	drawRoundedOutline(canvas, image.Rect(34, 28, width-34, height-28), 24, cardLine)
+	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(card), image.Point{}, draw.Src)
+	drawRectOutline(canvas, canvas.Bounds(), cardLine)
 
-	draw.Draw(canvas, image.Rect(width/2-54, 58, width/2+54, 166), icon, image.Point{}, draw.Over)
-	drawCentered(canvas, metadata.Name, width/2, 214, 28, true, textMain)
-	drawWrapped(canvas, metadata.Description, image.Rect(82, 238, width-82, 306), 16, textMuted)
-	drawCentered(canvas, metadata.Origin, width/2, 338, 13, false, textMuted)
+	draw.Draw(canvas, image.Rect(width/2-54, 52, width/2+54, 160), icon, image.Point{}, draw.Over)
+	drawCentered(canvas, metadata.Name, width/2, 208, 28, true, textMain)
+	drawWrapped(canvas, metadata.Description, image.Rect(48, 232, width-48, 300), 16, textMuted)
+	drawCentered(canvas, metadata.Origin, width/2, 332, 13, false, textMuted)
 
 	state.Lock()
-	phase, status, hovered, frame := state.phase, state.status, state.hovered, state.frame
+	phase, status, hovered, closeHovered, frame := state.phase, state.status, state.hovered, state.closeHovered, state.frame
 	state.Unlock()
+	drawCloseButton(canvas, closeRect(width), closeHovered)
 	statusColor := textMuted
 	if phase == phaseDone {
 		statusColor = good
 	} else if phase == phaseFailed {
 		statusColor = bad
 	}
-	drawCentered(canvas, ellipsize(status, 76), width/2, button.Min.Y-38, 14, false, statusColor)
+	drawCenteredFitted(canvas, status, width/2, button.Min.Y-38, width-72, 14, false, statusColor)
 	if phase == phaseInstalling {
 		drawProgress(canvas, image.Rect(button.Min.X, button.Min.Y-20, button.Max.X, button.Min.Y-14), frame)
 	}
@@ -224,6 +245,24 @@ func buttonRect(width, height int) image.Rectangle {
 	buttonWidth := 268
 	left := (width - buttonWidth) / 2
 	return image.Rect(left, height-90, left+buttonWidth, height-38)
+}
+
+func closeRect(width int) image.Rectangle {
+	return image.Rect(width-48, 16, width-16, 48)
+}
+
+func drawCloseButton(target *image.RGBA, bounds image.Rectangle, hovered bool) {
+	fill := color.RGBA{0x1d, 0x2a, 0x43, 0xff}
+	if hovered {
+		fill = color.RGBA{0x2a, 0x3b, 0x5c, 0xff}
+	}
+	drawRounded(target, bounds, bounds.Dx()/2, fill)
+	for offset := -1; offset <= 1; offset++ {
+		for i := 0; i < 10; i++ {
+			target.Set(bounds.Min.X+11+i, bounds.Min.Y+11+i+offset, textMain)
+			target.Set(bounds.Max.X-12-i, bounds.Min.Y+11+i+offset, textMain)
+		}
+	}
 }
 
 func renderIcon(encoded, name string, size int) image.Image {
@@ -268,11 +307,11 @@ func drawRounded(target *image.RGBA, bounds image.Rectangle, radius int, fill co
 	}
 }
 
-func drawRoundedOutline(target *image.RGBA, bounds image.Rectangle, radius int, fill color.Color) {
-	outer := image.NewRGBA(target.Bounds())
-	drawRounded(outer, bounds, radius, fill)
-	drawRounded(outer, bounds.Inset(1), max(radius-1, 1), color.Transparent)
-	draw.Draw(target, target.Bounds(), outer, image.Point{}, draw.Over)
+func drawRectOutline(target *image.RGBA, bounds image.Rectangle, fill color.Color) {
+	draw.Draw(target, image.Rect(bounds.Min.X, bounds.Min.Y, bounds.Max.X, bounds.Min.Y+1), image.NewUniform(fill), image.Point{}, draw.Src)
+	draw.Draw(target, image.Rect(bounds.Min.X, bounds.Max.Y-1, bounds.Max.X, bounds.Max.Y), image.NewUniform(fill), image.Point{}, draw.Src)
+	draw.Draw(target, image.Rect(bounds.Min.X, bounds.Min.Y, bounds.Min.X+1, bounds.Max.Y), image.NewUniform(fill), image.Point{}, draw.Src)
+	draw.Draw(target, image.Rect(bounds.Max.X-1, bounds.Min.Y, bounds.Max.X, bounds.Max.Y), image.NewUniform(fill), image.Point{}, draw.Src)
 }
 
 func drawCentered(target draw.Image, value string, centerX, baseline, size int, bold bool, fill color.Color) {
@@ -280,6 +319,19 @@ func drawCentered(target draw.Image, value string, centerX, baseline, size int, 
 	width := font.MeasureString(face, value).Round()
 	drawer := font.Drawer{Dst: target, Src: image.NewUniform(fill), Face: face, Dot: fixed.P(centerX-width/2, baseline)}
 	drawer.DrawString(value)
+}
+
+func drawCenteredFitted(target draw.Image, value string, centerX, baseline, maxWidth, size int, bold bool, fill color.Color) {
+	value = strings.Join(strings.Fields(value), " ")
+	face := fontFace(size, bold)
+	if font.MeasureString(face, value).Round() > maxWidth {
+		runes := []rune(value)
+		for len(runes) > 3 && font.MeasureString(face, string(runes)+"...").Round() > maxWidth {
+			runes = runes[:len(runes)-1]
+		}
+		value = string(runes) + "..."
+	}
+	drawCentered(target, value, centerX, baseline, size, bold, fill)
 }
 
 func drawWrapped(target draw.Image, value string, bounds image.Rectangle, size int, fill color.Color) {
@@ -327,10 +379,18 @@ func fontFace(size int, bold bool) font.Face {
 	return face
 }
 
-func ellipsize(value string, limit int) string {
-	runes := []rune(strings.ReplaceAll(value, "\n", " "))
-	if len(runes) <= limit {
-		return string(runes)
+func guiProgressLabel(message, name string) string {
+	message = strings.TrimSpace(message)
+	switch {
+	case message == "cpak is ready", strings.HasPrefix(message, "Installed cpak"):
+		return "cpak is ready"
+	case strings.HasPrefix(message, "Resolving "):
+		return "Preparing " + name
+	case strings.Contains(message, "Downloading"):
+		return "Downloading " + name
+	case strings.Contains(message, "Extracting"), strings.Contains(message, "Installing"):
+		return "Installing " + name
+	default:
+		return ""
 	}
-	return string(runes[:limit-3]) + "..."
 }
