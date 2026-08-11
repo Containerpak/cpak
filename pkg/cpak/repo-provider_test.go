@@ -90,11 +90,15 @@ func TestGetLatestReleaseWithoutReleases(t *testing.T) {
 }
 
 func TestGetFileInBranch(t *testing.T) {
+	var cacheBypass string
+	var cacheControl string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/user/demo/raw/main/cpak.json" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		cacheBypass = r.URL.Query().Get("cpak")
+		cacheControl = r.Header.Get("Cache-Control")
 		w.Write([]byte(`{"name":"demo"}`))
 	}))
 	defer server.Close()
@@ -109,5 +113,27 @@ func TestGetFileInBranch(t *testing.T) {
 	}
 	if string(content) != `{"name":"demo"}` {
 		t.Fatalf("unexpected content: %s", content)
+	}
+	if cacheBypass == "" || cacheControl != "no-cache" {
+		t.Fatalf("branch request did not bypass caches")
+	}
+}
+
+func TestGetFileInCommitKeepsImmutableReferenceCacheable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("cpak") || r.Header.Get("Cache-Control") != "" {
+			http.Error(w, "immutable request bypassed the cache", http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"name":"demo"}`))
+	}))
+	defer server.Close()
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	provider := newTestRepoProvider(t, host+"/user/demo")
+	provider.Scheme = "http"
+
+	if _, err := provider.GetFileInCommit("cpak.json", "abc123"); err != nil {
+		t.Fatalf("GetFileInCommit returned an error: %v", err)
 	}
 }
