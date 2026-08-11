@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 func TestBuildContainerPath(t *testing.T) {
@@ -110,6 +112,35 @@ func TestGetNested(t *testing.T) {
 		}
 		if parent != tc.want {
 			t.Fatalf("parent: got %q, want %q", parent, tc.want)
+		}
+	}
+}
+
+func TestContainerEnvironmentKeepsImageAndOverrideValues(t *testing.T) {
+	app := types.Application{
+		Config: `{"config":{"Env":["IMAGE_VALUE=1"]}}`,
+		ParsedOverride: types.Override{
+			Env: []string{"OVERRIDE_VALUE=1"},
+		},
+	}
+	container := types.Container{
+		CpakId:             "container-id",
+		HostExecSocketPath: "/tmp/hostexec.sock",
+	}
+
+	env, err := containerEnvironment(app, container)
+	if err != nil {
+		t.Fatalf("container environment: %v", err)
+	}
+
+	for _, value := range []string{
+		"IMAGE_VALUE=1",
+		"OVERRIDE_VALUE=1",
+		"CPAK_CONTAINER_ID=container-id",
+		"CPAK_HOSTEXEC_SOCKET=/tmp/hostexec.sock",
+	} {
+		if !slicesContain(env, value) {
+			t.Fatalf("missing %q in %v", value, env)
 		}
 	}
 }

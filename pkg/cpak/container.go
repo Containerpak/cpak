@@ -400,9 +400,10 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 	}
 	cmds = append(cmds, command...)
 
-	envVars := os.Environ()
-	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
-	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
+	envVars, err := containerEnvironment(app, container)
+	if err != nil {
+		return err
+	}
 
 	cmd := exec.Command(c.Options.NsenterBinPath, cmds...)
 	logger.Println("Executing command:", cmd.String())
@@ -426,6 +427,20 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 		return &types.ExitError{Code: code}
 	}
 	return
+}
+
+func containerEnvironment(app types.Application, container types.Container) ([]string, error) {
+	config := &v1.ConfigFile{}
+	if err := json.Unmarshal([]byte(app.Config), config); err != nil {
+		return nil, fmt.Errorf("decode application config: %w", err)
+	}
+
+	envVars := append([]string{}, os.Environ()...)
+	envVars = append(envVars, config.Config.Env...)
+	envVars = append(envVars, resolvedOverride(app).Env...)
+	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
+	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
+	return envVars, nil
 }
 
 const defaultContainerPath = "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
