@@ -13,7 +13,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 func TestSelectedReferencePrecedence(t *testing.T) {
@@ -63,5 +67,51 @@ func TestInstallerDigests(t *testing.T) {
 	wanted := sha256.Sum256([]byte("amd64"))
 	if digests["amd64"] != hex.EncodeToString(wanted[:]) {
 		t.Fatalf("unexpected digest: %s", digests["amd64"])
+	}
+}
+
+func TestLoadPackageManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/repos/containerpak/demo/contents/cpak.json" || request.URL.Query().Get("ref") != "abc123" {
+			t.Fatalf("unexpected request: %s", request.URL.String())
+		}
+		if request.Header.Get("Accept") != "application/vnd.github.raw+json" {
+			t.Fatalf("unexpected Accept header: %s", request.Header.Get("Accept"))
+		}
+		_, _ = writer.Write([]byte(`{"manifest_version":"2.0","override":{"network":true}}`))
+	}))
+	defer server.Close()
+
+	manifest, err := loadPackageManifest(context.Background(), server.Client(), server.URL, "github.com/containerpak/demo", "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.Override.Network {
+		t.Fatal("network permission was not decoded")
+	}
+}
+
+func TestSummarizePermissions(t *testing.T) {
+	override := types.Override{
+		SocketX11:        true,
+		SocketWayland:    true,
+		SocketPulseAudio: true,
+		DeviceAll:        true,
+		Notification:     true,
+		Filesystem: []types.FilesystemPermission{
+			{Path: "home", Access: "read-write"},
+		},
+		Network: true,
+	}
+	want := []bootstrap.Permission{
+		{Name: "Display", Detail: "X11, Wayland"},
+		{Name: "Audio", Detail: "PulseAudio"},
+		{Name: "Devices", Detail: "all devices"},
+		{Name: "Notifications", Detail: "desktop notifications"},
+		{Name: "Files", Detail: "home, read write"},
+		{Name: "Network", Detail: "internet and local network"},
+	}
+	if got := summarizePermissions(override); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected permissions: %#v", got)
 	}
 }

@@ -84,6 +84,16 @@ func (f *x11Frame) StartMove() {
 	).Check()
 }
 
+func (f *x11Frame) Resize(width, height int) {
+	xproto.ConfigureWindow(
+		f.conn,
+		f.window,
+		xproto.ConfigWindowWidth|xproto.ConfigWindowHeight,
+		[]uint32{uint32(width), uint32(height)},
+	)
+	f.conn.Sync()
+}
+
 func (f *x11Frame) removeDecorations() {
 	motif, err := internAtom(f.conn, "_MOTIF_WM_HINTS")
 	if err != nil {

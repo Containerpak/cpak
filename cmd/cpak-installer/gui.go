@@ -53,18 +53,20 @@ var (
 
 type guiState struct {
 	sync.Mutex
-	phase        int
-	status       string
-	hovered      bool
-	closeHovered bool
-	frame        int
+	phase              int
+	status             string
+	hovered            bool
+	closeHovered       bool
+	permissionsHovered bool
+	permissionsOpen    bool
+	frame              int
 }
 
 type guiUpdate struct{}
 
 func runGUI(capsule bootstrap.Capsule) {
 	driver.Main(func(s screen.Screen) {
-		const width, height = 552, 484
+		const width, height = 552, 540
 		windowTitle := fmt.Sprintf("cpak-installer-%d", os.Getpid())
 		window, err := s.NewWindow(&screen.NewWindowOptions{
 			Width:  width,
@@ -101,10 +103,12 @@ func runGUI(capsule bootstrap.Capsule) {
 				point := image.Pt(int(event.X), int(event.Y))
 				hovered := point.In(button)
 				closeHovered := point.In(closeRect(dimensions.WidthPx))
+				permissionsHovered := len(capsule.Metadata.Permissions) > 0 && point.In(permissionsRect(dimensions.WidthPx))
 				state.Lock()
-				changed := state.hovered != hovered || state.closeHovered != closeHovered
+				changed := state.hovered != hovered || state.closeHovered != closeHovered || state.permissionsHovered != permissionsHovered
 				state.hovered = hovered
 				state.closeHovered = closeHovered
+				state.permissionsHovered = permissionsHovered
 				phase := state.phase
 				state.Unlock()
 				if changed {
@@ -114,7 +118,17 @@ func runGUI(capsule bootstrap.Capsule) {
 					if closeHovered {
 						return
 					}
-					if hovered {
+					if permissionsHovered && frame != nil {
+						state.Lock()
+						state.permissionsOpen = !state.permissionsOpen
+						permissionsOpen := state.permissionsOpen
+						state.Unlock()
+						height := 540
+						if permissionsOpen {
+							height = expandedWindowHeight(len(capsule.Metadata.Permissions))
+						}
+						frame.Resize(width, height)
+					} else if hovered {
 						if phase == phaseDone {
 							return
 						}
@@ -199,9 +213,12 @@ func renderGUI(s screen.Screen, window screen.Window, dimensions size.Event, but
 	drawCentered(canvas, metadata.Origin, width/2, 332, 13, false, textMuted)
 
 	state.Lock()
-	phase, status, hovered, closeHovered, frame := state.phase, state.status, state.hovered, state.closeHovered, state.frame
+	phase, status, hovered, closeHovered, permissionsHovered, permissionsOpen, frame := state.phase, state.status, state.hovered, state.closeHovered, state.permissionsHovered, state.permissionsOpen, state.frame
 	state.Unlock()
 	drawCloseButton(canvas, closeRect(width), closeHovered)
+	if len(metadata.Permissions) > 0 {
+		drawPermissions(canvas, width, metadata.Permissions, permissionsHovered, permissionsOpen)
+	}
 	statusColor := textMuted
 	if phase == phaseDone {
 		statusColor = good
@@ -249,6 +266,55 @@ func buttonRect(width, height int) image.Rectangle {
 
 func closeRect(width int) image.Rectangle {
 	return image.Rect(width-48, 16, width-16, 48)
+}
+
+func permissionsRect(width int) image.Rectangle {
+	return image.Rect(40, 350, width-40, 398)
+}
+
+func expandedWindowHeight(permissionCount int) int {
+	return 540 + ((permissionCount+1)/2)*46
+}
+
+func drawPermissions(target *image.RGBA, width int, permissions []bootstrap.Permission, hovered, open bool) {
+	bounds := permissionsRect(width)
+	fill := color.RGBA{0x11, 0x1a, 0x2b, 0xff}
+	if hovered {
+		fill = color.RGBA{0x1d, 0x2a, 0x43, 0xff}
+	}
+	drawRounded(target, bounds, 12, fill)
+	drawText(target, "Permissions", bounds.Min.X+16, bounds.Min.Y+29, 14, true, textMain)
+	drawText(target, fmt.Sprintf("%d", len(permissions)), bounds.Max.X-54, bounds.Min.Y+29, 13, false, textMuted)
+	drawChevron(target, image.Pt(bounds.Max.X-23, bounds.Min.Y+24), open)
+	if !open {
+		return
+	}
+
+	const gap = 10
+	columnWidth := (bounds.Dx() - gap) / 2
+	for index, permission := range permissions {
+		column := index % 2
+		row := index / 2
+		left := bounds.Min.X + column*(columnWidth+gap)
+		top := bounds.Max.Y + 10 + row*46
+		item := image.Rect(left, top, left+columnWidth, top+36)
+		drawRounded(target, item, 9, fill)
+		drawTextFitted(target, permission.Name+": "+permission.Detail, item.Min.X+11, item.Min.Y+23, item.Dx()-22, 12, false, textMuted)
+	}
+}
+
+func drawChevron(target *image.RGBA, center image.Point, open bool) {
+	for offset := -1; offset <= 1; offset++ {
+		for i := 0; i < 6; i++ {
+			if open {
+				target.Set(center.X-5+i, center.Y+3-i+offset, textMuted)
+				target.Set(center.X+i, center.Y-2+i+offset, textMuted)
+			} else {
+				target.Set(center.X-2+i+offset, center.Y-5+i, textMuted)
+				target.Set(center.X+3-i+offset, center.Y+i, textMuted)
+			}
+		}
+	}
 }
 
 func drawCloseButton(target *image.RGBA, bounds image.Rectangle, hovered bool) {
@@ -321,17 +387,32 @@ func drawCentered(target draw.Image, value string, centerX, baseline, size int, 
 	drawer.DrawString(value)
 }
 
+func drawText(target draw.Image, value string, x, baseline, size int, bold bool, fill color.Color) {
+	drawer := font.Drawer{Dst: target, Src: image.NewUniform(fill), Face: fontFace(size, bold), Dot: fixed.P(x, baseline)}
+	drawer.DrawString(value)
+}
+
+func drawTextFitted(target draw.Image, value string, x, baseline, maxWidth, size int, bold bool, fill color.Color) {
+	value = fitText(value, maxWidth, fontFace(size, bold))
+	drawText(target, value, x, baseline, size, bold, fill)
+}
+
 func drawCenteredFitted(target draw.Image, value string, centerX, baseline, maxWidth, size int, bold bool, fill color.Color) {
-	value = strings.Join(strings.Fields(value), " ")
 	face := fontFace(size, bold)
-	if font.MeasureString(face, value).Round() > maxWidth {
-		runes := []rune(value)
-		for len(runes) > 3 && font.MeasureString(face, string(runes)+"...").Round() > maxWidth {
-			runes = runes[:len(runes)-1]
-		}
-		value = string(runes) + "..."
-	}
+	value = fitText(value, maxWidth, face)
 	drawCentered(target, value, centerX, baseline, size, bold, fill)
+}
+
+func fitText(value string, maxWidth int, face font.Face) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if font.MeasureString(face, value).Round() <= maxWidth {
+		return value
+	}
+	runes := []rune(value)
+	for len(runes) > 3 && font.MeasureString(face, string(runes)+"...").Round() > maxWidth {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "..."
 }
 
 func drawWrapped(target draw.Image, value string, bounds image.Rectangle, size int, fill color.Color) {

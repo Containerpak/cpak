@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 const defaultStoreIndex = "https://raw.githubusercontent.com/Containerpak/store/main/index.json"
@@ -114,6 +116,10 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 			if err != nil {
 				return catalog{}, fmt.Errorf("resolve %s: %w", origin, err)
 			}
+			packageManifest, err := loadPackageManifest(ctx, client, githubAPI, origin, commit)
+			if err != nil {
+				return catalog{}, fmt.Errorf("load %s package manifest: %w", origin, err)
+			}
 			iconURL := strings.TrimSuffix(entry.Manifest, path.Base(entry.Manifest)) + "icon.svg"
 			icon, err := fetchText(ctx, client, iconURL, 512*1024)
 			if err != nil {
@@ -138,6 +144,7 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 					Name:            truncate(entry.Name, 120),
 					Description:     truncate(description, 500),
 					IconSVG:         icon,
+					Permissions:     summarizePermissions(packageManifest.Override),
 					RefType:         "commit",
 					Ref:             commit,
 					Arch:            arch,
@@ -155,6 +162,100 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 		}
 	}
 	return result, nil
+}
+
+func loadPackageManifest(ctx context.Context, client *http.Client, githubAPI, origin, commit string) (*types.CpakManifest, error) {
+	parts := strings.Split(origin, "/")
+	if len(parts) != 3 || parts[0] != "github.com" || parts[1] == "" || parts[2] == "" {
+		return nil, fmt.Errorf("invalid package origin: %s", origin)
+	}
+	endpoint := strings.TrimSuffix(githubAPI, "/") + "/repos/" + parts[1] + "/" + parts[2] + "/contents/cpak.json?ref=" + url.QueryEscape(commit)
+	encoded, err := fetch(ctx, client, endpoint, 2*1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	return cpak.DecodeManifest(encoded)
+}
+
+func summarizePermissions(override types.Override) []bootstrap.Permission {
+	permissions := []bootstrap.Permission{}
+	add := func(enabled bool, name, detail string) {
+		if enabled {
+			permissions = append(permissions, bootstrap.Permission{Name: name, Detail: detail})
+		}
+	}
+
+	displays := []string{}
+	if override.SocketX11 {
+		displays = append(displays, "X11")
+	}
+	if override.SocketWayland {
+		displays = append(displays, "Wayland")
+	}
+	if len(displays) > 0 {
+		permissions = append(permissions, bootstrap.Permission{Name: "Display", Detail: strings.Join(displays, ", ")})
+	}
+	add(override.SocketPulseAudio, "Audio", "PulseAudio")
+	add(override.SocketSessionBus, "Session services", "session D-Bus")
+	add(override.SocketSystemBus, "System services", "system D-Bus")
+	add(override.SocketSshAgent, "SSH agent", "host authentication socket")
+	add(override.SocketCups, "Printing", "CUPS")
+	add(override.SocketGpgAgent, "GPG agent", "host signing socket")
+	add(override.SocketAtSpiBus, "Accessibility", "AT-SPI")
+	add(override.SocketBluetooth, "Bluetooth", "Bluetooth socket")
+
+	devices := []string{}
+	if override.DeviceAll {
+		devices = append(devices, "all devices")
+	} else {
+		deviceFlags := []struct {
+			enabled bool
+			name    string
+		}{
+			{override.DeviceDri, "graphics"},
+			{override.DeviceKvm, "KVM"},
+			{override.DeviceShm, "shared memory"},
+			{override.DeviceAlsa, "ALSA"},
+			{override.DeviceVideo, "video"},
+			{override.DeviceFuse, "FUSE"},
+			{override.DeviceTun, "TUN/TAP"},
+			{override.DeviceUsb, "USB"},
+		}
+		for _, device := range deviceFlags {
+			if device.enabled {
+				devices = append(devices, device.name)
+			}
+		}
+	}
+	if len(devices) > 0 {
+		permissions = append(permissions, bootstrap.Permission{Name: "Devices", Detail: strings.Join(devices, ", ")})
+	}
+
+	add(override.Notification, "Notifications", "desktop notifications")
+	add(override.OpenURI, "External links", "open URIs on the host")
+	for _, filesystem := range override.Filesystem {
+		permissions = append(permissions, bootstrap.Permission{
+			Name:   "Files",
+			Detail: filesystem.Path + ", " + strings.ReplaceAll(filesystem.Access, "-", " "),
+		})
+	}
+	add(override.FsHost, "Files", "host, read only")
+	add(override.FsHostEtc, "Files", "/etc, read only")
+	add(override.FsHostHome, "Files", "home, read and write")
+	for _, filesystem := range override.FsExtra {
+		permissions = append(permissions, bootstrap.Permission{Name: "Files", Detail: filesystem + ", read and write"})
+	}
+	add(override.Network, "Network", "internet and local network")
+	add(override.Process, "Host processes", "shared process namespace")
+	add(override.UserNamespaces, "Nested sandboxes", "user namespaces")
+	add(override.AsRoot, "Root", "runs as root inside the cpak")
+	if len(override.AllowedHostCommands) > 0 {
+		permissions = append(permissions, bootstrap.Permission{
+			Name:   "Host commands",
+			Detail: truncate(strings.Join(override.AllowedHostCommands, ", "), 160),
+		})
+	}
+	return permissions
 }
 
 func installerDigests(dir string) (map[string]string, error) {
@@ -221,6 +322,9 @@ func fetch(ctx context.Context, client *http.Client, url string, limit int64) ([
 	}
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" && request.URL.Host == "api.github.com" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if strings.Contains(request.URL.Path, "/contents/") {
+		request.Header.Set("Accept", "application/vnd.github.raw+json")
 	}
 	response, err := client.Do(request)
 	if err != nil {

@@ -33,15 +33,21 @@ var (
 )
 
 type Metadata struct {
-	Schema          int    `json:"schema"`
-	Origin          string `json:"origin"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	IconSVG         string `json:"icon_svg,omitempty"`
-	RefType         string `json:"ref_type,omitempty"`
-	Ref             string `json:"ref,omitempty"`
-	Arch            string `json:"arch"`
-	InstallerSHA256 string `json:"installer_sha256"`
+	Schema          int          `json:"schema"`
+	Origin          string       `json:"origin"`
+	Name            string       `json:"name"`
+	Description     string       `json:"description"`
+	IconSVG         string       `json:"icon_svg,omitempty"`
+	Permissions     []Permission `json:"permissions,omitempty"`
+	RefType         string       `json:"ref_type,omitempty"`
+	Ref             string       `json:"ref,omitempty"`
+	Arch            string       `json:"arch"`
+	InstallerSHA256 string       `json:"installer_sha256"`
+}
+
+type Permission struct {
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
 }
 
 type Capsule struct {
@@ -76,6 +82,14 @@ func (m Metadata) Validate() error {
 	if m.Name == "" || m.Description == "" {
 		return errors.New("package name and description are required")
 	}
+	if len(m.Permissions) > 32 {
+		return errors.New("package permission list is too long")
+	}
+	for _, permission := range m.Permissions {
+		if !validMetadataText(permission.Name, 80) || !validMetadataText(permission.Detail, 160) {
+			return errors.New("package permission is invalid")
+		}
+	}
 	if m.Arch != "amd64" && m.Arch != "arm64" {
 		return fmt.Errorf("unsupported installer architecture: %s", m.Arch)
 	}
@@ -96,6 +110,19 @@ func (m Metadata) Validate() error {
 		return fmt.Errorf("unsupported package reference type: %s", m.RefType)
 	}
 	return nil
+}
+
+func validMetadataText(value string, limit int) bool {
+	runes := []rune(value)
+	if len(runes) == 0 || len(runes) > limit {
+		return false
+	}
+	for _, character := range runes {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func PackInstaller(installer, cpak []byte) []byte {

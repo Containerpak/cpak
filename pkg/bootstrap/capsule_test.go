@@ -10,6 +10,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -33,11 +34,19 @@ func TestCapsuleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capsule.Metadata != metadata {
+	if !reflect.DeepEqual(capsule.Metadata, metadata) {
 		t.Fatalf("metadata mismatch: %#v", capsule.Metadata)
 	}
 	if string(capsule.Payload) != "cpak" {
 		t.Fatalf("payload mismatch: %q", capsule.Payload)
+	}
+}
+
+func TestMetadataRejectsInvalidPermissions(t *testing.T) {
+	metadata := testMetadata()
+	metadata.Permissions = []Permission{{Name: "Files", Detail: "home\nread-write"}}
+	if err := metadata.Validate(); err == nil {
+		t.Fatal("metadata accepted a permission containing a newline")
 	}
 }
 
