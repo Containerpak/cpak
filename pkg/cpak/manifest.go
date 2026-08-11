@@ -49,7 +49,8 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	return nil
 }
 
-func decodeManifest(content []byte) (*types.CpakManifest, error) {
+// DecodeManifest parses a manifest without accepting unknown fields.
+func DecodeManifest(content []byte) (*types.CpakManifest, error) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 
@@ -64,6 +65,23 @@ func decodeManifest(content []byte) (*types.CpakManifest, error) {
 		manifest.ManifestVersion = "1.0"
 	}
 	return manifest, nil
+}
+
+// MigrateManifest upgrades a v1 manifest to v2. Version 2 starts with no
+// granted permissions so the author can add only the permissions it needs.
+func MigrateManifest(manifest *types.CpakManifest) error {
+	if manifest.ManifestVersion == "" {
+		manifest.ManifestVersion = "1.0"
+	}
+	if manifest.ManifestVersion == "2.0" {
+		return nil
+	}
+	if manifest.ManifestVersion != "1.0" {
+		return fmt.Errorf("unsupported manifest version: %s", manifest.ManifestVersion)
+	}
+	manifest.ManifestVersion = "2.0"
+	manifest.Override = types.Override{}
+	return nil
 }
 
 // fetchManifest fetches the manifest file from the given origin.
@@ -103,7 +121,7 @@ func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *
 		return nil, fmt.Errorf("no branch, release or commit specified")
 	}
 
-	manifest, err = decodeManifest(manifestContent)
+	manifest, err = DecodeManifest(manifestContent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode manifest file: %w", err)
 	}

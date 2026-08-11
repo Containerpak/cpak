@@ -7,19 +7,29 @@ import (
 )
 
 func TestDecodeManifestRejectsUnknownFields(t *testing.T) {
-	_, err := decodeManifest([]byte(`{"manifest_version":"2.0","name":"Demo","description":"Demo application","version":"1.0.0","image":"ghcr.io/containerpak/demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","binaries":["/usr/bin/demo"],"unknown":true}`))
+	_, err := DecodeManifest([]byte(`{"manifest_version":"2.0","name":"Demo","description":"Demo application","version":"1.0.0","image":"ghcr.io/containerpak/demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","binaries":["/usr/bin/demo"],"unknown":true}`))
 	if err == nil {
 		t.Fatal("expected unknown manifest field to fail")
 	}
 }
 
 func TestDecodeManifestDefaultsToVersionOne(t *testing.T) {
-	manifest, err := decodeManifest([]byte(`{"name":"Demo","description":"Demo application","version":"1.0.0","image":"ghcr.io/containerpak/demo:latest","binaries":["/usr/bin/demo"]}`))
+	manifest, err := DecodeManifest([]byte(`{"name":"Demo","description":"Demo application","version":"1.0.0","image":"ghcr.io/containerpak/demo:latest","binaries":["/usr/bin/demo"]}`))
 	if err != nil {
 		t.Fatalf("failed to decode legacy manifest: %v", err)
 	}
 	if manifest.ManifestVersion != "1.0" {
 		t.Fatalf("expected legacy manifest version, got %q", manifest.ManifestVersion)
+	}
+}
+
+func TestMigrateManifestClearsV1Permissions(t *testing.T) {
+	manifest := &types.CpakManifest{ManifestVersion: "1.0", Override: types.NewOverride()}
+	if err := MigrateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ManifestVersion != "2.0" || manifest.Override.Network || manifest.Override.FsHostHome {
+		t.Fatalf("expected a default-deny v2 manifest, got %+v", manifest)
 	}
 }
 

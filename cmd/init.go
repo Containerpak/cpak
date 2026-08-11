@@ -16,7 +16,7 @@ import (
 )
 
 type InitCmd struct {
-	ManifestVersion string   `cli:"manifest-version,m" help:"Manifest version (default: 1.0)"`
+	ManifestVersion string   `cli:"manifest-version,m" help:"Manifest version (default: 2.0)"`
 	Name            string   `cli:"name,n" help:"Name of the application (required)"`
 	Version         string   `cli:"version,v" help:"Version of the application, e.g. v1.0.0 (required)"`
 	Description     string   `cli:"description,d" help:"Short description of the application (required)"`
@@ -49,7 +49,7 @@ func (c *InitCmd) Run() error {
 		Override:        types.NewOverride(),
 	}
 	if manifest.ManifestVersion == "" {
-		manifest.ManifestVersion = "1.0"
+		manifest.ManifestVersion = "2.0"
 	}
 	for _, origin := range c.Dependency {
 		manifest.Dependencies = append(manifest.Dependencies, types.Dependency{Origin: origin})
