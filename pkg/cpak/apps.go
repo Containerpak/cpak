@@ -216,6 +216,9 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 	}
 
 	if sameInstallation(app, updated) {
+		if err = deps.createExports(updated); err != nil {
+			return failedUpdate(result, err)
+		}
 		result.Status = types.UpdateStatusUpToDate
 		return result
 	}

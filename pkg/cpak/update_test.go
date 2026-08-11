@@ -220,8 +220,8 @@ func TestUpdateBranchInstallUpToDate(t *testing.T) {
 	if results[0].Status != types.UpdateStatusUpToDate {
 		t.Fatalf("expected status up-to-date, got %q (%s)", results[0].Status, results[0].Reason)
 	}
-	if stub.exported != 0 || stub.stopped != 0 {
-		t.Fatalf("expected no replacement, got %d exports and %d stops", stub.exported, stub.stopped)
+	if stub.exported != 1 || stub.stopped != 0 {
+		t.Fatalf("expected refreshed exports without a restart, got %d exports and %d stops", stub.exported, stub.stopped)
 	}
 }
 
