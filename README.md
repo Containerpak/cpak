@@ -17,8 +17,8 @@ layers, atomic updates and a rootless Linux sandbox from one Go binary.
 
 ## Install
 
-Download the binary for the current `v2` build from the
-[continuous release](https://github.com/Containerpak/cpak/releases/tag/continuous),
+Download the binary for the current release candidate from the
+[v2.0.0-rc.2 release](https://github.com/Containerpak/cpak/releases/tag/v2.0.0-rc.2),
 then install it in a directory on `PATH`:
 
 ```sh
@@ -38,6 +38,14 @@ make all
 
 The build produces one `cpak` binary and does not embed a second container
 runtime.
+
+Store application pages also provide a signed graphical installer. Each
+download contains the matching cpak binary and the selected package identity.
+The signed metadata also pins the SHA-256 of the complete installer. The
+installer verifies both before writing cpak to `~/.local/bin` and installing the
+application. A browser may save the file without its executable
+bit; enable execution in the file manager or run `chmod +x` once before opening
+it.
 
 ## Use
 
@@ -183,10 +191,13 @@ requested limit fails with a direct diagnostic instead of being ignored.
 
 ## Store
 
-Layers are addressed by digest and shared across packages. Installs and updates
-stage data before changing the active application record. Interrupted updates
-are recovered on the next start, while garbage collection retains every layer
-referenced by an installed package.
+cpak deduplicates package data at two levels. OCI layers are addressed by digest,
+so an unchanged base or dependency layer is downloaded and stored once. Every
+new layer then passes through DaBaDee before publication, which replaces equal
+files with hard links even when those bytes arrived through different layer
+layouts. Installs and updates stage data before changing the active application
+record. Interrupted updates are recovered on the next start, while garbage
+collection retains every layer referenced by an installed package.
 
 The package origin remains a normal Git repository, so the manifest can follow a
 branch, release or immutable commit while the OCI digest records the exact image

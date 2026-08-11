@@ -1,0 +1,254 @@
+/*
+ * Copyright (c) 2025 FABRICATORS S.R.L.
+ * Licensed under the Fabricators Public Access License (FPAL-TCV) v1.0.
+ * See https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md for details.
+ */
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+)
+
+const defaultStoreIndex = "https://raw.githubusercontent.com/Containerpak/store/main/index.json"
+const defaultGitHubAPI = "https://api.github.com"
+
+type storeEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Manifest    string `json:"manifest"`
+}
+
+type storeManifest struct {
+	Branch      string `json:"branch"`
+	Release     string `json:"release"`
+	Commit      string `json:"commit"`
+	Description string `json:"description"`
+}
+
+type signedEntry struct {
+	Metadata  string `json:"metadata"`
+	Signature string `json:"signature"`
+}
+
+type catalog struct {
+	Schema   int                               `json:"schema"`
+	Release  string                            `json:"release"`
+	Packages map[string]map[string]signedEntry `json:"packages"`
+}
+
+func main() {
+	outputPath := flag.String("output", "", "output path")
+	release := flag.String("release", "", "cpak release")
+	indexURL := flag.String("store-index", defaultStoreIndex, "Store index URL")
+	installerDir := flag.String("installer-dir", "dist", "directory containing packed installers")
+	flag.Parse()
+	if *outputPath == "" || *release == "" {
+		fail(fmt.Errorf("output and release are required"))
+	}
+	privateKeyPEM := os.Getenv("CPAK_INSTALLER_PRIVATE_KEY")
+	if privateKeyPEM == "" {
+		fail(fmt.Errorf("CPAK_INSTALLER_PRIVATE_KEY is required"))
+	}
+	privateKey, err := bootstrap.ParsePrivateKeyPEM([]byte(privateKeyPEM))
+	if err != nil {
+		fail(err)
+	}
+
+	digests, err := installerDigests(*installerDir)
+	if err != nil {
+		fail(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	client := &http.Client{Timeout: 15 * time.Second}
+	result, err := buildCatalog(ctx, client, *indexURL, defaultGitHubAPI, *release, digests, privateKey)
+	if err != nil {
+		fail(err)
+	}
+	encoded, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fail(err)
+	}
+	encoded = append(encoded, '\n')
+	if err = os.WriteFile(*outputPath, encoded, 0644); err != nil {
+		fail(err)
+	}
+}
+
+func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI, release string, digests map[string]string, privateKey ed25519.PrivateKey) (catalog, error) {
+	var index map[string]map[string]storeEntry
+	if err := fetchJSON(ctx, client, indexURL, &index); err != nil {
+		return catalog{}, err
+	}
+	result := catalog{Schema: 1, Release: release, Packages: map[string]map[string]signedEntry{}}
+	for _, entries := range index {
+		for origin, entry := range entries {
+			var manifest storeManifest
+			if err := fetchJSON(ctx, client, entry.Manifest, &manifest); err != nil {
+				return catalog{}, fmt.Errorf("load %s: %w", origin, err)
+			}
+			_, ref := selectedReference(manifest)
+			if ref == "" {
+				return catalog{}, fmt.Errorf("package reference is missing: %s", origin)
+			}
+			commit, err := resolveCommit(ctx, client, githubAPI, origin, ref)
+			if err != nil {
+				return catalog{}, fmt.Errorf("resolve %s: %w", origin, err)
+			}
+			iconURL := strings.TrimSuffix(entry.Manifest, path.Base(entry.Manifest)) + "icon.svg"
+			icon, err := fetchText(ctx, client, iconURL, 512*1024)
+			if err != nil {
+				return catalog{}, fmt.Errorf("load %s icon: %w", origin, err)
+			}
+			description := strings.TrimSpace(manifest.Description)
+			if description == "" {
+				description = strings.TrimSpace(entry.Description)
+			}
+			if description == "" {
+				description = "cpak application"
+			}
+			result.Packages[origin] = map[string]signedEntry{}
+			for _, arch := range []string{"amd64", "arm64"} {
+				digest := digests[arch]
+				if digest == "" {
+					return catalog{}, fmt.Errorf("installer digest is missing for %s", arch)
+				}
+				metadata := bootstrap.Metadata{
+					Schema:          bootstrap.SchemaVersion,
+					Origin:          origin,
+					Name:            truncate(entry.Name, 120),
+					Description:     truncate(description, 500),
+					IconSVG:         icon,
+					RefType:         "commit",
+					Ref:             commit,
+					Arch:            arch,
+					InstallerSHA256: digest,
+				}
+				encoded, signature, err := bootstrap.SignMetadata(metadata, privateKey)
+				if err != nil {
+					return catalog{}, fmt.Errorf("sign %s for %s: %w", origin, arch, err)
+				}
+				result.Packages[origin][arch] = signedEntry{
+					Metadata:  base64.StdEncoding.EncodeToString(encoded),
+					Signature: base64.StdEncoding.EncodeToString(signature),
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
+func installerDigests(dir string) (map[string]string, error) {
+	result := map[string]string{}
+	for _, arch := range []string{"amd64", "arm64"} {
+		encoded, err := os.ReadFile(filepath.Join(dir, "cpak-installer-linux-"+arch))
+		if err != nil {
+			return nil, err
+		}
+		digest := sha256.Sum256(encoded)
+		result[arch] = hex.EncodeToString(digest[:])
+	}
+	return result, nil
+}
+
+func resolveCommit(ctx context.Context, client *http.Client, githubAPI, origin, ref string) (string, error) {
+	parts := strings.Split(origin, "/")
+	if len(parts) != 3 || parts[0] != "github.com" || parts[1] == "" || parts[2] == "" {
+		return "", fmt.Errorf("invalid package origin: %s", origin)
+	}
+	endpoint := strings.TrimSuffix(githubAPI, "/") + "/repos/" + parts[1] + "/" + parts[2] + "/commits/" + url.PathEscape(ref)
+	var result struct {
+		SHA string `json:"sha"`
+	}
+	if err := fetchJSON(ctx, client, endpoint, &result); err != nil {
+		return "", err
+	}
+	if len(result.SHA) != 40 {
+		return "", errors.New("GitHub returned an invalid commit")
+	}
+	return result.SHA, nil
+}
+
+func selectedReference(manifest storeManifest) (string, string) {
+	if manifest.Branch != "" {
+		return "branch", manifest.Branch
+	}
+	if manifest.Release != "" {
+		return "release", manifest.Release
+	}
+	if manifest.Commit != "" {
+		return "commit", manifest.Commit
+	}
+	return "", ""
+}
+
+func fetchJSON(ctx context.Context, client *http.Client, url string, target any) error {
+	encoded, err := fetch(ctx, client, url, 2*1024*1024)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(encoded, target)
+}
+
+func fetchText(ctx context.Context, client *http.Client, url string, limit int64) (string, error) {
+	encoded, err := fetch(ctx, client, url, limit)
+	return string(encoded), err
+}
+
+func fetch(ctx context.Context, client *http.Client, url string, limit int64) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" && request.URL.Host == "api.github.com" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s returned %s", url, response.Status)
+	}
+	encoded, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(encoded)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", url, limit)
+	}
+	return encoded, nil
+}
+
+func truncate(value string, length int) string {
+	runes := []rune(value)
+	if len(runes) <= length {
+		return value
+	}
+	return string(runes[:length])
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
+}

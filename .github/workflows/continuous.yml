@@ -59,9 +59,27 @@ jobs:
           mkdir -p dist
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/cpak-linux-${arch}" .
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "/tmp/cpak-installer-linux-${arch}" ./cmd/cpak-installer
+            go run ./cmd/cpak-pack \
+              --installer "/tmp/cpak-installer-linux-${arch}" \
+              --cpak "dist/cpak-linux-${arch}" \
+              --output "dist/cpak-installer-linux-${arch}"
           done
           cd dist
-          sha256sum cpak-linux-* > SHA256SUMS
+          sha256sum cpak-linux-* cpak-installer-linux-* > SHA256SUMS
+
+      - name: Build signed installer catalog
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CPAK_INSTALLER_PRIVATE_KEY: ${{ secrets.CPAK_INSTALLER_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          go run ./cmd/cpak-catalog \
+            --release "${{ steps.version.outputs.value }}" \
+            --installer-dir dist \
+            --output dist/cpak-installer-catalog.json
+          cd dist
+          sha256sum cpak-installer-catalog.json >> SHA256SUMS
 
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
@@ -161,12 +179,16 @@ jobs:
       - name: Attest binaries
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
-          subject-path: dist/cpak-linux-*
+          subject-path: |
+            dist/cpak-linux-*
+            dist/cpak-installer-linux-*
 
       - name: Attest SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
-          subject-path: dist/cpak-linux-*
+          subject-path: |
+            dist/cpak-linux-*
+            dist/cpak-installer-linux-*
           sbom-path: dist/cpak.spdx.json
 
       - name: Move channel tag

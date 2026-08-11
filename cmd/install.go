@@ -19,6 +19,7 @@ type InstallCmd struct {
 	Branch  string `cli:"branch,b" help:"Specify a branch"`
 	Release string `cli:"release,r" help:"Install a specific release"`
 	Commit  string `cli:"commit,c" help:"Specify a commit"`
+	Yes     bool   `cli:"yes,y" help:"Skip the confirmation prompt"`
 
 	cli.Base
 }
@@ -84,8 +85,7 @@ func (c *InstallCmd) Run() error {
 	tools.PrintStructKeyVal(manifest.Override)
 	c.Logger.Info("")
 
-	confirm := tools.ConfirmOperation("Do you want to continue?")
-	if !confirm {
+	if !c.Yes && !tools.ConfirmOperation("Do you want to continue?") {
 		return nil
 	}
 

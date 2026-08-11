@@ -1,0 +1,180 @@
+/*
+ * Copyright (c) 2025 FABRICATORS S.R.L.
+ * Licensed under the Fabricators Public Access License (FPAL-TCV) v1.0.
+ * See https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md for details.
+ */
+package main
+
+import (
+	"bufio"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+	"golang.org/x/term"
+)
+
+const publicKeyBase64 = "pOCiCYoqrBX+5Laung0E5d/XysacWo3hYduW764U5o8="
+
+type progressFunc func(string)
+
+func main() {
+	forceTerminal := flag.Bool("terminal", false, "use the terminal interface")
+	inspect := flag.Bool("inspect", false, "print verified package metadata")
+	flag.Parse()
+
+	capsule, err := readSelf()
+	if err != nil {
+		fail(err)
+	}
+	if *inspect {
+		encoded, _ := json.MarshalIndent(capsule.Metadata, "", "  ")
+		fmt.Println(string(encoded))
+		return
+	}
+
+	if !*forceTerminal && !term.IsTerminal(int(os.Stdin.Fd())) && os.Getenv("DISPLAY") != "" {
+		runGUI(capsule)
+		return
+	}
+	if err = runTerminal(capsule); err != nil {
+		fail(err)
+	}
+}
+
+func readSelf() (bootstrap.Capsule, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return bootstrap.Capsule{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return bootstrap.Capsule{}, err
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		return bootstrap.Capsule{}, err
+	}
+	key, err := base64.StdEncoding.DecodeString(publicKeyBase64)
+	if err != nil {
+		return bootstrap.Capsule{}, err
+	}
+	return bootstrap.ReadCapsule(file, stat.Size(), ed25519.PublicKey(key))
+}
+
+func runTerminal(capsule bootstrap.Capsule) error {
+	m := capsule.Metadata
+	fmt.Printf("Install %s\n\n%s\n\nOrigin: %s\n", m.Name, m.Description, m.Origin)
+	if m.Ref != "" {
+		fmt.Printf("Reference: %s %s\n", m.RefType, m.Ref)
+	}
+	fmt.Print("\nInstall this application? [Y/n] ")
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "" && answer != "y" && answer != "yes" {
+		return nil
+	}
+	return install(capsule, func(message string) {
+		fmt.Println(message)
+	})
+}
+
+func install(capsule bootstrap.Capsule, progress progressFunc) error {
+	cpakPath, changed, err := installCpak(capsule.Payload)
+	if err != nil {
+		return err
+	}
+	if changed {
+		progress("Installed cpak in ~/.local/bin")
+	} else {
+		progress("cpak is ready")
+	}
+
+	metadata := capsule.Metadata
+	args := []string{"install", "--yes"}
+	if metadata.Ref != "" {
+		args = append(args, "--"+metadata.RefType, metadata.Ref)
+	}
+	args = append(args, metadata.Origin)
+	progress("Resolving " + metadata.Name)
+	return runCommand(cpakPath, args, progress)
+}
+
+func installCpak(payload []byte) (string, bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false, err
+	}
+	dir := filepath.Join(home, ".local", "bin")
+	if err = os.MkdirAll(dir, 0755); err != nil {
+		return "", false, err
+	}
+	target := filepath.Join(dir, "cpak")
+	wanted := sha256.Sum256(payload)
+	if current, readErr := os.ReadFile(target); readErr == nil && sha256.Sum256(current) == wanted {
+		return target, false, nil
+	}
+
+	temporary, err := os.CreateTemp(dir, ".cpak-*")
+	if err != nil {
+		return "", false, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err = temporary.Chmod(0755); err == nil {
+		_, err = temporary.Write(payload)
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if err = os.Rename(temporaryPath, target); err != nil {
+		return "", false, err
+	}
+	return target, true, nil
+}
+
+func runCommand(path string, args []string, progress progressFunc) error {
+	command := exec.Command(path, args...)
+	reader, writer := io.Pipe()
+	command.Stdout = writer
+	command.Stderr = writer
+	if err := command.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- command.Wait()
+		_ = writer.Close()
+	}()
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			progress(line)
+		}
+	}
+	if err := scanner.Err(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		return err
+	}
+	return <-done
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "Error:", err)
+	os.Exit(1)
+}
