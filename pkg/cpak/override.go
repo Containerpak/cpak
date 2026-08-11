@@ -77,7 +77,7 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	}
 
 	if o.SocketAtSpiBus {
-		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus")
+		mounts = append(mounts, atSpiSocketPaths(curUid)...)
 	}
 	if o.SocketBluetooth {
 		mounts = append(mounts, "/run/dbus/system_bus_socket")
@@ -180,6 +180,26 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	// mounts = append(mounts, foundMounts...)
 
 	return uniqueStrings(mounts), uniqueStrings(shims)
+}
+
+func atSpiSocketPaths(uid string) []string {
+	base := "/run/user/" + uid + "/at-spi"
+	paths := []string{}
+	if address := strings.TrimPrefix(os.Getenv("AT_SPI_BUS_ADDRESS"), "unix:"); address != "" {
+		for _, option := range strings.Split(address, ",") {
+			path := strings.TrimPrefix(option, "path=")
+			if path != option && filepath.Clean(path) == path && strings.HasPrefix(path, base+"/") {
+				paths = append(paths, path)
+			}
+		}
+	}
+	if discovered, err := filepath.Glob(base + "/bus*"); err == nil {
+		paths = append(paths, discovered...)
+	}
+	if len(paths) == 0 {
+		paths = append(paths, base+"/bus")
+	}
+	return uniqueStrings(paths)
 }
 
 func uniqueStrings(values []string) []string {

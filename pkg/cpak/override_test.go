@@ -7,6 +7,7 @@ package cpak
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,6 +26,28 @@ func TestBluetoothUsesOneSystemBusMount(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("system bus mount count: %d", count)
+	}
+}
+
+func TestAtSpiUsesSessionAddress(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	want := "/run/user/" + uid + "/at-spi/bus_9"
+	t.Setenv("AT_SPI_BUS_ADDRESS", "unix:path="+want+",guid=test")
+
+	mounts, _ := GetOverrideMounts(types.Override{SocketAtSpiBus: true})
+	if !slicesContain(mounts, want) {
+		t.Fatalf("AT-SPI mounts %v do not contain %s", mounts, want)
+	}
+}
+
+func TestAtSpiRejectsAddressOutsideRuntimeDirectory(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	t.Setenv("AT_SPI_BUS_ADDRESS", "unix:path=/tmp/foreign-at-spi")
+
+	for _, path := range atSpiSocketPaths(uid) {
+		if path == "/tmp/foreign-at-spi" {
+			t.Fatalf("accepted AT-SPI path outside the user runtime directory")
+		}
 	}
 }
 
