@@ -6,6 +6,7 @@
 package cpak
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -277,6 +278,9 @@ func (c *Cpak) createExports(app types.Application) (err error) {
 			return exportErr
 		}
 	}
+	if err = removeLegacyDesktopExports(app); err != nil {
+		return err
+	}
 
 	for _, binary := range app.ParsedBinaries {
 		err = c.exportBinary(app, binary)
@@ -315,11 +319,11 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 		return fmt.Errorf("desktop entry %s not found under %s", entryBase, rootFs)
 	}
 
-	desktopDir := filepath.Join(home, ".local", "share", "applications", app.CpakId)
+	desktopDir := filepath.Join(home, ".local", "share", "applications")
 	if err := os.MkdirAll(desktopDir, 0755); err != nil {
 		return err
 	}
-	desktopDest := filepath.Join(desktopDir, entryBase)
+	desktopDest := desktopEntryExportPath(app, entryBase)
 
 	data, err := os.ReadFile(originalPath)
 	if err != nil {
@@ -334,29 +338,27 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 			break
 		}
 	}
-	if iconName == "" {
-		return nil
-	}
-
 	var absIconPath string
-	for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
-		layer := app.ParsedLayers[i]
-		layerDir := c.GetInStoreDir("layers", layer)
-		if iconPath := findIcon(layerDir, iconName); iconPath != "" {
-			absIconPath = iconPath
-			break
+	if iconName != "" {
+		for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
+			layer := app.ParsedLayers[i]
+			layerDir := c.GetInStoreDir("layers", layer)
+			if iconPath := findIcon(layerDir, iconName); iconPath != "" {
+				absIconPath = iconPath
+				break
+			}
 		}
-	}
 
-	if absIconPath == "" && filepath.IsAbs(iconName) {
-		if _, err := os.Stat(iconName); err == nil {
-			absIconPath = iconName
+		if absIconPath == "" && filepath.IsAbs(iconName) {
+			if _, err := os.Stat(iconName); err == nil {
+				absIconPath = iconName
+			}
 		}
 	}
 
 	if absIconPath != "" {
 		ext := filepath.Ext(absIconPath)
-		iconDest := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", app.CpakId+ext)
+		iconDest := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", applicationExportID(app)+ext)
 		if err := os.MkdirAll(filepath.Dir(iconDest), 0755); err != nil {
 			return err
 		}
@@ -381,6 +383,39 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	}
 	newContent := strings.Join(lines, "\n")
 	return os.WriteFile(desktopDest, []byte(newContent), 0755)
+}
+
+func desktopEntryExportPath(app types.Application, desktopEntry string) string {
+	name := applicationExportID(app) + "-" + filepath.Base(desktopEntry)
+	return filepath.Join(os.Getenv("HOME"), ".local", "share", "applications", name)
+}
+
+func applicationExportID(app types.Application) string {
+	hash := sha256.Sum256([]byte(app.CpakId))
+	return fmt.Sprintf("cpak-%x", hash)
+}
+
+func removeLegacyDesktopExports(app types.Application) error {
+	home := os.Getenv("HOME")
+	path := filepath.Join(home, ".local", "share", "applications", app.CpakId)
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+
+	iconsDir := filepath.Join(home, ".local", "share", "icons")
+	if _, err := os.Stat(iconsDir); os.IsNotExist(err) {
+		return nil
+	}
+	matches, err := filepath.Glob(filepath.Join(iconsDir, app.CpakId+".*"))
+	if err != nil {
+		return err
+	}
+	for _, path := range matches {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func findIcon(layerDir, iconName string) string {
@@ -527,9 +562,14 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 func (c *Cpak) removeExports(app types.Application) error {
 	home := os.Getenv("HOME")
 
-	desktopDir := filepath.Join(home, ".local", "share", "applications", app.CpakId)
-	if err := os.RemoveAll(desktopDir); err != nil {
-		logger.Printf("Warning: could not remove desktop entries dir %s: %v", desktopDir, err)
+	if err := removeLegacyDesktopExports(app); err != nil {
+		logger.Printf("Warning: could not remove legacy desktop entries for %s: %v", app.Name, err)
+	}
+	for _, entry := range app.ParsedDesktopEntries {
+		path := desktopEntryExportPath(app, entry)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			logger.Printf("Warning: could not remove desktop entry %s: %v", path, err)
+		}
 	}
 
 	iconsDir := filepath.Join(home, ".local", "share", "icons")
@@ -537,7 +577,7 @@ func (c *Cpak) removeExports(app types.Application) error {
 	if err == nil {
 		for _, e := range entries {
 			name := e.Name()
-			if strings.HasPrefix(name, app.CpakId+".") {
+			if strings.HasPrefix(name, applicationExportID(app)+".") {
 				path := filepath.Join(iconsDir, name)
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					logger.Printf("Warning: could not remove icon %s: %v", path, err)
@@ -586,16 +626,20 @@ func (c *Cpak) removeStaleExports(old types.Application, updated types.Applicati
 	home := os.Getenv("HOME")
 
 	if old.CpakId != updated.CpakId {
-		desktopDir := filepath.Join(home, ".local", "share", "applications", old.CpakId)
-		if err := os.RemoveAll(desktopDir); err != nil {
+		if err := removeLegacyDesktopExports(old); err != nil {
 			return err
+		}
+		for _, entry := range old.ParsedDesktopEntries {
+			if err := os.Remove(desktopEntryExportPath(old, entry)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 		}
 
 		iconsDir := filepath.Join(home, ".local", "share", "icons")
 		entries, err := os.ReadDir(iconsDir)
 		if err == nil {
 			for _, entry := range entries {
-				if !strings.HasPrefix(entry.Name(), old.CpakId+".") {
+				if !strings.HasPrefix(entry.Name(), applicationExportID(old)+".") {
 					continue
 				}
 				if err := os.Remove(filepath.Join(iconsDir, entry.Name())); err != nil && !os.IsNotExist(err) {
@@ -609,13 +653,15 @@ func (c *Cpak) removeStaleExports(old types.Application, updated types.Applicati
 			keptEntries[filepath.Base(entry)] = true
 		}
 
-		desktopDir := filepath.Join(home, ".local", "share", "applications", old.CpakId)
+		if err := removeLegacyDesktopExports(old); err != nil {
+			return err
+		}
 		for _, entry := range old.ParsedDesktopEntries {
 			name := filepath.Base(entry)
 			if keptEntries[name] {
 				continue
 			}
-			if err := os.Remove(filepath.Join(desktopDir, name)); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(desktopEntryExportPath(old, entry)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}

@@ -866,12 +866,13 @@ func TestRemoveStaleExports(t *testing.T) {
 func TestRemoveStaleExportsForSameInstallation(t *testing.T) {
 	c := newTestCpak(t)
 	cpakID := testCpakId("branch", "main")
-	desktopDir := filepath.Join(os.Getenv("HOME"), ".local", "share", "applications", cpakID)
+	desktopDir := filepath.Join(os.Getenv("HOME"), ".local", "share", "applications")
 	if err := os.MkdirAll(desktopDir, 0755); err != nil {
 		t.Fatalf("failed to create the desktop entries directory: %v", err)
 	}
+	app := types.Application{CpakId: cpakID}
 	for _, name := range []string{"demo.desktop", "gone.desktop"} {
-		if err := os.WriteFile(filepath.Join(desktopDir, name), []byte("[Desktop Entry]\n"), 0644); err != nil {
+		if err := os.WriteFile(desktopEntryExportPath(app, name), []byte("[Desktop Entry]\n"), 0644); err != nil {
 			t.Fatalf("failed to create desktop entry %s: %v", name, err)
 		}
 	}
@@ -890,10 +891,10 @@ func TestRemoveStaleExportsForSameInstallation(t *testing.T) {
 	if err := c.removeStaleExports(old, updated); err != nil {
 		t.Fatalf("removeStaleExports returned an error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(desktopDir, "demo.desktop")); err != nil {
+	if _, err := os.Stat(desktopEntryExportPath(old, "demo.desktop")); err != nil {
 		t.Fatalf("expected the retained desktop entry to remain: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(desktopDir, "gone.desktop")); !os.IsNotExist(err) {
+	if _, err := os.Stat(desktopEntryExportPath(old, "gone.desktop")); !os.IsNotExist(err) {
 		t.Fatalf("expected the removed desktop entry to be deleted")
 	}
 }

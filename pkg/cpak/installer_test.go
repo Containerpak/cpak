@@ -8,6 +8,7 @@ package cpak
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -70,5 +71,58 @@ func TestExportBinaryForwardsFlagArguments(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "@/usr/local/bin/umu-run -- \"$@\"") {
 		t.Fatalf("export does not preserve child flags: %q", content)
+	}
+}
+
+func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
+	c := newTestCpak(t)
+	layer := "desktop-layer"
+	layerDir := c.GetInStoreDir("layers", layer)
+	entry := "/usr/share/applications/example.desktop"
+	entryPath := filepath.Join(layerDir, strings.TrimLeft(entry, "/"))
+	if err := os.MkdirAll(filepath.Dir(entryPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := types.Application{
+		CpakId:               "unsafe/base64=id",
+		Origin:               "github.com/containerpak/example",
+		ParsedDesktopEntries: []string{entry},
+		ParsedLayers:         []string{layer},
+	}
+	legacyDir := filepath.Join(os.Getenv("HOME"), ".local", "share", "applications", app.CpakId)
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacyIcon := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", app.CpakId+".png")
+	if err := os.MkdirAll(filepath.Dir(legacyIcon), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyIcon, []byte("legacy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.createExports(app); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := desktopEntryExportPath(app, entry)
+	if !regexp.MustCompile(`^cpak-[a-f0-9]{64}-example\.desktop$`).MatchString(filepath.Base(destination)) {
+		t.Fatalf("invalid desktop entry ID: %s", filepath.Base(destination))
+	}
+	content, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Exec=cpak run github.com/containerpak/example @/usr/bin/example") {
+		t.Fatalf("desktop entry does not launch through cpak: %q", content)
+	}
+	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+		t.Fatalf("legacy desktop entry directory still exists: %s", legacyDir)
+	}
+	if _, err := os.Stat(legacyIcon); !os.IsNotExist(err) {
+		t.Fatalf("legacy icon still exists: %s", legacyIcon)
 	}
 }
