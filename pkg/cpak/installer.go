@@ -301,9 +301,8 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
 		layer := app.ParsedLayers[i]
 		layerDir := c.GetInStoreDir("layers", layer)
-		cand := filepath.Clean(layerDir + iconName)
-		if _, err := os.Stat(cand); err == nil {
-			absIconPath = cand
+		if iconPath := findIcon(layerDir, iconName); iconPath != "" {
+			absIconPath = iconPath
 			break
 		}
 	}
@@ -341,6 +340,45 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	}
 	newContent := strings.Join(lines, "\n")
 	return os.WriteFile(desktopDest, []byte(newContent), 0755)
+}
+
+func findIcon(layerDir, iconName string) string {
+	if filepath.IsAbs(iconName) {
+		candidate := filepath.Join(layerDir, iconName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		return ""
+	}
+
+	var iconPath string
+	iconScore := -1
+	_ = filepath.Walk(layerDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		name := info.Name()
+		if name != iconName && strings.TrimSuffix(name, filepath.Ext(name)) != iconName {
+			return nil
+		}
+
+		score := 0
+		if filepath.Ext(name) == ".svg" {
+			score = 1000000
+		}
+		resolution := filepath.Base(filepath.Dir(filepath.Dir(path)))
+		var width, height int
+		if _, err := fmt.Sscanf(resolution, "%dx%d", &width, &height); err == nil {
+			score += min(width, height)
+		}
+		if score > iconScore {
+			iconPath = path
+			iconScore = score
+		}
+		return nil
+	})
+	return iconPath
 }
 
 func (c *Cpak) exportBinary(app types.Application, binary string) error {
