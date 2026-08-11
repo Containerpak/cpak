@@ -214,6 +214,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 		Config:               config,
 		ParsedOverride:       manifest.Override,
 	}
+	result.PermissionChanges = app.ParsedOverride.Diff(updated.ParsedOverride)
 
 	if sameInstallation(app, updated) {
 		if err = deps.createExports(updated); err != nil {

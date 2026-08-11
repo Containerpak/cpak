@@ -5,6 +5,11 @@
  */
 package types
 
+import (
+	"reflect"
+	"strings"
+)
+
 type Override struct {
 	SocketX11        bool `json:"socketX11" jsonschema:"description=Mount /tmp/.X11-unix/,default=true" flag:"socketX11,bool"`
 	SocketWayland    bool `json:"socketWayland" jsonschema:"description=Mount Wayland socket,default=true" flag:"socketWayland,bool"`
@@ -68,4 +73,22 @@ func NewOverride() Override {
 		AsRoot:              false,
 		AllowedHostCommands: []string{},
 	}
+}
+
+// Diff returns the manifest permission keys whose effective values changed.
+func (o Override) Diff(next Override) []string {
+	current := reflect.ValueOf(o)
+	updated := reflect.ValueOf(next)
+	typeOfOverride := current.Type()
+	changes := []string{}
+	for index := 0; index < current.NumField(); index++ {
+		if reflect.DeepEqual(current.Field(index).Interface(), updated.Field(index).Interface()) {
+			continue
+		}
+		key := strings.Split(typeOfOverride.Field(index).Tag.Get("json"), ",")[0]
+		if key != "" {
+			changes = append(changes, key)
+		}
+	}
+	return changes
 }
