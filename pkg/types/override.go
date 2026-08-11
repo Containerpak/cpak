@@ -90,6 +90,10 @@ type FilesystemPermission struct {
 	Access string `json:"access" jsonschema:"enum=read-only,enum=read-write,description=Filesystem access mode"`
 }
 
+func (p FilesystemPermission) String() string {
+	return p.Path + " (" + p.Access + ")"
+}
+
 // Diff returns the manifest permission keys whose effective values changed.
 func (o Override) Diff(next Override) []string {
 	current := reflect.ValueOf(o)

@@ -41,7 +41,7 @@ func PrintStructKeyVal(structure interface{}) {
 		if field.Kind() == reflect.Slice {
 			logger.Printf("  - %s:", snakeCaseName)
 			for j := 0; j < field.Len(); j++ {
-				logger.Printf("    - %s", field.Index(j).String())
+				logger.Printf("    - %v", field.Index(j).Interface())
 			}
 			continue
 		}

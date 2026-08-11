@@ -30,6 +30,13 @@ func TestFilesystemPermissionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFilesystemPermissionString(t *testing.T) {
+	permission := FilesystemPermission{Path: "home", Access: "read-write"}
+	if got := permission.String(); got != "home (read-write)" {
+		t.Fatalf("String() = %q", got)
+	}
+}
+
 func TestFilesystemPermissionsRejectUnsafePaths(t *testing.T) {
 	for _, permission := range []FilesystemPermission{
 		{Path: "relative", Access: "read-only"},
