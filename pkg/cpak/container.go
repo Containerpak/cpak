@@ -200,7 +200,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 func containerPolicyHash(override types.Override, addons ...types.Application) (string, error) {
 	policy := struct {
-		Override types.Override         `json:"override"`
+		Override types.Override        `json:"override"`
 		Addons   []addonPolicyIdentity `json:"addons,omitempty"`
 	}{
 		Override: override,
@@ -271,6 +271,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--idle-time", strconv.Itoa(app.IdleTime))
 	if override.FsHost {
 		cmds = append(cmds, "--mount-host-root")
+	}
+	if override.DeviceDri || override.DeviceAll {
+		cmds = append(cmds, "--nvidia")
 	}
 
 	// Mount the main cpak binary into a known location inside the container
