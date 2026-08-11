@@ -113,7 +113,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 
 	existingApp, _ := c.getStoredApplication(origin, version, branch, commit, release)
 	if existingApp.CpakId != "" {
-		logger.Println("application already installed, perform an Audit if this application is not working as expected")
+		logger.Printf("%s is already installed from %s; run an audit if it is not working as expected", manifest.Name, origin)
 		return
 	}
 
