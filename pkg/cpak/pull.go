@@ -193,7 +193,7 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 			BarEnd:        "",
 		}),
 		// the following add a new line after the progress bar
-		progressbar.OptionSetWriter(io.MultiWriter(os.Stderr, os.Stderr)),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetDescription("Downloading "+layerHash),
 		progressbar.OptionOnCompletion(func() {
 			fmt.Fprint(os.Stderr, "\n")
