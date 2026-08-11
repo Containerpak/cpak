@@ -167,6 +167,10 @@ host commands are controlled by the manifest and user overrides. `hrun` exposes
 only explicitly allowed host commands and validates the peer process before
 execution.
 
+Desktop notifications and external URIs use the system broker instead. It is
+enabled with the `notification` and `openURI` permissions and exposes only the
+matching shim. The application never receives the host D-Bus socket or command.
+
 Resource limits use delegated cgroup v2 controllers when available. Hosts
 without a compatible cgroup manager can run applications without limits; a
 requested limit fails with a direct diagnostic instead of being ignored.

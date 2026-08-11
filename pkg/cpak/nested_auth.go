@@ -128,6 +128,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		DeviceUsb:           parent.DeviceUsb && child.DeviceUsb,
 		DeviceAll:           parent.DeviceAll && child.DeviceAll,
 		Notification:        parent.Notification && child.Notification,
+		OpenURI:             parent.OpenURI && child.OpenURI,
 		Filesystem:          intersectFilesystem(parent.Filesystem, child.Filesystem),
 		FsHost:              parent.FsHost && child.FsHost,
 		FsHostEtc:           parent.FsHostEtc && child.FsHostEtc,

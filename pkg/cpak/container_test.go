@@ -178,15 +178,10 @@ func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 }
 
 func TestEffectiveHostCommandsAreExplicitAndDeduplicated(t *testing.T) {
-	previousLookup := lookupHostCommand
-	lookupHostCommand = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	t.Cleanup(func() { lookupHostCommand = previousLookup })
-
 	commands := effectiveHostCommands(types.Override{
-		Notification:        true,
 		AllowedHostCommands: []string{"xdg-open", "xdg-open"},
 	})
-	if got := strings.Join(commands, ","); got != "xdg-open,notify-send" {
+	if got := strings.Join(commands, ","); got != "xdg-open" {
 		t.Fatalf("unexpected host commands: %s", got)
 	}
 	if commands := effectiveHostCommands(types.Override{}); len(commands) != 0 {
@@ -194,17 +189,65 @@ func TestEffectiveHostCommandsAreExplicitAndDeduplicated(t *testing.T) {
 	}
 }
 
-func TestEffectiveHostCommandsSkipUnavailableOptionalBridge(t *testing.T) {
-	previousLookup := lookupHostCommand
-	lookupHostCommand = func(string) (string, error) { return "", os.ErrNotExist }
-	t.Cleanup(func() { lookupHostCommand = previousLookup })
+func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T) {
+	app := types.Application{Config: `{"config":{}}`}
+	container := types.Container{
+		CpakId:                 "container-id",
+		SystemBrokerSocketPath: "/tmp/system-broker.sock",
+	}
+	env, err := containerEnvironment(app, container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"CPAK_SYSTEM_BROKER_SOCKET=" + systemBrokerSocketTarget,
+		"CPAK_SYSTEM_BROKER_TOKEN_FILE=" + systemBrokerTokenTarget,
+	} {
+		if !slicesContain(env, value) {
+			t.Fatalf("missing %q in %v", value, env)
+		}
+	}
+}
 
-	commands := effectiveHostCommands(types.Override{
-		Notification:        true,
-		AllowedHostCommands: []string{"xdg-open"},
-	})
-	if got := strings.Join(commands, ","); got != "xdg-open" {
-		t.Fatalf("unexpected host commands: %s", got)
+func TestSystemBrokerRuntimeUsesPrivateDirectory(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	socketPath, tokenPath, err := createSystemBrokerRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := types.Container{SystemBrokerSocketPath: socketPath, SystemBrokerTokenPath: tokenPath}
+	t.Cleanup(func() { cleanupSystemBrokerRuntime(container) })
+	if filepath.Dir(socketPath) != filepath.Dir(tokenPath) || filepath.Dir(filepath.Dir(socketPath)) != runtimeDirectory {
+		t.Fatalf("system broker paths escaped the runtime directory: %s %s", socketPath, tokenPath)
+	}
+	info, err := os.Stat(filepath.Dir(socketPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Fatalf("system broker runtime permissions: %o", info.Mode().Perm())
+	}
+}
+
+func TestSystemBrokerTokenCannotBeReplaced(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "token")
+	if err := writeSystemBrokerToken(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSystemBrokerToken(path); err == nil {
+		t.Fatal("existing system broker token was replaced")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("system broker token permissions: %o", info.Mode().Perm())
 	}
 }
 

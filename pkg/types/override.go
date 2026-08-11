@@ -33,6 +33,7 @@ type Override struct {
 	DeviceAll   bool `json:"deviceAll" jsonschema:"description=Expose all /dev,default=false" flag:"deviceAll,bool"`
 
 	Notification bool `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
+	OpenURI      bool `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
 
 	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions"`
 

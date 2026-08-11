@@ -39,6 +39,15 @@ type Container struct {
 	// HostExecSocketPath is the path to the Unix domain socket used by the hostexec server/client.
 	HostExecSocketPath string `json:"host_exec_socket_path"`
 
+	// SystemBrokerPid is the PID of the policy-gated system integration broker.
+	SystemBrokerPid int `json:"system_broker_pid"`
+
+	// SystemBrokerSocketPath is the broker socket mounted into the container.
+	SystemBrokerSocketPath string `json:"system_broker_socket_path"`
+
+	// SystemBrokerTokenPath is a private capability file mounted read-only into the container.
+	SystemBrokerTokenPath string `json:"system_broker_token_path"`
+
 	// ExecSocketPath is the host path used to submit commands to the container init.
 	ExecSocketPath string `json:"exec_socket_path"`
 

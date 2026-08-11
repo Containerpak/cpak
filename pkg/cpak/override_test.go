@@ -90,6 +90,16 @@ func TestBluetoothRequiresSharedNetwork(t *testing.T) {
 	}
 }
 
+func TestSystemBrokerOperationsAreExplicit(t *testing.T) {
+	operations := systemBrokerOperations(types.Override{Notification: true, OpenURI: true})
+	if !reflect.DeepEqual(operations, []string{"notify-send", "xdg-open"}) {
+		t.Fatalf("system broker operations: %v", operations)
+	}
+	if commands := effectiveHostCommands(types.Override{Notification: true}); len(commands) != 0 {
+		t.Fatalf("notifications still expose host commands: %v", commands)
+	}
+}
+
 func validManifestForTest() *types.CpakManifest {
 	return &types.CpakManifest{
 		ManifestVersion: "2.0",

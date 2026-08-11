@@ -29,6 +29,7 @@ import (
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
 const hostExecShimPath = "/usr/local/bin/cpak-hostexec-shim"
+const systemBrokerShimPath = "/usr/local/bin/cpak-system-broker-shim"
 
 type SpawnCmd struct {
 	Verbose        bool     `cli:"verbose,v" help:"enable verbose output"`
@@ -44,6 +45,7 @@ type SpawnCmd struct {
 	Filesystem     []string `cli:"filesystem" help:"encoded filesystem permission"`
 	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
 	MountShims     []string `cli:"mount-shims,M" help:"set the mount shims"`
+	SystemShims    []string `cli:"system-shims" help:"set the system integration shims"`
 	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
 	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
@@ -146,6 +148,11 @@ func (c *SpawnCmd) Run() error {
 		c.spawnVerbose("Hostexec shim script and symlinks created.")
 	} else {
 		c.spawnVerbose("Skipping hostexec shim creation (no allowed commands or socket path).")
+	}
+	if len(c.SystemShims) > 0 {
+		if err := c.createSystemBrokerShimAndLinks(c.Rootfs, c.SystemShims); err != nil {
+			return err
+		}
 	}
 
 	err = c.createCpakFile(c.AppId, c.Rootfs)
@@ -415,7 +422,6 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		}
 		grants = append(grants, sandbox.PathGrant{Path: hostExecSocketPath})
 	}
-
 	return grants, nil
 }
 
@@ -922,5 +928,37 @@ func (c *SpawnCmd) createHostExecShimAndLinks(rootFs string, allowedCmds []strin
 		}
 	}
 
+	return nil
+}
+
+func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string) error {
+	shimFilePath, err := prepareRootfsFile(rootFs, systemBrokerShimPath)
+	if err != nil {
+		return fmt.Errorf("prepare system broker shim: %w", err)
+	}
+	content, err := cpak.RenderSystemBrokerShim()
+	if err != nil {
+		return fmt.Errorf("render system broker shim: %w", err)
+	}
+	if err := os.WriteFile(shimFilePath, content, 0755); err != nil {
+		return fmt.Errorf("write system broker shim: %w", err)
+	}
+	for _, name := range shims {
+		if name != "notify-send" && name != "xdg-open" {
+			return fmt.Errorf("invalid system broker shim: %s", name)
+		}
+		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/local/bin", name))
+		if prepareErr != nil {
+			return fmt.Errorf("prepare system broker link %s: %w", name, prepareErr)
+		}
+		relative, err := filepath.Rel(filepath.Dir(linkPath), shimFilePath)
+		if err != nil {
+			return fmt.Errorf("calculate system broker link %s: %w", name, err)
+		}
+		_ = os.Remove(linkPath)
+		if err := os.Symlink(relative, linkPath); err != nil {
+			return fmt.Errorf("create system broker link %s: %w", name, err)
+		}
+	}
 	return nil
 }

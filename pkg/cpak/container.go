@@ -6,7 +6,9 @@
 package cpak
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -151,9 +153,6 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
 
 	hostCommands := effectiveHostCommands(override)
-	if override.Notification && !hostCommandAvailable("notify-send") {
-		logger.Println("Notification bridge unavailable: notify-send is not installed on the host")
-	}
 	if len(hostCommands) > 0 {
 		container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, hostCommands)
 		if err != nil {
@@ -167,11 +166,40 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	} else {
 		container.HostExecSocketPath = ""
 	}
+	if len(systemBrokerOperations(override)) > 0 {
+		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime()
+		if err != nil {
+			stopHostExecServer(container.HostExecPid)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
+		if err = writeSystemBrokerToken(container.SystemBrokerTokenPath); err != nil {
+			stopHostExecServer(container.HostExecPid)
+			cleanupSystemBrokerRuntime(container)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
+		container.SystemBrokerPid, err = c.startSystemBrokerProcess(container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, filepath.Join(container.StatePath, "system-broker.log"), override)
+		if err != nil {
+			stopHostExecServer(container.HostExecPid)
+			cleanupSystemBrokerRuntime(container)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, fmt.Errorf("failed to start system broker: %w", err)
+		}
+	} else {
+		container.SystemBrokerSocketPath = ""
+		container.SystemBrokerTokenPath = ""
+	}
 
 	err = store.NewContainer(container)
 	if err != nil {
 		stopHostExecServer(container.HostExecPid)
+		stopSystemBroker(container.SystemBrokerPid)
 		os.Remove(container.HostExecSocketPath)
+		cleanupSystemBrokerRuntime(container)
 		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 		os.RemoveAll(container.StatePath)
 		return types.Container{}, err
@@ -303,6 +331,12 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if container.HostExecSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 	}
+	if container.SystemBrokerSocketPath != "" {
+		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
+		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_TOKEN_FILE="+systemBrokerTokenTarget)
+		cmds = append(cmds, "--extra-links", container.SystemBrokerSocketPath+":"+systemBrokerSocketTarget)
+		cmds = append(cmds, "--extra-links", container.SystemBrokerTokenPath+":"+systemBrokerTokenTarget)
+	}
 	// Join allowed commands into a single string (e.g., colon-separated) for the env var
 	allowedCmdsStr := strings.Join(effectiveHostCommands(override), ":")
 	if allowedCmdsStr != "" {
@@ -322,6 +356,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	for _, shim := range overrideShims {
 		cmds = append(cmds, "--mount-shims", shim)
+	}
+	for _, shim := range systemBrokerOperations(override) {
+		cmds = append(cmds, "--system-shims", shim)
 	}
 
 	cmds = append(cmds, "--env", "PATH="+buildContainerPath(config.Config.Env))
@@ -560,6 +597,10 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 	envVars = append(envVars, resolvedOverride(app).Env...)
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
+	if container.SystemBrokerSocketPath != "" {
+		envVars = append(envVars, "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
+		envVars = append(envVars, "CPAK_SYSTEM_BROKER_TOKEN_FILE="+systemBrokerTokenTarget)
+	}
 	return envVars, nil
 }
 
@@ -649,6 +690,8 @@ func containerProcessRunning(container types.Container) bool {
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	// Stop hostexec server first
 	stopHostExecServer(container.HostExecPid)
+	stopSystemBroker(container.SystemBrokerPid)
+	cleanupSystemBrokerRuntime(container)
 	cleanupCgroup(container.CpakId, container.CgroupPath)
 
 	// we don't care about the error here, we just want to make sure that
@@ -814,5 +857,113 @@ func stopHostExecServer(pid int) {
 		}
 	} else {
 		logger.Printf("Hostexec server process %d not found (already stopped?).", pid)
+	}
+}
+
+const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
+const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
+
+func createSystemBrokerRuntime() (string, string, error) {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if !privateRuntimeDirectory(base) {
+		base = os.TempDir()
+	}
+	directory, err := os.MkdirTemp(base, "cpak-broker-")
+	if err != nil {
+		return "", "", fmt.Errorf("create system broker runtime: %w", err)
+	}
+	if err := os.Chmod(directory, 0700); err != nil {
+		_ = os.Remove(directory)
+		return "", "", fmt.Errorf("restrict system broker runtime: %w", err)
+	}
+	return filepath.Join(directory, "broker.sock"), filepath.Join(directory, "token"), nil
+}
+
+func privateRuntimeDirectory(path string) bool {
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Getuid())
+}
+
+func cleanupSystemBrokerRuntime(container types.Container) {
+	if container.SystemBrokerSocketPath != "" {
+		_ = os.Remove(container.SystemBrokerSocketPath)
+	}
+	if container.SystemBrokerTokenPath != "" {
+		_ = os.Remove(container.SystemBrokerTokenPath)
+	}
+	if container.SystemBrokerSocketPath != "" {
+		_ = os.Remove(filepath.Dir(container.SystemBrokerSocketPath))
+	}
+}
+
+func writeSystemBrokerToken(path string) error {
+	data := make([]byte, 32)
+	if _, err := rand.Read(data); err != nil {
+		return fmt.Errorf("generate system broker token: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("create system broker token: %w", err)
+	}
+	if _, err = file.WriteString(hex.EncodeToString(data)); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write system broker token: %w", err)
+	}
+	if err = file.Close(); err != nil {
+		return fmt.Errorf("write system broker token: %w", err)
+	}
+	return nil
+}
+
+func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath string, override types.Override) (int, error) {
+	cpakBinary, err := getCpakBinary()
+	if err != nil {
+		return 0, fmt.Errorf("cannot find cpak binary for system broker: %w", err)
+	}
+	args := []string{"system-broker-server", "--socket-path", socketPath, "--token-file", tokenPath}
+	if override.Notification {
+		args = append(args, "--notify")
+	}
+	if override.OpenURI {
+		args = append(args, "--open-uri")
+	}
+	log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return 0, fmt.Errorf("open system broker log: %w", err)
+	}
+	defer log.Close()
+	command := exec.Command(cpakBinary, args...)
+	command.Stdout = log
+	command.Stderr = log
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := command.Start(); err != nil {
+		return 0, fmt.Errorf("start system broker: %w", err)
+	}
+	pid := command.Process.Pid
+	if err := command.Process.Release(); err != nil {
+		stopSystemBroker(pid)
+		return 0, fmt.Errorf("release system broker process: %w", err)
+	}
+	if err := waitForSocket(socketPath, socketWaitTimeout); err != nil {
+		stopSystemBroker(pid)
+		return 0, fmt.Errorf("system broker did not become ready: %w", err)
+	}
+	return pid, nil
+}
+
+func stopSystemBroker(pid int) {
+	if pid == 0 {
+		return
+	}
+	process, err := os.FindProcess(pid)
+	if err == nil {
+		_ = process.Signal(syscall.SIGTERM)
 	}
 }

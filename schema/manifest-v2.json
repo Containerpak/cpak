@@ -157,6 +157,11 @@
           "description": "Enable desktop notifications",
           "default": false
         },
+        "openURI": {
+          "type": "boolean",
+          "description": "Allow opening external URIs",
+          "default": false
+        },
         "filesystem": {
           "items": {
             "$ref": "#/$defs/FilesystemPermission"
@@ -238,6 +243,7 @@
         "deviceUsb",
         "deviceAll",
         "notification",
+        "openURI",
         "network",
         "process",
         "memoryMaxMB",
