@@ -83,7 +83,7 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(entryPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example\nTryExec=/usr/bin/example\n"), 0644); err != nil {
+	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example --test %U\nTryExec=/usr/bin/example\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "Exec=cpak run github.com/containerpak/example @/usr/bin/example") {
+	if !strings.Contains(string(content), "Exec=cpak run github.com/containerpak/example @/usr/bin/example -- --test %U") {
 		t.Fatalf("desktop entry does not launch through cpak: %q", content)
 	}
 	if !strings.Contains(string(content), "TryExec=cpak") {
@@ -127,5 +127,13 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	}
 	if _, err := os.Stat(legacyIcon); !os.IsNotExist(err) {
 		t.Fatalf("legacy icon still exists: %s", legacyIcon)
+	}
+}
+
+func TestRewriteDesktopExecPreservesQuotedBinary(t *testing.T) {
+	got := rewriteDesktopExec("github.com/containerpak/example", `"/opt/Example App/example" --new-window %U`)
+	want := `Exec=cpak run github.com/containerpak/example "@/opt/Example App/example" -- --new-window %U`
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }

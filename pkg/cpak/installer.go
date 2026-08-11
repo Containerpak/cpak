@@ -374,8 +374,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "Exec=") {
-			cmdPart := strings.TrimPrefix(line, "Exec=")
-			lines[i] = "Exec=cpak run " + app.Origin + " @" + cmdPart
+			lines[i] = rewriteDesktopExec(app.Origin, strings.TrimPrefix(line, "Exec="))
 		}
 		if strings.HasPrefix(line, "TryExec=") {
 			lines[i] = "TryExec=cpak"
@@ -386,6 +385,42 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	}
 	newContent := strings.Join(lines, "\n")
 	return os.WriteFile(desktopDest, []byte(newContent), 0755)
+}
+
+func rewriteDesktopExec(origin, command string) string {
+	command = strings.TrimSpace(command)
+	end := len(command)
+	quoted := false
+	escaped := false
+	for i := 0; i < len(command); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch command[i] {
+		case '\\':
+			escaped = true
+		case '"':
+			quoted = !quoted
+		case ' ', '\t':
+			if !quoted {
+				end = i
+				i = len(command)
+			}
+		}
+	}
+
+	binary := command[:end]
+	if strings.HasPrefix(binary, "\"") {
+		binary = "\"@" + strings.TrimPrefix(binary, "\"")
+	} else {
+		binary = "@" + binary
+	}
+	rewritten := "Exec=cpak run " + origin + " " + binary
+	if arguments := strings.TrimSpace(command[end:]); arguments != "" {
+		rewritten += " -- " + arguments
+	}
+	return rewritten
 }
 
 func desktopEntryExportPath(app types.Application, desktopEntry string) string {
