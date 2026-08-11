@@ -251,9 +251,9 @@ func seccompFilter(architecture uint32, allowUserNamespaces bool) []unix.SockFil
 			unix.SockFilter{Code: unix.BPF_ALU | unix.BPF_AND | unix.BPF_K, K: uint32(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET | syscall.CLONE_NEWCGROUP)},
 			bpfJump(unix.BPF_JEQ, 0, 1, 0),
 			bpfReturn(uint32(unix.SECCOMP_RET_ERRNO|uint32(unix.EPERM))),
-			bpfReturn(unix.SECCOMP_RET_ALLOW),
 		)
 	}
+	filter = append(filter, bpfReturn(unix.SECCOMP_RET_ALLOW))
 	return filter
 }
 

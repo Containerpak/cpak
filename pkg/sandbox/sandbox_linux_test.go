@@ -39,6 +39,20 @@ func TestSeccompAllowsNestedUserNamespacesWhenRequested(t *testing.T) {
 	runSandboxHelper(t, "seccomp-userns", "", "")
 }
 
+func TestSeccompFiltersEndWithAllow(t *testing.T) {
+	architecture, supported := auditArchitecture()
+	if !supported {
+		t.Skip("unsupported audit architecture")
+	}
+	for _, allowUserNamespaces := range []bool{false, true} {
+		filter := seccompFilter(architecture, allowUserNamespaces)
+		last := filter[len(filter)-1]
+		if last.Code != unix.BPF_RET|unix.BPF_K || last.K != unix.SECCOMP_RET_ALLOW {
+			t.Fatalf("allow user namespaces %t: final instruction does not allow", allowUserNamespaces)
+		}
+	}
+}
+
 func TestLandlockBlocksUnlistedPaths(t *testing.T) {
 	directory := t.TempDir()
 	allowed := filepath.Join(directory, "allowed")
@@ -105,8 +119,8 @@ func TestSandboxHelper(t *testing.T) {
 			}
 			failSandboxHelper(err)
 		}
-		if _, _, errno := unix.Syscall(unix.SYS_UNSHARE, uintptr(syscall.CLONE_NEWUSER), 0, 0); errno != 0 {
-			failSandboxHelper("unshare error: %v", errno)
+		if _, _, errno := unix.Syscall(unix.SYS_UNSHARE, uintptr(syscall.CLONE_NEWUSER), 0, 0); errno == unix.EPERM || errno == unix.ENOSYS {
+			failSandboxHelper("unshare remained filtered: %v", errno)
 		}
 		os.Exit(0)
 	case "landlock":
