@@ -151,6 +151,9 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
 
 	hostCommands := effectiveHostCommands(override)
+	if override.Notification && !hostCommandAvailable("notify-send") {
+		logger.Println("Notification bridge unavailable: notify-send is not installed on the host")
+	}
 	if len(hostCommands) > 0 {
 		container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, hostCommands)
 		if err != nil {
@@ -781,6 +784,13 @@ func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []strin
 	}
 	if err = waitForSocket(socketPath, socketWaitTimeout); err != nil {
 		stopHostExecServer(pid)
+		detail := ""
+		if content, readErr := os.ReadFile(logFile); readErr == nil {
+			detail = strings.TrimSpace(string(content))
+		}
+		if detail != "" {
+			return 0, fmt.Errorf("hostexec server did not become ready: %s: %w", detail, err)
+		}
 		return 0, fmt.Errorf("hostexec server did not become ready: %w", err)
 	}
 	return pid, nil

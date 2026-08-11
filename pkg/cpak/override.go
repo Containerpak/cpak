@@ -9,11 +9,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
+
+var lookupHostCommand = exec.LookPath
+
+func hostCommandAvailable(name string) bool {
+	_, err := lookupHostCommand(name)
+	return err == nil
+}
 
 // Mounts returns the list of paths to be mounted on the new namespace
 // to achieve the desired override.
@@ -75,7 +83,7 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 		mounts = append(mounts, "/run/dbus/system_bus_socket")
 	}
 
-	if o.Notification {
+	if o.Notification && hostCommandAvailable("notify-send") {
 		shims = append(shims, "notify-send")
 	}
 

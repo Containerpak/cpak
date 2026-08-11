@@ -178,6 +178,10 @@ func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 }
 
 func TestEffectiveHostCommandsAreExplicitAndDeduplicated(t *testing.T) {
+	previousLookup := lookupHostCommand
+	lookupHostCommand = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	t.Cleanup(func() { lookupHostCommand = previousLookup })
+
 	commands := effectiveHostCommands(types.Override{
 		Notification:        true,
 		AllowedHostCommands: []string{"xdg-open", "xdg-open"},
@@ -187,6 +191,20 @@ func TestEffectiveHostCommandsAreExplicitAndDeduplicated(t *testing.T) {
 	}
 	if commands := effectiveHostCommands(types.Override{}); len(commands) != 0 {
 		t.Fatalf("empty policy exposed host commands: %v", commands)
+	}
+}
+
+func TestEffectiveHostCommandsSkipUnavailableOptionalBridge(t *testing.T) {
+	previousLookup := lookupHostCommand
+	lookupHostCommand = func(string) (string, error) { return "", os.ErrNotExist }
+	t.Cleanup(func() { lookupHostCommand = previousLookup })
+
+	commands := effectiveHostCommands(types.Override{
+		Notification:        true,
+		AllowedHostCommands: []string{"xdg-open"},
+	})
+	if got := strings.Join(commands, ","); got != "xdg-open" {
+		t.Fatalf("unexpected host commands: %s", got)
 	}
 }
 
