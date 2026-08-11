@@ -67,6 +67,7 @@ type updateStub struct {
 	config        string
 	fetchErr      error
 	pullErr       error
+	imageDigest   string
 	installDepErr error
 	exportErr     error
 	stopErr       error
@@ -110,12 +111,12 @@ func (s *updateStub) deps() updateDeps {
 			}
 			return nil, nil
 		},
-		pull: func(image, cpakImageId string) ([]string, string, error) {
+		pull: func(image, cpakImageId string) ([]string, string, string, error) {
 			s.pulled++
 			if s.pullErr != nil {
-				return nil, "", s.pullErr
+				return nil, "", "", s.pullErr
 			}
-			return s.layers, s.config, nil
+			return s.layers, s.config, s.imageDigest, nil
 		},
 		buildRuntime: func(layers []string, sources []types.RuntimeSource) ([]string, error) {
 			return layers, nil
@@ -164,7 +165,7 @@ func TestUpdateBranchInstallRefreshesRecord(t *testing.T) {
 		Config:         "{}",
 	})
 
-	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}"}
+	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}", imageDigest: "sha256:new"}
 	results, err := c.update(testOrigin, stub.deps())
 	if err != nil {
 		t.Fatalf("update returned an error: %v", err)
@@ -195,6 +196,9 @@ func TestUpdateBranchInstallRefreshesRecord(t *testing.T) {
 	}
 	if len(apps[0].ParsedLayers) != 1 || apps[0].ParsedLayers[0] != "newlayer" {
 		t.Fatalf("expected the new layers to be stored, got %v", apps[0].ParsedLayers)
+	}
+	if apps[0].ImageDigest != "sha256:new" {
+		t.Fatalf("expected the resolved image digest, got %q", apps[0].ImageDigest)
 	}
 }
 

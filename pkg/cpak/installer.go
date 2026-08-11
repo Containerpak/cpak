@@ -99,7 +99,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 	imageIdBase := manifest.Name + ":" + sourceType + ":" + version + ":" + origin
 	cpakImageId := base64.StdEncoding.EncodeToString([]byte(imageIdBase))
 
-	layers, config, err := c.Pull(manifest.Image, cpakImageId)
+	layers, config, imageDigest, err := c.Pull(manifest.Image, cpakImageId)
 	if err != nil {
 		return
 	}
@@ -124,6 +124,8 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,
+		Image:                manifest.Image,
+		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
 	}
 

@@ -27,7 +27,7 @@ import (
 //
 // Note: cpak does not offer a standard containers storage, it uses a custom
 // storage based on the image layers.
-func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfig string, err error) {
+func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfig string, imageDigest string, err error) {
 	err = tools.ValidateImageName(image)
 	if err != nil {
 		return
@@ -38,6 +38,11 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 	if err != nil {
 		return
 	}
+	imageHash, err := img.Digest()
+	if err != nil {
+		return
+	}
+	imageDigest = imageHash.String()
 
 	// getting the image config
 	ociConfigObj, err := img.ConfigFile()

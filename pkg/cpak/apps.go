@@ -65,7 +65,7 @@ type updateDeps struct {
 	latestRelease func(origin string) (string, error)
 	fetchManifest func(origin, branch, release, commit string) (*types.CpakManifest, error)
 	installDeps   func(origin string, manifest *types.CpakManifest) ([]types.Dependency, error)
-	pull          func(image, cpakImageId string) ([]string, string, error)
+	pull          func(image, cpakImageId string) ([]string, string, string, error)
 	buildRuntime  func(layers []string, sources []types.RuntimeSource) ([]string, error)
 	stop          func(app types.Application) error
 	createExports func(app types.Application) error
@@ -186,7 +186,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 	imageIdBase := manifest.Name + ":" + result.SourceType + ":" + version + ":" + app.Origin
 	cpakImageId := base64.StdEncoding.EncodeToString([]byte(imageIdBase))
 
-	layers, config, err := deps.pull(manifest.Image, cpakImageId)
+	layers, config, imageDigest, err := deps.pull(manifest.Image, cpakImageId)
 	if err != nil {
 		return failedUpdate(result, err)
 	}
@@ -212,6 +212,8 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,
+		Image:                manifest.Image,
+		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
 	}
 	result.PermissionChanges = app.ParsedOverride.Diff(updated.ParsedOverride)
@@ -219,6 +221,11 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 	if sameInstallation(app, updated) {
 		if err = deps.createExports(updated); err != nil {
 			return failedUpdate(result, err)
+		}
+		if app.ImageDigest == "" {
+			if err = c.replaceApplication(app, updated); err != nil {
+				return failedUpdate(result, err)
+			}
 		}
 		result.Status = types.UpdateStatusUpToDate
 		return result
@@ -329,6 +336,12 @@ func (c *Cpak) stopApplicationContainers(app types.Application) (err error) {
 // installed, meaning there is nothing to replace.
 func sameInstallation(app types.Application, updated types.Application) bool {
 	if app.CpakId != updated.CpakId || app.Version != updated.Version || app.Config != updated.Config {
+		return false
+	}
+	if app.Image != "" && app.Image != updated.Image {
+		return false
+	}
+	if app.ImageDigest != "" && app.ImageDigest != updated.ImageDigest {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedLayers, updated.ParsedLayers) {

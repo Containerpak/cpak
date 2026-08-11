@@ -56,6 +56,12 @@ type Application struct {
 	// Config is the configuration of the application.
 	Config string `json:"config"`
 
+	// Image is the OCI reference declared by the manifest.
+	Image string `json:"image"`
+
+	// ImageDigest is the resolved immutable OCI image digest.
+	ImageDigest string `json:"image_digest"`
+
 	// Containers is the list of containers created for the application.
 	Containers []Container `json:"containers"`
 
