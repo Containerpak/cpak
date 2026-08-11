@@ -48,7 +48,7 @@ func (c *RemoveCmd) Run() error {
 		branch = "main"
 	}
 
-	err = cp.Remove(remote, branch, c.Release, c.Commit)
+	err = cp.Remove(remote, branch, c.Commit, c.Release)
 	if err != nil {
 		return fmt.Errorf("an error occurred while removing cpak: %s", err)
 	}
