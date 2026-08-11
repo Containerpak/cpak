@@ -46,7 +46,10 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 			return err
 		}
 	}
-	return nil
+	if manifest.Override.SocketBluetooth && !manifest.Override.Network {
+		return errors.New("Bluetooth access requires network namespace sharing")
+	}
+	return ValidateManifest(manifest)
 }
 
 // DecodeManifest parses a manifest without accepting unknown fields.

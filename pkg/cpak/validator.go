@@ -37,7 +37,7 @@ func ValidateManifest(m *types.CpakManifest) error {
 		var sb strings.Builder
 		sb.WriteString("manifest validation failed:\n")
 		for _, desc := range result.Errors() {
-			sb.WriteString("  • ")
+			sb.WriteString("  - ")
 			sb.WriteString(desc.String())
 			sb.WriteByte('\n')
 		}

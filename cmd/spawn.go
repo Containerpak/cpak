@@ -45,6 +45,7 @@ type SpawnCmd struct {
 	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
 	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
+	MountHostRoot  bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
 	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
@@ -105,7 +106,7 @@ func (c *SpawnCmd) Run() error {
 		return c.installRuntimePackages(c.RuntimePackage)
 	}
 
-	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, hostExecSocketPath)
+	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, hostExecSocketPath, c.MountHostRoot)
 	if err != nil {
 		return err
 	}
@@ -249,7 +250,7 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	return nil
 }
 
-func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, hostExecSocketPath string) ([]sandbox.PathGrant, error) {
+func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, hostExecSocketPath string, mountHostRoot bool) ([]sandbox.PathGrant, error) {
 	grants := []sandbox.PathGrant{
 		{Path: "/tmp"},
 		{Path: "/dev"},
@@ -276,6 +277,16 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	}
 	if err = tools.MountBindReadOnly("/sys/", filepath.Join(rootFs, "/sys/"), true); err != nil {
 		return nil, fmt.Errorf("mount:/sys: an error occurred while spawning the namespace: %s", err)
+	}
+	if mountHostRoot {
+		destination := filepath.Join(rootFs, "/run/host")
+		if err = os.MkdirAll(destination, 0755); err != nil {
+			return nil, fmt.Errorf("mkdir:/run/host: %w", err)
+		}
+		if err = tools.MountBindReadOnly("/", destination, true); err != nil {
+			return nil, fmt.Errorf("mount:/run/host: %w", err)
+		}
+		grants = append(grants, sandbox.PathGrant{Path: "/run/host", ReadOnly: true})
 	}
 
 	for _, mount := range overrideMounts {

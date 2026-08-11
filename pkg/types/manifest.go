@@ -18,7 +18,7 @@ type CpakManifest struct {
 	Description string `json:"description" jsonschema:"minLength=1,description=Short application description"`
 
 	// Version is the version of the application.
-	Version string `json:"version" jsonschema:"pattern=^v?[0-9]+(\\.[0-9]+)*(?:[-+][0-9A-Za-z.-]+)?$,description=Semver-like version"`
+	Version string `json:"version,omitempty" jsonschema:"description=Application version"`
 
 	// Image is the image of the application. It is expected to be a valid
 	// OCI image (full image reference).
@@ -28,7 +28,7 @@ type CpakManifest struct {
 	Binaries []string `json:"binaries" jsonschema:"minItems=1,items.pattern=^/,description=Absolute paths to binaries"`
 
 	// DesktopEntries is the list of exported desktop entries of the application.
-	DesktopEntries []string `json:"desktop_entries" jsonschema:"items.pattern=.+\\.desktop$,description=.desktop entry files"`
+	DesktopEntries []string `json:"desktop_entries,omitempty" jsonschema:"items.pattern=.+\\.desktop$,description=.desktop entry files"`
 
 	// Dependencies is the list of dependencies of the application, it is
 	// expected to be a list of origin repositories.

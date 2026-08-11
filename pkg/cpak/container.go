@@ -258,6 +258,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
 	cmds = append(cmds, "--idle-time", strconv.Itoa(app.IdleTime))
+	if override.FsHost {
+		cmds = append(cmds, "--mount-host-root")
+	}
 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"

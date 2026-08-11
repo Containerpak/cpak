@@ -37,9 +37,9 @@ type Override struct {
 	FsHost     bool     `json:"fsHost" jsonschema:"description=Mount host root read-only,default=false" flag:"fsHost,bool"`
 	FsHostEtc  bool     `json:"fsHostEtc" jsonschema:"description=Mount host /etc,default=false" flag:"fsHostEtc,bool"`
 	FsHostHome bool     `json:"fsHostHome" jsonschema:"description=Mount host home directory,default=true" flag:"fsHostHome,bool"`
-	FsExtra    []string `json:"fsExtra" jsonschema:"description=Additional paths to mount,items.pattern=^(?:\\./|\\../|/)?(?:[A-Za-z0-9_\\-\\.]+/)*[A-Za-z0-9_\\-\\.]+$,minItems=0" flag:"fsExtra,strings"`
+	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Additional paths to mount,items.pattern=^(?:\\./|\\../|/)?(?:[A-Za-z0-9_\\-\\.]+/)*[A-Za-z0-9_\\-\\.]+$,minItems=0" flag:"fsExtra,strings"`
 
-	Env     []string `json:"env" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
+	Env     []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
 	Network bool     `json:"network" jsonschema:"description=Enable network namespace,default=true" flag:"network,bool"`
 	Process bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
 
@@ -49,7 +49,7 @@ type Override struct {
 
 	AsRoot bool `json:"asRoot" jsonschema:"description=Run as root inside container,default=false" flag:"asRoot,bool"`
 
-	AllowedHostCommands []string `json:"allowedHostCommands" jsonschema:"description=Host commands allowed via shim,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0" flag:"allowedHostCommands,strings"`
+	AllowedHostCommands []string `json:"allowedHostCommands,omitempty" jsonschema:"description=Host commands allowed via shim,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0" flag:"allowedHostCommands,strings"`
 }
 
 func NewOverride() Override {

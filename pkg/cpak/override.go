@@ -72,6 +72,9 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	if o.SocketAtSpiBus {
 		mounts = append(mounts, "/run/user/"+curUid+"/at-spi/bus")
 	}
+	if o.SocketBluetooth {
+		mounts = append(mounts, "/run/dbus/system_bus_socket")
+	}
 
 	if o.Notification {
 		shims = append(shims, "notify-send")
@@ -119,11 +122,6 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 			mounts = append(mounts, "/dev/input/")
 		}
 	}
-
-	// TODO: currently unsupported
-	// if o.FsHost {
-	// 	mounts = append(mounts, "/")
-	// }
 
 	if o.FsHostEtc {
 		mounts = append(mounts, "/etc/")
@@ -174,7 +172,20 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	// }
 	// mounts = append(mounts, foundMounts...)
 
-	return mounts, shims
+	return uniqueStrings(mounts), uniqueStrings(shims)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 // NewOverride returns a new override with default values.
