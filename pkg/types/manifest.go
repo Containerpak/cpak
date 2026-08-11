@@ -8,7 +8,7 @@ package types
 // CpakManifest is the struct that represents the manifest of an application.
 type CpakManifest struct {
 	// ManifestVersion is the version of the manifest schema (e.g. "1.0").
-	ManifestVersion string `json:"manifest_version" jsonschema:"enum=1.0,description=Manifest schema version"`
+	ManifestVersion string `json:"manifest_version" jsonschema:"enum=1.0,enum=2.0,description=Manifest schema version"`
 
 	// Name is the name of the application.
 	Name string `json:"name" jsonschema:"minLength=1,description=Application name"`
@@ -22,7 +22,7 @@ type CpakManifest struct {
 
 	// Image is the image of the application. It is expected to be a valid
 	// OCI image (full image reference).
-	Image string `json:"image" jsonschema:"pattern=^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9._-]+)?$,description=OCI image reference"`
+	Image string `json:"image" jsonschema:"minLength=1,description=OCI image reference or digest"`
 
 	// Binaries is the list of exported binaries of the application.
 	Binaries []string `json:"binaries" jsonschema:"minItems=1,items.pattern=^/,description=Absolute paths to binaries"`

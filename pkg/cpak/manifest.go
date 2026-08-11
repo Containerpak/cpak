@@ -6,17 +6,26 @@
 package cpak
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 // ValidateManifest validates a manifest file, by ensuring all
 // required fields are present.
 func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
+	if manifest.ManifestVersion == "" {
+		manifest.ManifestVersion = "1.0"
+	}
+	if manifest.ManifestVersion != "1.0" && manifest.ManifestVersion != "2.0" {
+		return fmt.Errorf("unsupported manifest version: %s", manifest.ManifestVersion)
+	}
 	if manifest.Name == "" {
 		return errors.New("name is mandatory and must be populated")
 	}
@@ -25,6 +34,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	}
 	if manifest.Image == "" {
 		return errors.New("image is mandatory and must be populated")
+	}
+	if _, err = name.ParseReference(manifest.Image); err != nil {
+		return fmt.Errorf("image must be a valid OCI reference: %w", err)
 	}
 	if len(manifest.Binaries) == 0 {
 		return errors.New("binaries is mandatory and must be populated")
@@ -35,6 +47,23 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 		}
 	}
 	return nil
+}
+
+func decodeManifest(content []byte) (*types.CpakManifest, error) {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+
+	manifest := &types.CpakManifest{}
+	if err := decoder.Decode(manifest); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("manifest contains multiple JSON values")
+	}
+	if manifest.ManifestVersion == "" {
+		manifest.ManifestVersion = "1.0"
+	}
+	return manifest, nil
 }
 
 // fetchManifest fetches the manifest file from the given origin.
@@ -74,10 +103,9 @@ func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *
 		return nil, fmt.Errorf("no branch, release or commit specified")
 	}
 
-	manifest = &types.CpakManifest{}
-	err = json.Unmarshal(manifestContent, manifest)
+	manifest, err = decodeManifest(manifestContent)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal manifest file: %w", err)
+		return nil, fmt.Errorf("failed to decode manifest file: %w", err)
 	}
 
 	return manifest, nil

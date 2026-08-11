@@ -6,6 +6,7 @@
 package cpak
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -71,11 +72,6 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 // Note: only the layers that are not already present in the storage are
 // downloaded and unpacked.
 func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.Layer) (layers []string, err error) {
-	availableLayers, err := c.GetAvailableLayers()
-	if err != nil {
-		return
-	}
-
 	for _, layer := range layerObjs {
 		layerv1Hash, err := layer.Digest()
 		if err != nil {
@@ -83,16 +79,11 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 		}
 		layerDigest := strings.Split(layerv1Hash.String(), ":")[1]
 
-		found := false
-		for _, a := range availableLayers {
-			if strings.Contains(a, layerDigest) {
-				layers = append(layers, layerDigest)
-				found = true
-				break
-			}
+		available, err := c.layerAvailable(layerDigest)
+		if err != nil {
+			return layers, err
 		}
-
-		if found {
+		if available {
 			logger.Printf("Layer %s already present in the store, skipping..", layerDigest)
 			continue
 		}
@@ -106,6 +97,17 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 	}
 
 	return
+}
+
+func (c *Cpak) layerAvailable(digest string) (bool, error) {
+	info, err := os.Stat(c.GetInStoreDir("layers", digest))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
@@ -154,20 +156,21 @@ func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
 // }
 
 func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err error) {
-	layerInCacheDir := c.GetInCacheDir(digest)
+	if _, err = c.GetInCacheDirMkdir(); err != nil {
+		return err
+	}
+	layerFile, err := os.CreateTemp(c.Options.CachePath, digest+".partial-")
+	if err != nil {
+		return err
+	}
+	layerInCacheDir := layerFile.Name()
+	defer os.Remove(layerInCacheDir)
 	layerContent, err := layer.Compressed()
 	if err != nil {
 		return
 	}
 
 	defer layerContent.Close()
-
-	layerFile, err := os.Create(layerInCacheDir)
-	if err != nil {
-		return
-	}
-
-	defer layerFile.Close()
 
 	layerSize, err := layer.Size()
 	if err != nil {
@@ -192,17 +195,33 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 		}),
 		progressbar.OptionFullWidth(),
 	)
-	writer := io.MultiWriter(layerFile, bar)
+	hash := sha256.New()
+	writer := io.MultiWriter(layerFile, hash, bar)
 
 	_, err = io.Copy(writer, layerContent)
 	if err != nil {
 		return
 	}
+	if err = layerFile.Close(); err != nil {
+		return
+	}
+	if fmt.Sprintf("%x", hash.Sum(nil)) != digest {
+		return fmt.Errorf("layer digest mismatch for %s", digest)
+	}
 
-	layerInStoreDir, err := c.GetInStoreDirMkdir("layers", digest)
+	layersDir, err := c.GetInStoreDirMkdir("layers")
 	if err != nil {
 		return
 	}
+	layerInStoreDir, err := os.MkdirTemp(layersDir, digest+".partial-")
+	if err != nil {
+		return
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(layerInStoreDir)
+		}
+	}()
 
 	err = tools.TarUnpack(layerInCacheDir, layerInStoreDir)
 	if err != nil {
@@ -244,6 +263,10 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 
 	err = cmd.Run()
 	if err != nil {
+		return
+	}
+
+	if err = os.Rename(layerInStoreDir, c.GetInStoreDir("layers", digest)); err != nil {
 		return
 	}
 
