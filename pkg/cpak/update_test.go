@@ -225,6 +225,36 @@ func TestUpdateBranchInstallUpToDate(t *testing.T) {
 	}
 }
 
+func TestUpdateBranchInstallRefreshesOverride(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:         testCpakId("branch", "main"),
+		Name:           "demo",
+		Version:        "main",
+		Branch:         "main",
+		Origin:         testOrigin,
+		ParsedLayers:   []string{"layer"},
+		ParsedBinaries: []string{"/usr/bin/demo"},
+		Config:         "{}",
+	})
+
+	manifest := newTestManifest()
+	manifest.Override.FsExtra = []string{"/etc/machine-id"}
+	stub := &updateStub{manifest: manifest, layers: []string{"layer"}, config: "{}"}
+	results, err := c.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if results[0].Status != types.UpdateStatusUpdated {
+		t.Fatalf("expected status updated, got %q (%s)", results[0].Status, results[0].Reason)
+	}
+
+	apps := storedApplications(t, c)
+	if len(apps) != 1 || len(apps[0].ParsedOverride.FsExtra) != 1 || apps[0].ParsedOverride.FsExtra[0] != "/etc/machine-id" {
+		t.Fatalf("expected the refreshed override, got %+v", apps)
+	}
+}
+
 func TestUpdateCommitInstallIsPinned(t *testing.T) {
 	cases := []struct {
 		name string
