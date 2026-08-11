@@ -82,6 +82,28 @@ func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 	}
 }
 
+func TestCreateSystemBrokerShimIsExecutable(t *testing.T) {
+	rootfs := t.TempDir()
+	command := &SpawnCmd{}
+	if err := command.createSystemBrokerShimAndLinks(rootfs, []string{"notify-send", "xdg-open"}); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(rootfs, systemBrokerShimPath)
+	info, err := os.Stat(shim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("shim mode: got %o, want 755", info.Mode().Perm())
+	}
+	for _, name := range []string{"notify-send", "xdg-open"} {
+		link := filepath.Join(rootfs, "usr/local/bin", name)
+		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("system broker link %s: %v", name, err)
+		}
+	}
+}
+
 func TestRuntimePackageCommandUsesGuestDpkg(t *testing.T) {
 	command := runtimePackageCommand([]string{"/run/cpak/runtime/demo.deb"})
 	if command.Path != "/usr/bin/dpkg" {

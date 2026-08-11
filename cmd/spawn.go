@@ -949,6 +949,9 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 	if err := os.WriteFile(shimFilePath, content, 0755); err != nil {
 		return fmt.Errorf("write system broker shim: %w", err)
 	}
+	if err := os.Chmod(shimFilePath, 0755); err != nil {
+		return fmt.Errorf("chmod system broker shim: %w", err)
+	}
 	for _, name := range shims {
 		if name != "notify-send" && name != "xdg-open" {
 			return fmt.Errorf("invalid system broker shim: %s", name)
