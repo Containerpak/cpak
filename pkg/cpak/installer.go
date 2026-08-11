@@ -400,12 +400,16 @@ func findIcon(layerDir, iconName string) string {
 		}
 
 		name := info.Name()
+		extension := strings.ToLower(filepath.Ext(name))
+		if extension != ".png" && extension != ".svg" && extension != ".xpm" {
+			return nil
+		}
 		if name != iconName && strings.TrimSuffix(name, filepath.Ext(name)) != iconName {
 			return nil
 		}
 
 		score := 0
-		if filepath.Ext(name) == ".svg" {
+		if extension == ".svg" {
 			score = 1000000
 		}
 		resolution := filepath.Base(filepath.Dir(filepath.Dir(path)))

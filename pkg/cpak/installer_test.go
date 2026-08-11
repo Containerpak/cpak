@@ -32,6 +32,24 @@ func TestFindIconPrefersScalableIcon(t *testing.T) {
 	}
 }
 
+func TestFindIconIgnoresFilesThatAreNotIcons(t *testing.T) {
+	layerDir := t.TempDir()
+	sourcesPath := filepath.Join(layerDir, "etc/apt/sources.list.d/vscode.sources")
+	iconPath := filepath.Join(layerDir, "usr/share/pixmaps/vscode.png")
+	for _, path := range []string{sourcesPath, iconPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := findIcon(layerDir, "vscode"); got != iconPath {
+		t.Fatalf("expected image %q, got %q", iconPath, got)
+	}
+}
+
 func TestExportBinaryForwardsFlagArguments(t *testing.T) {
 	c := newTestCpak(t)
 	app := types.Application{Origin: "github.com/containerpak/umu"}
