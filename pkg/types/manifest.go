@@ -29,6 +29,9 @@ type CpakManifest struct {
 	// OCI image (full image reference).
 	Image string `json:"image" jsonschema:"minLength=1,description=OCI image reference or digest"`
 
+	// ImageRef selects an OCI tag derived from the requested Git source.
+	ImageRef string `json:"image_ref,omitempty" jsonschema:"enum=source,description=Track the selected Git branch release or commit"`
+
 	// Binaries is the list of exported binaries of the application.
 	Binaries []string `json:"binaries" jsonschema:"minItems=1,items.pattern=^/,description=Absolute paths to binaries"`
 

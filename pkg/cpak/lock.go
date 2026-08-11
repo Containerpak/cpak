@@ -210,9 +210,13 @@ func lockPackage(origin, branch, release, commit string, manifest *types.CpakMan
 	if err != nil {
 		return types.LockedPackage{}, err
 	}
-	resolved, err := resolveImage(manifest.Image)
+	image, err := resolveManifestImage(manifest, branch, release, commit)
 	if err != nil {
-		return types.LockedPackage{}, fmt.Errorf("resolve image %s: %w", manifest.Image, err)
+		return types.LockedPackage{}, fmt.Errorf("resolve image reference: %w", err)
+	}
+	resolved, err := resolveImage(image)
+	if err != nil {
+		return types.LockedPackage{}, fmt.Errorf("resolve image %s: %w", image, err)
 	}
 	return types.LockedPackage{
 		Origin:         origin,

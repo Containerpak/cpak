@@ -287,8 +287,12 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 	}
 	imageIdBase := manifest.Name + ":" + result.SourceType + ":" + version + ":" + app.Origin
 	cpakImageId := base64.StdEncoding.EncodeToString([]byte(imageIdBase))
+	image, err := resolveManifestImage(manifest, branch, release, "")
+	if err != nil {
+		return failedUpdate(result, err)
+	}
 
-	layers, config, imageDigest, err := deps.pull(manifest.Image, cpakImageId)
+	layers, config, imageDigest, err := deps.pull(image, cpakImageId)
 	if err != nil {
 		return failedUpdate(result, err)
 	}
@@ -315,7 +319,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,
-		Image:                manifest.Image,
+		Image:                image,
 		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
 	}

@@ -111,5 +111,6 @@ func localPackageOrigin(mode string, manifest *types.CpakManifest) (string, erro
 func applyLockedImage(manifest *types.CpakManifest, lock types.ManifestLock) *types.CpakManifest {
 	copy := *manifest
 	copy.Image = lock.Root.ResolvedImage
+	copy.ImageRef = ""
 	return &copy
 }

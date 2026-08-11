@@ -327,6 +327,13 @@
       "minLength": 1,
       "description": "OCI image reference or digest"
     },
+    "image_ref": {
+      "type": "string",
+      "enum": [
+        "source"
+      ],
+      "description": "Track the selected Git branch release or commit"
+    },
     "binaries": {
       "items": {
         "type": "string"

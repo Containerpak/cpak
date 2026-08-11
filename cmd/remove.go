@@ -53,6 +53,6 @@ func (c *RemoveCmd) Run() error {
 		return fmt.Errorf("an error occurred while removing cpak: %s", err)
 	}
 
-	c.Logger.Success("Cpak %s removed", remote)
+	c.Logger.Success("cpak %s removed", remote)
 	return nil
 }

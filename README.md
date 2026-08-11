@@ -11,7 +11,7 @@
 
 ---
 
-Cpak installs applications from OCI images while keeping package metadata in a
+cpak installs applications from OCI images while keeping package metadata in a
 Git repository. It provides native desktop integration, shared content-addressed
 layers, atomic updates and a rootless Linux sandbox from one Go binary.
 
@@ -44,8 +44,8 @@ runtime.
 Install and run an application by its package repository:
 
 ```sh
-cpak install github.com/containerpak/bottles
-cpak run github.com/containerpak/bottles bottles
+cpak install github.com/bottlesdevs/bottles
+cpak run github.com/bottlesdevs/bottles bottles
 ```
 
 Other common operations:
@@ -53,7 +53,7 @@ Other common operations:
 ```sh
 cpak list
 cpak update
-cpak stop github.com/containerpak/bottles
+cpak stop github.com/bottlesdevs/bottles
 cpak audit
 cpak audit --repair
 ```
@@ -63,7 +63,7 @@ cpak audit --repair
 Aliases name installed applications without changing their stored origin:
 
 ```sh
-cpak alias set bottles github.com/containerpak/bottles
+cpak alias set bottles github.com/bottlesdevs/bottles
 cpak run bottles bottles
 cpak update bottles
 cpak alias list --json
@@ -71,11 +71,11 @@ cpak alias remove bottles
 ```
 
 Alias names are case-insensitive and stored as lowercase letters, digits and
-hyphens. They are local to the Cpak store and resolve only for installed
+hyphens. They are local to the cpak store and resolve only for installed
 applications.
 
 Applications can be pinned to a branch, release or commit. If none is selected,
-Cpak follows the `main` branch.
+cpak follows the `main` branch.
 
 ## Addons and SDKs
 
@@ -96,7 +96,7 @@ using it.
 ## Manifest v2
 
 Each package repository contains a strict `cpak.json` manifest. Unknown fields
-and declared features that Cpak cannot apply are rejected.
+and declared features that cpak cannot apply are rejected.
 
 ```json
 {
@@ -106,6 +106,7 @@ and declared features that Cpak cannot apply are rejected.
   "description": "Example application.",
   "version": "1.0.0",
   "image": "ghcr.io/example/example:main",
+  "image_ref": "source",
   "binaries": ["/usr/bin/example"],
   "desktop_entries": ["/usr/share/applications/example.desktop"],
   "dependencies": [],
@@ -132,6 +133,10 @@ cpak migrate-manifest cpak.json
 Dependencies are installed with the application. Addons remain optional. The
 structured update result records every effective permission change.
 
+Set `image_ref` to `source` when CI publishes OCI tags for each Git branch,
+release and commit. cpak then selects the matching tag for the requested Git
+reference.
+
 ## Package development
 
 Resolve the manifest and its dependency graph to immutable OCI digests:
@@ -151,12 +156,12 @@ cpak dev cpak.json
 ```
 
 `cpak test` installs the package and checks every declared binary and desktop
-entry. `cpak dev` also launches the selected binary. Both use a temporary Cpak
+entry. `cpak dev` also launches the selected binary. Both use a temporary cpak
 store and do not export files to the desktop or change installed applications.
 
 ## Runtime and sandbox
 
-Cpak creates user, mount, PID, IPC, UTS, cgroup and optional network namespaces
+cpak creates user, mount, PID, IPC, UTS, cgroup and optional network namespaces
 directly through the Linux kernel. A per-container PID 1 owns the lifecycle and
 accepts bounded local execution requests over a private Unix socket. OverlayFS
 combines immutable OCI layers with disposable runtime state.

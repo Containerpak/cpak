@@ -39,6 +39,18 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if _, err = name.ParseReference(manifest.Image); err != nil {
 		return fmt.Errorf("image must be a valid OCI reference: %w", err)
 	}
+	if manifest.ImageRef != "" && manifest.ImageRef != "source" {
+		return fmt.Errorf("unsupported image_ref: %s", manifest.ImageRef)
+	}
+	if manifest.ImageRef == "source" {
+		ref, parseErr := name.ParseReference(manifest.Image)
+		if parseErr != nil {
+			return fmt.Errorf("image must be a valid OCI reference: %w", parseErr)
+		}
+		if _, ok := ref.(name.Digest); ok {
+			return errors.New("image_ref source cannot be used with an image digest")
+		}
+	}
 	if len(manifest.Binaries) == 0 {
 		return errors.New("binaries is mandatory and must be populated")
 	}

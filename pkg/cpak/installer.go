@@ -30,18 +30,20 @@ import (
 // InstallCpak functions instead, that way they can implement their own
 // installation logic, by showing more detailed information to the user.
 func (c *Cpak) Install(origin, branch, release, commit string) (err error) {
-	return c.InstallWithOptions(origin, branch, release, commit, InstallOptions{CreateExports: true})
+	return c.InstallWithOptions(origin, branch, release, commit, InstallOptions{CreateExports: true, ResolveImageRef: true})
 }
 
 // InstallOptions controls package exports and lock file use.
 type InstallOptions struct {
-	CreateExports bool
-	ManifestLock  *types.ManifestLock
+	CreateExports   bool
+	ManifestLock    *types.ManifestLock
+	ResolveImageRef bool
 }
 
 // InstallWithOptions installs a remote package with explicit options.
 func (c *Cpak) InstallWithOptions(origin, branch, release, commit string, options InstallOptions) (err error) {
 	origin = strings.ToLower(origin)
+	options.ResolveImageRef = true
 
 	versionParams := []string{branch, release, commit}
 	versionParamsCount := 0
@@ -64,6 +66,7 @@ func (c *Cpak) InstallWithOptions(origin, branch, release, commit string, option
 	if locked, ok := lockedPackageFromManifestLock(options.ManifestLock, origin, branch, release, commit); ok {
 		copy := *locked.Manifest
 		copy.Image = locked.ResolvedImage
+		copy.ImageRef = ""
 		manifest = &copy
 	} else {
 		manifest, err = c.FetchManifest(origin, branch, release, commit)
@@ -80,7 +83,7 @@ func (c *Cpak) InstallWithOptions(origin, branch, release, commit string, option
 // Note: this function can be used to install packages from a local manifest
 // but this behaviour is not fully supported yet.
 func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch string, commit string, release string) (err error) {
-	return c.InstallCpakWithOptions(origin, manifest, branch, commit, release, InstallOptions{CreateExports: true})
+	return c.InstallCpakWithOptions(origin, manifest, branch, commit, release, InstallOptions{CreateExports: true, ResolveImageRef: true})
 }
 
 // InstallCpakWithOptions installs a decoded manifest with explicit options.
@@ -114,6 +117,14 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		return
 	}
 
+	image := manifest.Image
+	if options.ResolveImageRef {
+		image, err = resolveManifestImage(manifest, branch, release, commit)
+		if err != nil {
+			return
+		}
+	}
+
 	// first we resolve its dependencies
 	parsedManifestDependencies, err := c.installDependenciesWithOptions(origin, manifest, options)
 	if err != nil {
@@ -123,7 +134,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 	imageIdBase := manifest.Name + ":" + sourceType + ":" + version + ":" + origin
 	cpakImageId := base64.StdEncoding.EncodeToString([]byte(imageIdBase))
 
-	layers, config, imageDigest, err := c.Pull(manifest.Image, cpakImageId)
+	layers, config, imageDigest, err := c.Pull(image, cpakImageId)
 	if err != nil {
 		return
 	}
@@ -149,7 +160,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,
-		Image:                manifest.Image,
+		Image:                image,
 		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
 	}
@@ -175,7 +186,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 // Note: the store is opened only once every dependency has been installed,
 // since it cannot be opened twice at the same time.
 func (c *Cpak) installDependencies(origin string, manifest *types.CpakManifest) (dependencies []types.Dependency, err error) {
-	return c.installDependenciesWithOptions(origin, manifest, InstallOptions{CreateExports: true})
+	return c.installDependenciesWithOptions(origin, manifest, InstallOptions{CreateExports: true, ResolveImageRef: true})
 }
 
 func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.CpakManifest, options InstallOptions) (dependencies []types.Dependency, err error) {
@@ -193,15 +204,18 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 		}
 
 		branch, release, commit := dependencySelectors(depManifest)
+		dependencyOptions := options
+		dependencyOptions.ResolveImageRef = true
 		var errInstallDep error
 		if locked, ok := lockedPackageFromManifestLock(options.ManifestLock, depOrigin, branch, release, commit); ok {
 			lockedManifest := *locked.Manifest
 			lockedManifest.Image = locked.ResolvedImage
-			errInstallDep = c.InstallCpakWithOptions(depOrigin, &lockedManifest, branch, commit, release, options)
+			lockedManifest.ImageRef = ""
+			errInstallDep = c.InstallCpakWithOptions(depOrigin, &lockedManifest, branch, commit, release, dependencyOptions)
 		} else if options.ManifestLock != nil {
 			errInstallDep = fmt.Errorf("dependency is missing from lock: %s", depOrigin)
 		} else {
-			errInstallDep = c.InstallWithOptions(depOrigin, branch, release, commit, options)
+			errInstallDep = c.InstallWithOptions(depOrigin, branch, release, commit, dependencyOptions)
 		}
 		if errInstallDep != nil {
 			return nil, fmt.Errorf("failed to install dependency %s: %w", depOrigin, errInstallDep)
