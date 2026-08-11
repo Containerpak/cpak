@@ -13,8 +13,7 @@ import (
 
 // ValidateManifest validates a CpakManifest against its JSON schema.
 func ValidateManifest(m *types.CpakManifest) error {
-	reflector := &jsonschema.Reflector{ExpandedStruct: true}
-	schema := reflector.Reflect(&types.CpakManifest{})
+	schema := ManifestSchema()
 
 	schemaBytes, err := json.Marshal(schema)
 	if err != nil {
@@ -45,4 +44,24 @@ func ValidateManifest(m *types.CpakManifest) error {
 	}
 
 	return nil
+}
+
+func ManifestSchema() *jsonschema.Schema {
+	reflector := &jsonschema.Reflector{ExpandedStruct: true}
+	return reflector.Reflect(&types.CpakManifest{})
+}
+
+func ManifestV2Schema() *jsonschema.Schema {
+	schema := ManifestSchema()
+	schema.ID = jsonschema.ID(types.ManifestSchemaURL)
+	if version, ok := schema.Properties.Get("manifest_version"); ok {
+		version.Enum = nil
+		version.Const = "2.0"
+	}
+	if override, ok := schema.Definitions["Override"]; ok && override.Properties != nil {
+		for _, legacy := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra"} {
+			override.Properties.Delete(legacy)
+		}
+	}
+	return schema
 }

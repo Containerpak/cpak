@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v2.json",
+  "$defs": {
+    "Dependency": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Installed dependency identifier"
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dependency repository origin"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Dependency branch"
+        },
+        "release": {
+          "type": "string",
+          "description": "Dependency release"
+        },
+        "commit": {
+          "type": "string",
+          "description": "Dependency commit"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "origin"
+      ]
+    },
+    "FilesystemPermission": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?:home|host|/.*)$",
+          "description": "Host path or portable home and host scope"
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "read-write"
+          ],
+          "description": "Filesystem access mode"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "access"
+      ]
+    },
+    "Override": {
+      "properties": {
+        "socketX11": {
+          "type": "boolean",
+          "description": "Mount /tmp/.X11-unix/",
+          "default": true
+        },
+        "socketWayland": {
+          "type": "boolean",
+          "description": "Mount Wayland socket",
+          "default": true
+        },
+        "socketPulseAudio": {
+          "type": "boolean",
+          "description": "Mount PulseAudio socket",
+          "default": true
+        },
+        "socketSessionBus": {
+          "type": "boolean",
+          "description": "Mount session DBus socket",
+          "default": true
+        },
+        "socketSystemBus": {
+          "type": "boolean",
+          "description": "Mount system DBus socket",
+          "default": true
+        },
+        "socketSshAgent": {
+          "type": "boolean",
+          "description": "Mount SSH agent socket",
+          "default": false
+        },
+        "socketCups": {
+          "type": "boolean",
+          "description": "Mount CUPS socket",
+          "default": true
+        },
+        "socketGpgAgent": {
+          "type": "boolean",
+          "description": "Mount GPG agent socket",
+          "default": false
+        },
+        "socketAtSpiBus": {
+          "type": "boolean",
+          "description": "Mount AT-SPI bus socket",
+          "default": true
+        },
+        "socketBluetooth": {
+          "type": "boolean",
+          "description": "Mount Bluetooth socket",
+          "default": false
+        },
+        "deviceDri": {
+          "type": "boolean",
+          "description": "Expose /dev/dri",
+          "default": true
+        },
+        "deviceKvm": {
+          "type": "boolean",
+          "description": "Expose /dev/kvm",
+          "default": true
+        },
+        "deviceShm": {
+          "type": "boolean",
+          "description": "Expose /dev/shm",
+          "default": true
+        },
+        "deviceAlsa": {
+          "type": "boolean",
+          "description": "Expose ALSA devices",
+          "default": false
+        },
+        "deviceVideo": {
+          "type": "boolean",
+          "description": "Expose video devices",
+          "default": false
+        },
+        "deviceFuse": {
+          "type": "boolean",
+          "description": "Expose FUSE devices",
+          "default": false
+        },
+        "deviceTun": {
+          "type": "boolean",
+          "description": "Expose TUN/TAP",
+          "default": false
+        },
+        "deviceUsb": {
+          "type": "boolean",
+          "description": "Expose USB devices",
+          "default": false
+        },
+        "deviceAll": {
+          "type": "boolean",
+          "description": "Expose all /dev",
+          "default": false
+        },
+        "notification": {
+          "type": "boolean",
+          "description": "Enable desktop notifications",
+          "default": false
+        },
+        "filesystem": {
+          "items": {
+            "$ref": "#/$defs/FilesystemPermission"
+          },
+          "type": "array",
+          "description": "Host filesystem permissions"
+        },
+        "env": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 0,
+          "description": "Additional environment variables"
+        },
+        "network": {
+          "type": "boolean",
+          "description": "Enable network namespace",
+          "default": true
+        },
+        "process": {
+          "type": "boolean",
+          "description": "Share host process namespace",
+          "default": false
+        },
+        "memoryMaxMB": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum memory in MiB",
+          "default": 0
+        },
+        "cpuQuota": {
+          "type": "integer",
+          "maximum": 1000,
+          "minimum": 0,
+          "description": "CPU quota as a percentage of one core",
+          "default": 0
+        },
+        "pidsMax": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum process count",
+          "default": 0
+        },
+        "asRoot": {
+          "type": "boolean",
+          "description": "Run as root inside container",
+          "default": false
+        },
+        "allowedHostCommands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 0,
+          "description": "Host commands allowed via shim"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "socketX11",
+        "socketWayland",
+        "socketPulseAudio",
+        "socketSessionBus",
+        "socketSystemBus",
+        "socketSshAgent",
+        "socketCups",
+        "socketGpgAgent",
+        "socketAtSpiBus",
+        "socketBluetooth",
+        "deviceDri",
+        "deviceKvm",
+        "deviceShm",
+        "deviceAlsa",
+        "deviceVideo",
+        "deviceFuse",
+        "deviceTun",
+        "deviceUsb",
+        "deviceAll",
+        "notification",
+        "network",
+        "process",
+        "memoryMaxMB",
+        "cpuQuota",
+        "pidsMax",
+        "asRoot"
+      ]
+    },
+    "RuntimeSource": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "File name of the artifact"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "HTTPS URL of the artifact"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$",
+          "description": "SHA256 checksum of the artifact"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Size of the artifact in bytes"
+        },
+        "installer": {
+          "type": "string",
+          "enum": [
+            "dpkg"
+          ],
+          "description": "Native installer used inside the cpak environment"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url",
+        "sha256",
+        "size",
+        "installer"
+      ]
+    }
+  },
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "description": "JSON Schema used by editors"
+    },
+    "manifest_version": {
+      "type": "string",
+      "const": "2.0",
+      "description": "Manifest schema version"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Application name"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short application description"
+    },
+    "version": {
+      "type": "string",
+      "description": "Application version"
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "description": "OCI image reference or digest"
+    },
+    "binaries": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "minItems": 1,
+      "description": "Absolute paths to binaries"
+    },
+    "desktop_entries": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": ".desktop entry files"
+    },
+    "dependencies": {
+      "items": {
+        "$ref": "#/$defs/Dependency"
+      },
+      "type": "array",
+      "description": "cpak dependencies"
+    },
+    "addons": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Optional addons"
+    },
+    "idle_time": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Idle time in minutes before stop"
+    },
+    "override": {
+      "$ref": "#/$defs/Override",
+      "description": "Permissions override settings"
+    },
+    "runtime_sources": {
+      "items": {
+        "$ref": "#/$defs/RuntimeSource"
+      },
+      "type": "array",
+      "description": "External artifacts fetched at install time"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "name",
+    "description",
+    "image",
+    "binaries",
+    "idle_time",
+    "override"
+  ]
+}

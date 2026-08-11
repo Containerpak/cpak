@@ -36,6 +36,8 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
+          go run . gen-schema --output /tmp/manifest-v2.json
+          diff -u schema/manifest-v2.json /tmp/manifest-v2.json
 
       - id: version
         name: Resolve version

@@ -5,8 +5,13 @@
  */
 package types
 
+const ManifestSchemaURL = "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v2.json"
+
 // CpakManifest is the struct that represents the manifest of an application.
 type CpakManifest struct {
+	// Schema enables completion and validation in JSON editors.
+	Schema string `json:"$schema,omitempty" jsonschema:"format=uri,description=JSON Schema used by editors"`
+
 	// ManifestVersion is the version of the manifest schema (e.g. "1.0").
 	ManifestVersion string `json:"manifest_version" jsonschema:"enum=1.0,enum=2.0,description=Manifest schema version"`
 

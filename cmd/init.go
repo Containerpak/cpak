@@ -36,6 +36,7 @@ func (c *InitCmd) Run() error {
 	}
 
 	manifest := types.CpakManifest{
+		Schema:          types.ManifestSchemaURL,
 		ManifestVersion: c.ManifestVersion,
 		Name:            c.Name,
 		Description:     c.Description,

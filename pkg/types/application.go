@@ -107,11 +107,11 @@ func (a Application) SourceType() string {
 }
 
 type Dependency struct {
-	Id      string
-	Origin  string
-	Branch  string
-	Release string
-	Commit  string
+	Id      string `json:"id,omitempty" jsonschema:"description=Installed dependency identifier"`
+	Origin  string `json:"origin" jsonschema:"minLength=1,description=Dependency repository origin"`
+	Branch  string `json:"branch,omitempty" jsonschema:"description=Dependency branch"`
+	Release string `json:"release,omitempty" jsonschema:"description=Dependency release"`
+	Commit  string `json:"commit,omitempty" jsonschema:"description=Dependency commit"`
 }
 
 // UpdateStatus is the outcome of an update attempt on a single application.

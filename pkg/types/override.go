@@ -34,7 +34,7 @@ type Override struct {
 
 	Notification bool `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
 
-	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions,default=[]"`
+	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions"`
 
 	FsHost     bool     `json:"fsHost,omitempty" jsonschema:"description=Legacy v1 host root permission" flag:"fsHost,bool"`
 	FsHostEtc  bool     `json:"fsHostEtc,omitempty" jsonschema:"description=Legacy v1 host etc permission" flag:"fsHostEtc,bool"`
