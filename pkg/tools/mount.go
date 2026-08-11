@@ -73,12 +73,41 @@ func Mount(src, dest string, mode uintptr) error {
 		}
 	}
 
+	return MountPrepared(src, dest, mode)
+}
+
+// MountPrepared mounts an existing, non-symlink destination. Callers that
+// prepare a target under an image root should use this after PrepareRootfsTarget.
+func MountPrepared(src, dest string, mode uintptr) error {
+	source, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	destination, err := os.Lstat(dest)
+	if err != nil {
+		return err
+	}
+	if destination.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("mount destination is a symlink: %s", dest)
+	}
+	if source.IsDir() != destination.IsDir() || !source.IsDir() && !destination.Mode().IsRegular() {
+		return fmt.Errorf("mount destination type does not match source: %s", dest)
+	}
 	return syscall.Mount(src, dest, "bind", mode, "")
 }
 
 // MountBind creates a recursive private bind mount.
 func MountBind(src, dest string) error {
 	if err := Mount(src, dest, syscall.MS_BIND|syscall.MS_REC); err != nil {
+		return err
+	}
+	return syscall.Mount("", dest, "", syscall.MS_PRIVATE|syscall.MS_REC, "")
+}
+
+// MountBindPrepared creates a recursive private bind mount at a prepared
+// destination.
+func MountBindPrepared(src, dest string) error {
+	if err := MountPrepared(src, dest, syscall.MS_BIND|syscall.MS_REC); err != nil {
 		return err
 	}
 	return syscall.Mount("", dest, "", syscall.MS_PRIVATE|syscall.MS_REC, "")
@@ -96,6 +125,19 @@ func MountBindReadOnly(src, dest string, noExec bool) error {
 	if err := MountBind(src, dest); err != nil {
 		return fmt.Errorf("bind %s to %s: %w", src, dest, err)
 	}
+	return restrictBindMount(dest, noExec)
+}
+
+// MountBindReadOnlyPrepared creates a restricted bind mount at a prepared
+// destination.
+func MountBindReadOnlyPrepared(src, dest string, noExec bool) error {
+	if err := MountBindPrepared(src, dest); err != nil {
+		return fmt.Errorf("bind %s to %s: %w", src, dest, err)
+	}
+	return restrictBindMount(dest, noExec)
+}
+
+func restrictBindMount(dest string, noExec bool) error {
 
 	attributes := uint64(unix.MOUNT_ATTR_RDONLY | unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NODEV)
 	if noExec {
@@ -138,6 +180,18 @@ func MountFuseOverlayfs(targetDir, lowerDir, upperDir, workDir string) (err erro
 func MountTmpfs(targetDir string) (err error) {
 	if err = os.MkdirAll(targetDir, 0755); err != nil {
 		return err
+	}
+	return syscall.Mount("tmpfs", targetDir, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
+}
+
+// MountTmpfsPrepared mounts tmpfs on an existing, non-symlink directory.
+func MountTmpfsPrepared(targetDir string) error {
+	info, err := os.Lstat(targetDir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("tmpfs destination must be a directory: %s", targetDir)
 	}
 	return syscall.Mount("tmpfs", targetDir, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
 }
