@@ -6,6 +6,8 @@
 package cmd
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -112,6 +114,10 @@ func (c *SpawnCmd) Run() error {
 		}
 		return c.installRuntimePackages(c.RuntimePackage)
 	}
+	machineIDGrant, err := c.injectMachineID(c.Rootfs)
+	if err != nil {
+		return err
+	}
 
 	filesystem, err := decodeFilesystemPermissions(c.Filesystem)
 	if err != nil {
@@ -121,6 +127,7 @@ func (c *SpawnCmd) Run() error {
 	if err != nil {
 		return err
 	}
+	grants = append(grants, machineIDGrant)
 
 	configurationGrants, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia)
 	if err != nil {
@@ -179,6 +186,38 @@ func (c *SpawnCmd) Run() error {
 	}
 
 	return nil
+}
+
+func (c *SpawnCmd) injectMachineID(rootFs string) (sandbox.PathGrant, error) {
+	machineID, err := generateMachineID(rand.Reader)
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("generate container machine ID: %w", err)
+	}
+	destination, err := prepareRootfsFile(rootFs, "/etc/machine-id")
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("prepare:/etc/machine-id: %w", err)
+	}
+	if err := os.Chmod(destination, 0600); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("chmod:/etc/machine-id: %w", err)
+	}
+	if err := os.WriteFile(destination, []byte(machineID+"\n"), 0444); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("write:/etc/machine-id: %w", err)
+	}
+	if err := os.Chmod(destination, 0444); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("chmod:/etc/machine-id: %w", err)
+	}
+	if err := tools.MountBindReadOnlyPrepared(destination, destination, true); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("restrict:/etc/machine-id: %w", err)
+	}
+	return sandbox.PathGrant{Path: "/etc/machine-id", ReadOnly: true}, nil
+}
+
+func generateMachineID(reader io.Reader) (string, error) {
+	value := make([]byte, 16)
+	if _, err := io.ReadFull(reader, value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }
 
 func setEnvironmentVariables(containerId, rootFs string, envVars []string, stateDir, layersDir, layers string) []string {

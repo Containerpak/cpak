@@ -6,6 +6,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -79,6 +80,16 @@ func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Fatalf("environment: got %v, want %v", env, want)
+	}
+}
+
+func TestGenerateMachineIDUsesAPrivateContainerIdentifier(t *testing.T) {
+	machineID, err := generateMachineID(bytes.NewReader([]byte("0123456789abcdef")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if machineID != "30313233343536373839616263646566" {
+		t.Fatalf("machine ID: %s", machineID)
 	}
 }
 
