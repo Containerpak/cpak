@@ -26,6 +26,22 @@ type Store struct {
 	Containers *engine.Bitcask[types.Container]
 }
 
+const storeLockTimeout = 5 * time.Second
+
+func openWAL(dir string, timeout time.Duration) (*wal.Manager, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		manager, err := wal.NewManager(dir)
+		if err == nil {
+			return manager, nil
+		}
+		if !errors.Is(err, wal.ErrDirectoryLocked) || !time.Now().Before(deadline) {
+			return nil, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func NewStore(storePath string) (s *Store, err error) {
 	appsDir := filepath.Join(storePath, "db", "apps")
 	containersDir := filepath.Join(storePath, "db", "containers")
@@ -44,7 +60,7 @@ func NewStore(storePath string) (s *Store, err error) {
 		return app, err
 	}
 
-	appWal, err := wal.NewManager(appsDir)
+	appWal, err := openWAL(appsDir, storeLockTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +78,9 @@ func NewStore(storePath string) (s *Store, err error) {
 		return c, err
 	}
 
-	containerWal, err := wal.NewManager(containersDir)
+	containerWal, err := openWAL(containersDir, storeLockTimeout)
 	if err != nil {
+		_ = apps.Close()
 		return nil, err
 	}
 	containers := engine.NewBitcask(containerWal, containerCodec, containerDecoder)
