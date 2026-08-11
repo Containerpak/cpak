@@ -6,13 +6,11 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
+	"os"
 
-	"github.com/invopop/jsonschema"
-	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
-	"github.com/xeipuuv/gojsonschema"
 )
 
 type ValidateCmd struct {
@@ -24,29 +22,18 @@ type ValidateCmd struct {
 func (c *ValidateCmd) Run() error {
 	manifestPath := c.Manifest
 
-	reflector := &jsonschema.Reflector{ExpandedStruct: true}
-	schema := reflector.Reflect(&types.CpakManifest{})
-
-	schemaBytes, err := json.Marshal(schema)
+	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return fmt.Errorf("failed to serialize schema: %w", err)
+		return err
 	}
-	schemaLoader := gojsonschema.NewBytesLoader(schemaBytes)
-	documentLoader := gojsonschema.NewReferenceLoader("file://" + manifestPath)
-
-	result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+	manifest, err := cpak.DecodeManifest(data)
 	if err != nil {
-		return fmt.Errorf("schema validation error: %w", err)
+		return fmt.Errorf("invalid manifest: %w", err)
+	}
+	if err := (&cpak.Cpak{}).ValidateManifest(manifest); err != nil {
+		return fmt.Errorf("invalid manifest: %w", err)
 	}
 
-	if !result.Valid() {
-		c.Logger.Error("Manifest validation errors:")
-		for _, desc := range result.Errors() {
-			c.Logger.Error(" - %s", desc)
-		}
-		return fmt.Errorf("validation failed with %d errors", len(result.Errors()))
-	}
-
-	c.Logger.Success("Manifest is valid against the schema.")
+	c.Logger.Success("Manifest is valid.")
 	return nil
 }
