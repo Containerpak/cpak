@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -206,20 +205,15 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 	}
 
 	overridePath := filepath.Join(homeDir, ".config/cpak/overrides", cpakLocalDir, version)
-	err = os.MkdirAll(overridePath, 0755)
-	if err != nil {
-		return
-	}
-
 	file, err := os.Open(filepath.Join(overridePath, "cpak.json"))
 	if err != nil {
-		logger.Println(err)
 		return
 	}
+	defer file.Close()
 
+	override = types.NewOverride()
 	err = json.NewDecoder(file).Decode(&override)
 	if err != nil {
-		logger.Println(err)
 		return
 	}
 
@@ -236,16 +230,21 @@ func SaveOverride(override types.Override, name, version string) (err error) {
 		return
 	}
 
-	overridesPath := homeDir + "/.config/cpak/overrides"
-	err = os.MkdirAll(overridesPath, 0755)
+	cpakLocalDir, err := getCpakLocalName(name)
+	if err != nil {
+		return err
+	}
+	overridePath := filepath.Join(homeDir, ".config/cpak/overrides", cpakLocalDir, version)
+	err = os.MkdirAll(overridePath, 0755)
 	if err != nil {
 		return
 	}
 
-	file, err := os.Create(overridesPath + "/" + name + "/" + version + "/cpak.json")
+	file, err := os.Create(filepath.Join(overridePath, "cpak.json"))
 	if err != nil {
 		return
 	}
+	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")

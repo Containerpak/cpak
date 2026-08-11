@@ -6,6 +6,10 @@
 package cpak
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -21,6 +25,36 @@ func TestBluetoothUsesOneSystemBusMount(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("system bus mount count: %d", count)
+	}
+}
+
+func TestLoadOverrideDoesNotCreateMissingState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	_, err := LoadOverride("github.com/example/app", "main")
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing override error: %v", err)
+	}
+	path := filepath.Join(home, ".config", "cpak", "overrides")
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("loading created override state: %v", statErr)
+	}
+}
+
+func TestSaveOverrideCreatesParentAndRoundTrips(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	want := types.NewOverride()
+	want.Filesystem = []types.FilesystemPermission{{Path: "home", Access: "read-write"}}
+	if err := SaveOverride(want, "github.com/example/app", "main"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadOverride("github.com/example/app", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("override round trip: got %+v, want %+v", got, want)
 	}
 }
 
