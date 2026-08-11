@@ -100,6 +100,7 @@ and declared features that Cpak cannot apply are rejected.
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v2.json",
   "manifest_version": "2.0",
   "name": "Example",
   "description": "Example application.",
@@ -124,12 +125,34 @@ Create, validate and migrate manifests with the CLI:
 ```sh
 cpak init --help
 cpak validate cpak.json
-cpak gen-schema
+cpak gen-schema --output schema/manifest-v2.json
 cpak migrate-manifest cpak.json
 ```
 
 Dependencies are installed with the application. Addons remain optional. The
 structured update result records every effective permission change.
+
+## Package development
+
+Resolve the manifest and its dependency graph to immutable OCI digests:
+
+```sh
+cpak lock cpak.json
+```
+
+The resulting `cpak.lock.json` includes the validated dependency manifests, so
+later checks do not follow moved image tags. Both development commands infer the
+Git repository origin and use the lock file beside the manifest when present:
+
+```sh
+cpak test cpak.json
+cpak test cpak.json --binary example -- --version
+cpak dev cpak.json
+```
+
+`cpak test` installs the package and checks every declared binary and desktop
+entry. `cpak dev` also launches the selected binary. Both use a temporary Cpak
+store and do not export files to the desktop or change installed applications.
 
 ## Runtime and sandbox
 
