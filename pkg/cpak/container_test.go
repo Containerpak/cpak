@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -62,6 +63,46 @@ func TestBuildContainerPath(t *testing.T) {
 				seen[entry] = true
 			}
 		})
+	}
+}
+
+func TestContainerScopeLockSerializesTheSameApplication(t *testing.T) {
+	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	firstUnlock, err := cp.lockContainerScope("application")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { firstUnlock() })
+
+	acquired := make(chan func(), 1)
+	go func() {
+		unlock, lockErr := cp.lockContainerScope("application")
+		if lockErr != nil {
+			acquired <- nil
+			return
+		}
+		acquired <- unlock
+	}()
+
+	select {
+	case unlock := <-acquired:
+		if unlock != nil {
+			unlock()
+		}
+		t.Fatal("the second lock acquired the same application scope")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	firstUnlock()
+	firstUnlock = func() {}
+	select {
+	case unlock := <-acquired:
+		if unlock == nil {
+			t.Fatal("the second lock failed")
+		}
+		unlock()
+	case <-time.After(time.Second):
+		t.Fatal("the second lock did not acquire the released scope")
 	}
 }
 

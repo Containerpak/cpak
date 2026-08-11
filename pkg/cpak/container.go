@@ -27,6 +27,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"golang.org/x/sys/unix"
 )
 
 // PrepareContainer dispatches the creation of a new container for the given
@@ -63,6 +64,12 @@ func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Over
 }
 
 func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string) (container types.Container, err error) {
+	unlock, err := c.lockContainerScope(scope)
+	if err != nil {
+		return types.Container{}, err
+	}
+	defer unlock()
+
 	addons, err := c.resolveEnabledAddons(app)
 	if err != nil {
 		return types.Container{}, err
@@ -227,6 +234,33 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 	logger.Println("Container prepared:", container.CpakId)
 	return
+}
+
+func (c *Cpak) lockContainerScope(scope string) (func(), error) {
+	directory, err := c.GetInStoreDirMkdir("locks", "containers")
+	if err != nil {
+		return nil, fmt.Errorf("create container lock directory: %w", err)
+	}
+	digest := sha256.Sum256([]byte(scope))
+	path := filepath.Join(directory, hex.EncodeToString(digest[:])+".lock")
+	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open container lock: %w", err)
+	}
+	for {
+		err = unix.Flock(fd, unix.LOCK_EX)
+		if err != syscall.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("lock container scope: %w", err)
+	}
+	return func() {
+		_ = unix.Flock(fd, unix.LOCK_UN)
+		_ = unix.Close(fd)
+	}, nil
 }
 
 func containerPolicyHash(override types.Override, addons ...types.Application) (string, error) {
