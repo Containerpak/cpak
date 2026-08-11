@@ -35,6 +35,9 @@ func NewCpak() (cpak Cpak, err error) {
 	}
 
 	cpak.Ctx = context.Background()
+	if err = cpak.RecoverUpdateTransactions(); err != nil {
+		return cpak, err
+	}
 	return
 }
 

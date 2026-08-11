@@ -231,6 +231,11 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 		return result
 	}
 
+	transaction, err := c.beginUpdateTransaction(app, updated)
+	if err != nil {
+		return failedUpdate(result, err)
+	}
+
 	// the new installation is complete, the old one can be replaced
 	if err = deps.createExports(updated); err != nil {
 		restoreExports(app, updated, deps)
@@ -246,9 +251,15 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 		restoreExports(app, updated, deps)
 		return failedUpdate(result, err)
 	}
+	if err = c.commitUpdateTransaction(transaction); err != nil {
+		return failedUpdate(result, err)
+	}
 
 	if err = deps.removeExports(app, updated); err != nil {
 		logger.Printf("Warning: could not remove the stale exports of %s: %v", app.Name, err)
+	}
+	if err = c.finishUpdateTransaction(transaction); err != nil {
+		return failedUpdate(result, err)
 	}
 
 	result.Status = types.UpdateStatusUpdated
