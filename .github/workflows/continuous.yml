@@ -169,6 +169,26 @@ jobs:
           subject-path: dist/cpak-linux-*
           sbom-path: dist/cpak.spdx.json
 
+      - name: Move channel tag
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/v2'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          channel="${CHANNEL}"
+          if [[ -z "${channel}" ]]; then
+            if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+              channel="nightly"
+            else
+              channel="continuous"
+            fi
+          fi
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/git/refs/tags/${channel}" \
+            -f sha="${GITHUB_SHA}" \
+            -F force=true
+
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
