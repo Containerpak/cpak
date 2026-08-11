@@ -1,0 +1,68 @@
+name: Portability
+
+on:
+  schedule:
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o cpak-linux-amd64 .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cpak-portability
+          path: cpak-linux-amd64
+          if-no-files-found: error
+
+  userspace:
+    needs: binary
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - debian:13
+          - fedora:42
+          - archlinux:latest
+          - opensuse/tumbleweed:latest
+          - ubuntu:26.04
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cpak-portability
+      - run: |
+          chmod 0755 cpak-linux-amd64
+          ./cpak-linux-amd64 --version
+          ./cpak-linux-amd64 gen-schema
+          test -s manifest.schema.json
+
+  kernel:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+      - run: |
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o cpak .
+          ./cpak doctor --json

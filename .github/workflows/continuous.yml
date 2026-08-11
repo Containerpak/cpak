@@ -2,16 +2,16 @@ name: Build
 
 on:
   push:
-    branches: ["v2"]
+    branches: [v2]
     tags: ["v*"]
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel"
+        description: Release channel
         required: true
-        default: "nightly"
+        default: nightly
         type: choice
         options:
           - nightly
@@ -19,58 +19,94 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: go.mod
-      
+
+      - name: Test
+        run: |
+          go test -race ./...
+          go vet ./...
+
+      - id: version
+        name: Resolve version
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            version="0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Build
-        run: make all
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/cpak-linux-${arch}" .
+          done
+          cd dist
+          sha256sum cpak-linux-* > SHA256SUMS
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/cpak.spdx.json
+          upload-artifact: false
+
+      - name: Attest binaries
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/cpak-linux-*
+
+      - name: Attest SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/cpak-linux-*
+          sbom-path: dist/cpak.spdx.json
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
-          token: "${{ secrets.GITHUB_TOKEN }}"
-          tag_name: "${{ github.ref_name }}"
           generate_release_notes: true
-          files: |
-            cpak
+          files: dist/*
 
       - name: Publish nightly
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.channel == 'nightly')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
-          token: "${{ secrets.GITHUB_TOKEN }}"
-          tag_name: "nightly"
-          target_commitish: "v2"
+          tag_name: nightly
+          target_commitish: v2
           prerelease: true
-          name: "Nightly Build"
-          files: |
-            cpak
+          make_latest: false
+          name: Nightly Build
+          files: dist/*
 
       - name: Publish continuous
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/v2') || (github.event_name == 'workflow_dispatch' && inputs.channel == 'continuous')
-        uses: softprops/action-gh-release@v2
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/v2')) || (github.event_name == 'workflow_dispatch' && inputs.channel == 'continuous')
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
-          token: "${{ secrets.GITHUB_TOKEN }}"
-          tag_name: "continuous"
-          target_commitish: "v2"
+          tag_name: continuous
+          target_commitish: v2
           prerelease: true
-          name: "Continuous Build"
-          files: |
-            cpak
+          make_latest: false
+          name: Continuous Build
+          files: dist/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: cpak
-          path: |
-            cpak
+          name: cpak-${{ steps.version.outputs.value }}
+          path: dist
+          if-no-files-found: error
