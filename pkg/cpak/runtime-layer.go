@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -82,11 +81,6 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 		return nil, err
 	}
 	args := []string{
-		"--cgroupns=true",
-		"--utsns=true",
-		"--ipcns=true",
-		"--propagation=rslave",
-		cpakBinary,
 		"spawn",
 		"--build-layer",
 		"--rootfs", rootfs,
@@ -100,7 +94,11 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 		args = append(args, "--runtime-package", packagePath)
 	}
 
-	cmd := exec.Command(c.Options.RotlesskitBinPath, args...)
+	cmd := nativeNamespaceCommand(cpakBinary, args, namespaceOptions{
+		IsolateNetwork: true,
+		ShareProcesses: false,
+		IsolateCgroup:  true,
+	})
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

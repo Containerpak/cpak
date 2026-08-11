@@ -44,6 +44,4 @@ type CpakOptions struct {
 	StoreLayersPath     string `json:"store_layers_path"`
 	StoreStatesPath     string `json:"store_states_path"`
 	StoreContainersPath string `json:"store_containers_path"`
-	RotlesskitBinPath   string `json:"rootlesskit_bin_path"`
-	NsenterBinPath      string `json:"nsenter_bin_path"`
 }

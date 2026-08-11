@@ -145,6 +145,38 @@ func TestContainerEnvironmentKeepsImageAndOverrideValues(t *testing.T) {
 	}
 }
 
+func TestGetCpakBinaryUsesTheRunningExecutable(t *testing.T) {
+	got, err := getCpakBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ = filepath.EvalSymlinks(want)
+	if got != want {
+		t.Fatalf("cpak binary: got %q, want %q", got, want)
+	}
+}
+
+func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
+	first := types.NewOverride()
+	second := first
+	second.Network = false
+	firstHash, err := containerPolicyHash(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondHash, err := containerPolicyHash(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstHash == secondHash {
+		t.Fatal("different permission sets produced the same policy hash")
+	}
+}
+
 func slicesContain(entries []string, want string) bool {
 	for _, entry := range entries {
 		if entry == want {

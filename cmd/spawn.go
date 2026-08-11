@@ -7,6 +7,8 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
@@ -35,6 +38,8 @@ type SpawnCmd struct {
 	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
 	MountShims     []string `cli:"mount-shims,M" help:"set the mount shims"`
 	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
+	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
+	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
 	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
@@ -95,7 +100,7 @@ func (c *SpawnCmd) Run() error {
 		return c.installRuntimePackages(c.RuntimePackage)
 	}
 
-	err = c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides)
+	err = c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, hostExecSocketPath)
 	if err != nil {
 		return err
 	}
@@ -127,18 +132,24 @@ func (c *SpawnCmd) Run() error {
 		c.spawnVerbose("Skipping hostexec shim creation (no allowed commands or socket path).")
 	}
 
-	err = c.pivotRoot(c.Rootfs)
-	if err != nil {
-		return err
-	}
-
 	err = c.createCpakFile(c.AppId, c.Rootfs)
 	if err != nil {
 		return err
 	}
 
+	listener, err := c.createRuntimeListener()
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+
+	err = c.pivotRoot(c.Rootfs)
+	if err != nil {
+		return err
+	}
+
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, c.LayersDir, c.Layers)
-	err = c.startSleepProcess(c.ExtraArgs, _envVars)
+	err = c.serveInit(listener, _envVars)
 	if err != nil {
 		return err
 	}
@@ -215,28 +226,44 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	if err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp")); err != nil {
 		return fmt.Errorf("mount:/tmp: an error occurred while building the layer: %s", err)
 	}
-	for _, mount := range []string{"/proc/", "/sys/"} {
-		if err := tools.MountBind(mount, filepath.Join(rootFs, mount)); err != nil {
-			return fmt.Errorf("mount:%s: an error occurred while building the layer: %s", mount, err)
-		}
+	if err := c.setupBaseDevices(rootFs); err != nil {
+		return err
+	}
+	procPath := filepath.Join(rootFs, "/proc")
+	if err := os.MkdirAll(procPath, 0755); err != nil {
+		return fmt.Errorf("mkdir:/proc: an error occurred while building the layer: %s", err)
+	}
+	if err := syscall.Mount("proc", procPath, "proc", syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, ""); err != nil {
+		return fmt.Errorf("mount:/proc: an error occurred while building the layer: %s", err)
+	}
+	if err := tools.MountBindReadOnly("/sys/", filepath.Join(rootFs, "/sys/"), true); err != nil {
+		return fmt.Errorf("mount:/sys: an error occurred while building the layer: %s", err)
 	}
 	return nil
 }
 
-func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string) error {
+func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, hostExecSocketPath string) error {
 	c.spawnVerbose("Mounting: /tmp")
 	err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp"))
 	if err != nil {
 		return fmt.Errorf("mount:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
-
-	mounts := []string{
-		"/proc/",
-		"/sys/",
+	if err = c.setupBaseDevices(rootFs); err != nil {
+		return err
 	}
-	mounts = append(mounts, overrideMounts...)
 
-	for _, mount := range mounts {
+	procPath := filepath.Join(rootFs, "/proc")
+	if err = os.MkdirAll(procPath, 0755); err != nil {
+		return fmt.Errorf("mkdir:/proc: an error occurred while spawning the namespace: %s", err)
+	}
+	if err = syscall.Mount("proc", procPath, "proc", syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, ""); err != nil {
+		return fmt.Errorf("mount:/proc: an error occurred while spawning the namespace: %s", err)
+	}
+	if err = tools.MountBindReadOnly("/sys/", filepath.Join(rootFs, "/sys/"), true); err != nil {
+		return fmt.Errorf("mount:/sys: an error occurred while spawning the namespace: %s", err)
+	}
+
+	for _, mount := range overrideMounts {
 		c.spawnVerbose("(override) Mounting: ", mount)
 
 		_, err := os.Stat(mount)
@@ -287,26 +314,61 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 			}
 		}
 
-		err = tools.MountBind(mount, filepath.Join(rootFs, mount))
+		if filepath.Clean(mount) == "/etc" {
+			err = tools.MountBindReadOnly(mount, filepath.Join(rootFs, mount), true)
+		} else {
+			err = tools.MountBind(mount, filepath.Join(rootFs, mount))
+		}
 		if err != nil {
 			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
 		}
 	}
 
 	cpakSockPath := "/tmp/cpak.sock"
-	c.spawnVerbose("Waiting for: ", cpakSockPath, " to be available...")
-	for {
-		_, err := os.Stat(cpakSockPath)
-		if err == nil {
-			c.spawnVerbose("Mounting: ", cpakSockPath)
-			err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath))
-			if err != nil {
-				return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockPath, err)
-			}
-			break
+	if _, statErr := os.Stat(cpakSockPath); statErr == nil {
+		c.spawnVerbose("Mounting: ", cpakSockPath)
+		if err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath)); err != nil {
+			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockPath, err)
+		}
+	}
+	if hostExecSocketPath != "" {
+		if _, statErr := os.Stat(hostExecSocketPath); statErr != nil {
+			return fmt.Errorf("hostexec socket is unavailable: %w", statErr)
+		}
+		destination := filepath.Join(rootFs, hostExecSocketPath)
+		if !tools.IsSameFile(hostExecSocketPath, destination) {
+			err = tools.MountBind(hostExecSocketPath, destination)
+		}
+		if err != nil {
+			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", hostExecSocketPath, err)
 		}
 	}
 
+	return nil
+}
+
+func (c *SpawnCmd) setupBaseDevices(rootFs string) error {
+	deviceRoot := filepath.Join(rootFs, "/dev")
+	if err := tools.MountTmpfs(deviceRoot); err != nil {
+		return fmt.Errorf("mount:/dev: an error occurred while spawning the namespace: %s", err)
+	}
+	for _, device := range []string{"null", "zero", "random", "urandom", "tty"} {
+		source := filepath.Join("/dev", device)
+		destination := filepath.Join(deviceRoot, device)
+		if err := tools.MountBind(source, destination); err != nil {
+			return fmt.Errorf("mount:/dev/%s: an error occurred while spawning the namespace: %s", device, err)
+		}
+	}
+	for name, target := range map[string]string{
+		"fd":     "/proc/self/fd",
+		"stdin":  "/proc/self/fd/0",
+		"stdout": "/proc/self/fd/1",
+		"stderr": "/proc/self/fd/2",
+	} {
+		if err := os.Symlink(target, filepath.Join(deviceRoot, name)); err != nil {
+			return fmt.Errorf("link:/dev/%s: an error occurred while spawning the namespace: %s", name, err)
+		}
+	}
 	return nil
 }
 
@@ -320,25 +382,41 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string) error {
 		"/etc/resolv.conf",
 		"/etc/hosts",
 		"/etc/passwd",
+		"/etc/group",
 	}
 
 	for _, conf := range files {
+		content, readErr := os.ReadFile(conf)
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		if readErr != nil {
+			return fmt.Errorf("read:%s: an error occurred while spawning the namespace: %s", conf, readErr)
+		}
 		parentDir := filepath.Dir(conf)
 		err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 		if err != nil {
 			return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
 		}
 
-		c.spawnVerbose("Mounting: ", conf)
-		err = tools.MountBind(conf, filepath.Join(rootFs, conf))
-		if err != nil {
-			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", conf, err)
+		destination := filepath.Join(rootFs, conf)
+		if info, statErr := os.Lstat(destination); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			if err = os.Remove(destination); err != nil {
+				return fmt.Errorf("remove:%s: an error occurred while spawning the namespace: %s", conf, err)
+			}
+		}
+		c.spawnVerbose("Writing: ", conf)
+		if err = os.WriteFile(destination, content, 0644); err != nil {
+			return fmt.Errorf("write:%s: an error occurred while spawning the namespace: %s", conf, err)
+		}
+		if err = tools.MountBindReadOnly(destination, destination, true); err != nil {
+			return fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
 	}
 
 	for _, lib := range nvidiaLibs {
 		c.spawnVerbose("Mounting: ", lib)
-		if err = tools.MountBind(lib, filepath.Join(rootFs, lib)); err != nil {
+		if err = tools.MountBindReadOnly(lib, filepath.Join(rootFs, lib), false); err != nil {
 			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", lib, err)
 		}
 	}
@@ -355,11 +433,6 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string) error {
 		}
 	}
 
-	err = tools.MountBind("/", filepath.Join(rootFs, "/run/host"))
-	if err != nil {
-		return fmt.Errorf("mount:/: an error occurred while spawning the namespace: %s", err)
-	}
-
 	return nil
 }
 
@@ -371,7 +444,7 @@ func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) error {
 		}
 
 		c.spawnVerbose("Linking: ", linkParts[0], " ", linkParts[1])
-		err := tools.MountBind(linkParts[0], filepath.Join(rootFs, linkParts[1]))
+		err := tools.MountBindReadOnly(linkParts[0], filepath.Join(rootFs, linkParts[1]), false)
 		if err != nil {
 			return fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", linkParts[0], linkParts[1], err)
 		}
@@ -411,50 +484,168 @@ func (c *SpawnCmd) pivotRoot(rootFs string) error {
 	if err != nil {
 		return fmt.Errorf("chdir: an error occurred while spawning the namespace: %s", err)
 	}
+	if err = syscall.Unmount("/.pivot_root", syscall.MNT_DETACH); err != nil {
+		return fmt.Errorf("unmount:/.pivot_root: an error occurred while spawning the namespace: %s", err)
+	}
+	if err = os.Remove("/.pivot_root"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove:/.pivot_root: an error occurred while spawning the namespace: %s", err)
+	}
 	return nil
 }
 
-func (c *SpawnCmd) startSleepProcess(cmdArgs []string, envVars []string) error {
-	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
-	l := exec.Command("/sbin/ldconfig")
-	err := l.Run()
+func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
+	if c.ExecSocket == "" {
+		return nil, fmt.Errorf("exec socket is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(c.ExecSocket), 0700); err != nil {
+		return nil, fmt.Errorf("create exec socket directory: %w", err)
+	}
+	if err := os.Remove(c.ExecSocket); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("remove stale exec socket: %w", err)
+	}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: c.ExecSocket, Net: "unix"})
 	if err != nil {
-		return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("listen on exec socket: %w", err)
 	}
-
-	c.spawnVerbose("Starting sleep process")
-	args := []string{}
-	if len(cmdArgs) > 0 {
-		args = append(args, cmdArgs...)
-	} else {
-		args = append(args, "/bin/sleep")
-		args = append(args, "infinity")
+	if err = os.Chmod(c.ExecSocket, 0600); err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("restrict exec socket: %w", err)
 	}
+	return listener, nil
+}
 
-	envv := append(os.Environ(), envVars...)
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = envv
-
-	for _, env := range envv {
+func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string) error {
+	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
+	if _, err := os.Stat("/sbin/ldconfig"); err == nil {
+		l := exec.Command("/sbin/ldconfig")
+		if err = l.Run(); err != nil {
+			return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
+		}
+	}
+	for _, env := range envVars {
 		if strings.HasPrefix(env, "CPAK_") {
 			c.spawnVerbose("CPAK env var found: ", env)
 		}
 	}
-
-	err = cmd.Start()
-	if err != nil {
-		return fmt.Errorf("start: an error occurred while spawning the namespace: %s", err)
+	if err := c.signalReady(); err != nil {
+		return err
 	}
-
-	err = cmd.Process.Release()
-	if err != nil {
-		return fmt.Errorf("release: an error occurred while spawning the namespace: %s", err)
+	c.spawnVerbose("Container init is ready")
+	for {
+		connection, err := listener.AcceptUnix()
+		if err != nil {
+			return fmt.Errorf("accept runtime command: %w", err)
+		}
+		go c.handleRuntimeConnection(connection, envVars)
 	}
+}
 
+func (c *SpawnCmd) signalReady() error {
+	if c.ReadyFd > 0 {
+		ready := os.NewFile(uintptr(c.ReadyFd), "cpak-ready")
+		if ready == nil {
+			return fmt.Errorf("ready file descriptor %d is invalid", c.ReadyFd)
+		}
+		if _, err := ready.Write([]byte{1}); err != nil {
+			_ = ready.Close()
+			return fmt.Errorf("signal readiness: %w", err)
+		}
+		if err := ready.Close(); err != nil {
+			return fmt.Errorf("close readiness descriptor: %w", err)
+		}
+	}
 	return nil
+}
+
+type runtimeOutputWriter struct {
+	writer *runtimeproto.Writer
+}
+
+func (w runtimeOutputWriter) Write(payload []byte) (int, error) {
+	if err := w.writer.Write(runtimeproto.FrameOutput, payload); err != nil {
+		return 0, err
+	}
+	return len(payload), nil
+}
+
+func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string) {
+	defer connection.Close()
+	kind, payload, err := runtimeproto.Read(connection)
+	writer := runtimeproto.NewWriter(connection)
+	if err != nil || kind != runtimeproto.FrameRequest {
+		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
+		return
+	}
+	request, err := runtimeproto.DecodeRequest(payload)
+	if err != nil {
+		_ = writer.Write(runtimeproto.FrameOutput, []byte(err.Error()+"\n"))
+		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
+		return
+	}
+
+	args := append([]string{"launch", "--"}, request.Args...)
+	command := exec.Command(cpakInContainerPath, args...)
+	command.Env = append(append([]string{}, baseEnv...), request.Env...)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if !request.AsRoot {
+		command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
+		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
+		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
+		command.SysProcAttr.GidMappingsEnableSetgroups = false
+		command.SysProcAttr.Credential = &syscall.Credential{Uid: 1000, Gid: 1000}
+	}
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
+		return
+	}
+	output := runtimeOutputWriter{writer: writer}
+	command.Stdout = output
+	command.Stderr = output
+	if err = command.Start(); err != nil {
+		_ = writer.Write(runtimeproto.FrameOutput, []byte(err.Error()+"\n"))
+		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(127))
+		return
+	}
+
+	inputDone := make(chan struct{})
+	go func() {
+		defer close(inputDone)
+		defer stdin.Close()
+		for {
+			frameKind, framePayload, readErr := runtimeproto.Read(connection)
+			if readErr != nil {
+				_ = command.Process.Kill()
+				return
+			}
+			switch frameKind {
+			case runtimeproto.FrameInput:
+				if _, writeErr := stdin.Write(framePayload); writeErr != nil {
+					return
+				}
+			case runtimeproto.FrameInputClose:
+				return
+			}
+		}
+	}()
+
+	waitErr := command.Wait()
+	_ = stdin.Close()
+	code := 0
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			code = 125
+		}
+	}
+	_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(code))
+	_ = connection.CloseWrite()
+	select {
+	case <-inputDone:
+	default:
+	}
+	_, _ = io.Copy(io.Discard, connection)
 }
 
 func (c *SpawnCmd) createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {

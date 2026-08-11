@@ -39,6 +39,12 @@ type Container struct {
 	// HostExecSocketPath is the path to the Unix domain socket used by the hostexec server/client.
 	HostExecSocketPath string `json:"host_exec_socket_path"`
 
+	// ExecSocketPath is the host path used to submit commands to the container init.
+	ExecSocketPath string `json:"exec_socket_path"`
+
+	// PolicyHash identifies the effective permissions used to create the namespaces.
+	PolicyHash string `json:"policy_hash"`
+
 	// Instance identifies the optional application instance.
 	Instance string `json:"instance"`
 

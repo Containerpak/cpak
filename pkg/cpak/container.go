@@ -6,12 +6,15 @@
 package cpak
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +22,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -57,6 +61,10 @@ func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Over
 }
 
 func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string) (container types.Container, err error) {
+	policyHash, err := containerPolicyHash(override)
+	if err != nil {
+		return types.Container{}, err
+	}
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
@@ -88,9 +96,11 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		container.Pid, err = getPidFromEnvContainerId(container.CpakId)
-		if err != nil || container.Pid == 0 {
-			logger.Println("Container not running, cleaning it up:", container.CpakId)
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) {
+			container.Pid, err = getPidFromEnvContainerId(container.CpakId)
+		}
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) {
+			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
 			if err = store.Close(); err != nil {
 				return
 			}
@@ -129,10 +139,12 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		Instance:          instance,
 		StatePath:         statePath,
 		LogPath:           filepath.Join(statePath, "application.log"),
+		PolicyHash:        policyHash,
 		CreateTimestamp:   time.Now(),
 	}
 
 	container.HostExecSocketPath = filepath.Join(container.StatePath, "hostexec.sock")
+	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
 
 	// Start the hostexec server process
 	container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, override.AllowedHostCommands)
@@ -178,12 +190,20 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	return
 }
 
+func containerPolicyHash(override types.Override) (string, error) {
+	encoded, err := json.Marshal(override)
+	if err != nil {
+		return "", fmt.Errorf("encode container policy: %w", err)
+	}
+	hash := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", hash[:]), nil
+}
+
 // StartContainer starts the container with the given config and image.
 // The config is used to set the environment the way the developer wants.
 // The container is started by calling our spawn function, which is the
 // responsible for setting up the pivot root, mounting the layers and
-// starting the init process, this via the rootlesskit binary which creates
-// a new namespace for the container.
+// replacing itself with the init process inside native Linux namespaces.
 func (c *Cpak) StartContainer(container types.Container, app types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, err error) {
 	layers := ""
 	for _, layer := range app.ParsedLayers {
@@ -197,7 +217,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		return
 	}
 
-	uid := fmt.Sprintf("%d", os.Getuid())
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
 	overrideMounts, overrideShims := GetOverrideMounts(override)
@@ -205,26 +224,19 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if isVerbose {
 		cmds = append(cmds, "--debug")
 	}
-	//"--net=slirp4netns",
-	cmds = append(cmds, []string{
-		"--cgroupns=true",
-		"--utsns=true",
-		"--ipcns=true",
-		"--copy-up=/etc",
-		"--propagation=rslave",
-		cpakBinary,
-		"spawn",
-	}...)
+	cmds = append(cmds, "spawn")
 	if isVerbose {
 		cmds = append(cmds, "--verbose")
 	}
-	cmds = append(cmds, "--user-uid", uid)
+	cmds = append(cmds, "--user-uid", strconv.Itoa(os.Getuid()))
 	cmds = append(cmds, "--app-id", app.CpakId)
 	cmds = append(cmds, "--container-id", container.CpakId)
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", layersPath)
+	cmds = append(cmds, "--ready-fd", "3")
+	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
@@ -263,26 +275,61 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	cmds = append(cmds, "--env", "PATH="+buildContainerPath(config.Config.Env))
 
-	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)
+	readyReader, readyWriter, err := os.Pipe()
+	if err != nil {
+		return "", 0, fmt.Errorf("create readiness pipe: %w", err)
+	}
+	defer readyReader.Close()
+	defer readyWriter.Close()
+
+	cmd := nativeNamespaceCommand(cpakBinary, cmds, namespaceOptions{
+		IsolateNetwork: !override.Network,
+		ShareProcesses: override.Process,
+		IsolateCgroup:  true,
+	})
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), containerEnv...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Foreground: false,
-		Setsid:     true,
+	cmd.Env = append(cmd.Env, "CPAK_CONTAINER_ID="+container.CpakId)
+	cmd.ExtraFiles = []*os.File{readyWriter}
+
+	if err = cmd.Start(); err != nil {
+		return "", 0, fmt.Errorf("start container namespace: %w", err)
+	}
+	_ = readyWriter.Close()
+
+	ready := make(chan error, 1)
+	go func() {
+		buffer := []byte{0}
+		_, readErr := io.ReadFull(readyReader, buffer)
+		if readErr == nil && buffer[0] != 1 {
+			readErr = fmt.Errorf("invalid readiness response")
+		}
+		ready <- readErr
+	}()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	select {
+	case err = <-ready:
+		if err != nil {
+			_ = cmd.Process.Kill()
+			return "", 0, fmt.Errorf("container failed before readiness: %w", err)
+		}
+	case err = <-exited:
+		if err == nil {
+			err = fmt.Errorf("container init exited before readiness")
+		}
+		return "", 0, err
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		return "", 0, fmt.Errorf("container readiness timed out")
 	}
 
-	err = cmd.Run()
-	if err != nil {
-		return
-	}
-
-	// The pid of the container is the pid of the init process
-	// and it is stored so that we can attach to it later
-	pid, err = getPidFromEnvContainerId(container.CpakId)
-	if err != nil {
-		return
+	pid = cmd.Process.Pid
+	if err = syscall.Kill(pid, 0); err != nil {
+		return "", 0, fmt.Errorf("container init is not running: %w", err)
 	}
 	return
 }
@@ -359,8 +406,8 @@ func (c *Cpak) StopInstance(origin, version, branch, commit, release, instance s
 	return
 }
 
-// ExecInContainer uses nsenter to enter the pid namespace of the given
-// container and execute the given command.
+// ExecInContainer submits a command to the init process already running inside
+// the container namespaces.
 func (c *Cpak) ExecInContainer(app types.Application, container types.Container, command []string) (err error) {
 	pidToEnter := container.Pid
 	if pidToEnter == 0 {
@@ -370,63 +417,80 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 		}
 	}
 
-	uid := fmt.Sprintf("%d", os.Getuid())
-	gid := fmt.Sprintf("%d", os.Getgid())
-
-	cmds := []string{
-		"-m",
-		"-u",
-		"-U",
-		"--preserve-credentials",
-		"-i",
-		//"-n",
-		// "-p",
-		// "-S", strconv.FormatInt(int64(os.Getuid()), 10),
-		// "-G", strconv.FormatInt(int64(os.Getgid()), 10),
-		"-t",
-		fmt.Sprintf("%d", pidToEnter),
-		"--",
-	}
-
-	if !app.ParsedOverride.AsRoot {
-		cmds = append(
-			cmds,
-			"unshare",
-			"-U",
-			"--map-user="+uid,
-			"--map-group="+gid,
-			"--",
-		)
-	}
-	cmds = append(cmds, command...)
+	override := resolvedOverride(app)
 
 	envVars, err := containerEnvironment(app, container)
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.Command(c.Options.NsenterBinPath, cmds...)
-	logger.Println("Executing command:", cmd.String())
-	cmd.Stdin = os.Stdin
+	execSocketPath := container.ExecSocketPath
+	if execSocketPath == "" {
+		execSocketPath = filepath.Join(container.StatePath, "exec.sock")
+	}
+	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: execSocketPath, Net: "unix"})
+	if err != nil {
+		return fmt.Errorf("connect to container process %d: %w", pidToEnter, err)
+	}
+	defer connection.Close()
+
+	request, err := runtimeproto.EncodeRequest(runtimeproto.Request{
+		Args:   command,
+		Env:    envVars,
+		AsRoot: override.AsRoot,
+	})
+	if err != nil {
+		return err
+	}
+	writer := runtimeproto.NewWriter(connection)
+	if err = writer.Write(runtimeproto.FrameRequest, request); err != nil {
+		return fmt.Errorf("send runtime command: %w", err)
+	}
+	logger.Println("Executing command:", strings.Join(command, " "))
+
 	logFile, logErr := os.OpenFile(container.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if logErr != nil {
 		return fmt.Errorf("open application log: %w", logErr)
 	}
 	defer logFile.Close()
 	output := io.MultiWriter(os.Stdout, logFile)
-	cmd.Stdout = output
-	cmd.Stderr = output
-	cmd.Env = envVars
-
-	err = cmd.Run()
-	if err != nil {
-		code, codeErr := exitCodeFromError(err)
-		if codeErr != nil {
-			return codeErr
+	go func() {
+		buffer := make([]byte, 32*1024)
+		for {
+			read, readErr := os.Stdin.Read(buffer)
+			if read > 0 {
+				if writeErr := writer.Write(runtimeproto.FrameInput, buffer[:read]); writeErr != nil {
+					return
+				}
+			}
+			if readErr != nil {
+				_ = writer.Write(runtimeproto.FrameInputClose, nil)
+				return
+			}
 		}
-		return &types.ExitError{Code: code}
+	}()
+
+	for {
+		kind, payload, readErr := runtimeproto.Read(connection)
+		if readErr != nil {
+			return fmt.Errorf("read runtime response: %w", readErr)
+		}
+		switch kind {
+		case runtimeproto.FrameOutput:
+			if _, err = output.Write(payload); err != nil {
+				return err
+			}
+		case runtimeproto.FrameExit:
+			code, decodeErr := runtimeproto.DecodeExit(payload)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if code != 0 {
+				return &types.ExitError{Code: code}
+			}
+			return nil
+		}
 	}
-	return
 }
 
 func containerEnvironment(app types.Application, container types.Container) ([]string, error) {
@@ -514,6 +578,17 @@ func getPidFromEnvContainerId(containerCpakId string) (pid int, err error) {
 	return
 }
 
+func containerProcessRunning(container types.Container) bool {
+	if container.Pid <= 0 || syscall.Kill(container.Pid, 0) != nil {
+		return false
+	}
+	execSocketPath := container.ExecSocketPath
+	if execSocketPath == "" {
+		execSocketPath = filepath.Join(container.StatePath, "exec.sock")
+	}
+	return socketIsLive(execSocketPath)
+}
+
 // CleanupContainer removes the container with the given id.
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	// Stop hostexec server first
@@ -556,27 +631,28 @@ func (c *Cpak) cleanupNestedContainer(container types.Container) {
 
 // getCpakBinary returns the path to the cpak binary.
 func getCpakBinary() (cpakBinary string, err error) {
-	cpakBinary = os.Args[0]
-	// if the cpak binary is not a full path, we need to find it
-	if !filepath.IsAbs(cpakBinary) {
-		cpakBinaryExe, findErr := exec.LookPath("cpak")
-		if findErr == nil {
-			cpakBinary = cpakBinaryExe
-		} else {
-			homeDir, homeErr := os.UserHomeDir()
-			if homeErr == nil {
-				userPath := filepath.Join(homeDir, ".local", "bin", "cpak")
-				if _, statErr := os.Stat(userPath); statErr == nil {
-					cpakBinary = userPath
-				} else {
-					return "", fmt.Errorf("cpak binary not found in PATH or ~/.local/bin: %v, %v", findErr, statErr)
-				}
-			} else {
-				return "", fmt.Errorf("cpak binary not found in PATH and UserHomeDir failed: %v, %v", findErr, homeErr)
+	if strings.ContainsRune(os.Args[0], os.PathSeparator) {
+		cpakBinary, err = filepath.Abs(os.Args[0])
+		if err != nil {
+			return "", fmt.Errorf("resolve cpak executable path: %w", err)
+		}
+		if _, statErr := os.Stat(cpakBinary); statErr == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(cpakBinary)
+			if resolveErr == nil {
+				cpakBinary = resolved
 			}
+			return cpakBinary, nil
 		}
 	}
-	return
+	cpakBinary, err = os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate cpak executable: %w", err)
+	}
+	resolved, resolveErr := filepath.EvalSymlinks(cpakBinary)
+	if resolveErr == nil {
+		cpakBinary = resolved
+	}
+	return cpakBinary, nil
 }
 
 var nestedMarkerPath = "/tmp/.cpak"

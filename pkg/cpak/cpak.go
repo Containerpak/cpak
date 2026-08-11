@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
-	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/pkg/storage"
 	"github.com/mirkobrombin/go-foundation/v2/core/configuration"
@@ -96,15 +95,7 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 	options.StoreLayersPath = filepath.Join(options.StorePath, "layers")
 	options.StoreContainersPath = filepath.Join(options.StorePath, "containers")
 	options.StoreStatesPath = filepath.Join(options.StorePath, "states")
-	options.RotlesskitBinPath = filepath.Join(options.BinPath, "rootlesskit")
-	options.NsenterBinPath = filepath.Join(options.BinPath, "nsenter")
-
 	err = createCpakDirs(&options)
-	if err != nil {
-		return
-	}
-
-	err = tools.EnsureUnixDeps(options.BinPath, "rootlesskit")
 	if err != nil {
 		return
 	}

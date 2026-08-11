@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -244,28 +243,15 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 	if isVerbose {
 		cmds = append(cmds, "--debug")
 	}
-	cmds = append(cmds, []string{
-		"--cgroupns=true",
-		"--utsns=true",
-		"--ipcns=true",
-		"--copy-up=/etc",
-		"--propagation=rslave",
-		cpakBinary,
-		"dedup",
-	}...)
+	cmds = append(cmds, "dedup")
 	if isVerbose {
 		cmds = append(cmds, "--verbose")
 	}
 	cmds = append(cmds, "--path", layerInStoreDir)
-	cmd := exec.Command(c.Options.RotlesskitBinPath, cmds...)
+	cmd := exec.Command(cpakBinary, cmds...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Foreground: false,
-		Setsid:     true,
-	}
-
 	err = cmd.Run()
 	if err != nil {
 		return
