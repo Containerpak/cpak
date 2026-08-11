@@ -420,6 +420,17 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err = store.Close(); err != nil {
 		return
 	}
+	users, err := c.addonUsers(appToRemove.Origin)
+	if err != nil {
+		return err
+	}
+	if len(users) > 0 {
+		origins := make([]string, 0, len(users))
+		for _, user := range users {
+			origins = append(origins, user.Origin)
+		}
+		return fmt.Errorf("application %s is enabled as an addon by %s", origin, strings.Join(origins, ", "))
+	}
 
 	// Stop all containers associated with the application
 	err = c.Stop(appToRemove.Origin, appToRemove.Version, appToRemove.Branch, appToRemove.Commit, appToRemove.Release)
@@ -454,6 +465,9 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	err = c.removeExports(appToRemove)
 	if err != nil {
 		logger.Printf("Warning: failed to remove all exports for %s: %v", appToRemove.Name, err)
+	}
+	if err = removeAddonConfiguration(appToRemove); err != nil {
+		return fmt.Errorf("remove addon configuration for %s: %w", appToRemove.Name, err)
 	}
 
 	// an Audit is needed to remove resources (containers, exports, etc.)

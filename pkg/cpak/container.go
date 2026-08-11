@@ -61,7 +61,11 @@ func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Over
 }
 
 func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string) (container types.Container, err error) {
-	policyHash, err := containerPolicyHash(override)
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		return types.Container{}, err
+	}
+	policyHash, err := containerPolicyHash(override, addons...)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -175,7 +179,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 	store = nil
 
-	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, config, override)
+	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, addons, config, override)
 	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
@@ -194,8 +198,15 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	return
 }
 
-func containerPolicyHash(override types.Override) (string, error) {
-	encoded, err := json.Marshal(override)
+func containerPolicyHash(override types.Override, addons ...types.Application) (string, error) {
+	policy := struct {
+		Override types.Override         `json:"override"`
+		Addons   []addonPolicyIdentity `json:"addons,omitempty"`
+	}{
+		Override: override,
+		Addons:   addonPolicyIdentities(addons),
+	}
+	encoded, err := json.Marshal(policy)
 	if err != nil {
 		return "", fmt.Errorf("encode container policy: %w", err)
 	}
@@ -224,9 +235,9 @@ func effectiveHostCommands(override types.Override) []string {
 // The container is started by calling our spawn function, which is the
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
-func (c *Cpak) StartContainer(container types.Container, app types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
+func (c *Cpak) StartContainer(container types.Container, app types.Application, addons []types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
 	layers := ""
-	for _, layer := range app.ParsedLayers {
+	for _, layer := range combinedLayers(app, addons) {
 		layers += layer + "|"
 	}
 

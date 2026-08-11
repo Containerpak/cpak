@@ -31,6 +31,7 @@ type CLI struct {
 	Dedup           cmd.DedupCmd           `cmd:"dedup" help:"Deduplicate layers in the local store"`
 	Audit           cmd.AuditCmd           `cmd:"audit" help:"Audit the local store for integrity"`
 	Override        cmd.OverrideCmd        `cmd:"override" help:"Manage application overrides"`
+	Addon           cmd.AddonCmd           `cmd:"addon" help:"Manage application addons"`
 	Extract         cmd.ExtractCmd         `cmd:"extract" help:"Extract a package to a local directory"`
 	Init            cmd.InitCmd            `cmd:"init" help:"Initialize a new cpak package in the current directory"`
 	GenSchema       cmd.GenSchemaCmd       `cmd:"gen-schema" help:"Generate the JSON schema for the cpak manifest"`
