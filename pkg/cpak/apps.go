@@ -209,6 +209,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 		ParsedDesktopEntries: manifest.DesktopEntries,
 		ParsedDependencies:   dependencies,
 		ParsedAddons:         manifest.Addons,
+		IdleTime:             manifest.IdleTime,
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,
@@ -365,6 +366,9 @@ func sameInstallation(app types.Application, updated types.Application) bool {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedAddons, updated.ParsedAddons) {
+		return false
+	}
+	if app.IdleTime != updated.IdleTime {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedDependencies, updated.ParsedDependencies) {

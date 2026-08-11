@@ -43,6 +43,10 @@ type Override struct {
 	Network bool     `json:"network" jsonschema:"description=Enable network namespace,default=true" flag:"network,bool"`
 	Process bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
 
+	MemoryMaxMB int `json:"memoryMaxMB" jsonschema:"minimum=0,description=Maximum memory in MiB,default=0" flag:"memoryMaxMB,int"`
+	CPUQuota    int `json:"cpuQuota" jsonschema:"minimum=0,maximum=1000,description=CPU quota as a percentage of one core,default=0" flag:"cpuQuota,int"`
+	PidsMax     int `json:"pidsMax" jsonschema:"minimum=0,description=Maximum process count,default=0" flag:"pidsMax,int"`
+
 	AsRoot bool `json:"asRoot" jsonschema:"description=Run as root inside container,default=false" flag:"asRoot,bool"`
 
 	AllowedHostCommands []string `json:"allowedHostCommands" jsonschema:"description=Host commands allowed via shim,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0" flag:"allowedHostCommands,strings"`
@@ -70,6 +74,9 @@ func NewOverride() Override {
 		Env:                 []string{},
 		Network:             true,
 		Process:             false,
+		MemoryMaxMB:         0,
+		CPUQuota:            0,
+		PidsMax:             0,
 		AsRoot:              false,
 		AllowedHostCommands: []string{},
 	}

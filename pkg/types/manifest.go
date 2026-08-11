@@ -39,10 +39,7 @@ type CpakManifest struct {
 	// Addons is the list of additional applications which it supports.
 	Addons []string `json:"addons,omitempty" jsonschema:"description=Optional addons"`
 
-	// IdleTime is the idle time in minutes, after which to destroy the
-	// container.
-	//
-	// FIXME: implement IdleTime field usage.
+	// IdleTime is the idle time in minutes, after which to stop the container.
 	IdleTime int `json:"idle_time" jsonschema:"minimum=0,description=Idle time in minutes before stop"`
 
 	// Override is a set of permissions that the user can grant to the

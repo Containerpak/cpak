@@ -6,6 +6,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,7 +14,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
@@ -40,6 +43,7 @@ type SpawnCmd struct {
 	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
 	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
+	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
 	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
@@ -149,7 +153,7 @@ func (c *SpawnCmd) Run() error {
 	}
 
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, c.LayersDir, c.Layers)
-	err = c.serveInit(listener, _envVars)
+	err = c.serveInit(listener, _envVars, time.Duration(c.IdleTime)*time.Minute)
 	if err != nil {
 		return err
 	}
@@ -514,7 +518,7 @@ func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string) error {
+func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, idleTimeout time.Duration) error {
 	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
 	if _, err := os.Stat("/sbin/ldconfig"); err == nil {
 		l := exec.Command("/sbin/ldconfig")
@@ -531,12 +535,46 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string) error
 		return err
 	}
 	c.spawnVerbose("Container init is ready")
+	lastActivity := time.Now()
+	var active atomic.Int64
+	var completed atomic.Int64
 	for {
+		if idleTimeout > 0 {
+			lastCompleted := time.Unix(0, completed.Load())
+			if lastCompleted.After(lastActivity) {
+				lastActivity = lastCompleted
+			}
+			deadline := lastActivity.Add(idleTimeout)
+			if active.Load() > 0 || deadline.Before(time.Now()) {
+				deadline = time.Now().Add(idleTimeout)
+			}
+			if err := listener.SetDeadline(deadline); err != nil {
+				return fmt.Errorf("set runtime listener deadline: %w", err)
+			}
+		}
 		connection, err := listener.AcceptUnix()
 		if err != nil {
+			var netErr net.Error
+			if idleTimeout > 0 && errors.As(err, &netErr) && netErr.Timeout() {
+				lastCompleted := time.Unix(0, completed.Load())
+				if lastCompleted.After(lastActivity) {
+					lastActivity = lastCompleted
+				}
+				if active.Load() == 0 && time.Since(lastActivity) >= idleTimeout {
+					c.spawnVerbose("Stopping idle container")
+					return nil
+				}
+				continue
+			}
 			return fmt.Errorf("accept runtime command: %w", err)
 		}
-		go c.handleRuntimeConnection(connection, envVars)
+		lastActivity = time.Now()
+		active.Add(1)
+		go func() {
+			defer active.Add(-1)
+			defer func() { completed.Store(time.Now().UnixNano()) }()
+			c.handleRuntimeConnection(connection, envVars)
+		}()
 	}
 }
 

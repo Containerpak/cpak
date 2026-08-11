@@ -171,7 +171,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 	store = nil
 
-	_, container.Pid, err = c.StartContainer(container, app, config, override)
+	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, config, override)
 	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
@@ -181,7 +181,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
-	if err = store.SetContainerPid(container.CpakId, container.Pid); err != nil {
+	if err = store.SetContainerRuntime(container.CpakId, container.Pid, container.CgroupPath); err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
@@ -204,7 +204,7 @@ func containerPolicyHash(override types.Override) (string, error) {
 // The container is started by calling our spawn function, which is the
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
-func (c *Cpak) StartContainer(container types.Container, app types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, err error) {
+func (c *Cpak) StartContainer(container types.Container, app types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
 	layers := ""
 	for _, layer := range app.ParsedLayers {
 		layers += layer + "|"
@@ -237,13 +237,14 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--layers-dir", layersPath)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
+	cmds = append(cmds, "--idle-time", strconv.Itoa(app.IdleTime))
 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
 	cmds = append(cmds, "--extra-links", cpakBinary+":"+cpakInContainerPath)
 	dependencyLinks, err := c.dependencyLinks(app)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	for _, link := range dependencyLinks {
 		cmds = append(cmds, "--extra-links", link)
@@ -277,7 +278,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	readyReader, readyWriter, err := os.Pipe()
 	if err != nil {
-		return "", 0, fmt.Errorf("create readiness pipe: %w", err)
+		return "", 0, "", fmt.Errorf("create readiness pipe: %w", err)
 	}
 	defer readyReader.Close()
 	defer readyWriter.Close()
@@ -295,7 +296,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmd.ExtraFiles = []*os.File{readyWriter}
 
 	if err = cmd.Start(); err != nil {
-		return "", 0, fmt.Errorf("start container namespace: %w", err)
+		return "", 0, "", fmt.Errorf("start container namespace: %w", err)
 	}
 	_ = readyWriter.Close()
 
@@ -315,21 +316,26 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	case err = <-ready:
 		if err != nil {
 			_ = cmd.Process.Kill()
-			return "", 0, fmt.Errorf("container failed before readiness: %w", err)
+			return "", 0, "", fmt.Errorf("container failed before readiness: %w", err)
 		}
 	case err = <-exited:
 		if err == nil {
 			err = fmt.Errorf("container init exited before readiness")
 		}
-		return "", 0, err
+		return "", 0, "", err
 	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()
-		return "", 0, fmt.Errorf("container readiness timed out")
+		return "", 0, "", fmt.Errorf("container readiness timed out")
 	}
 
 	pid = cmd.Process.Pid
+	cgroupPath, err = applyCgroupLimits(container.CpakId, pid, override)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		return "", 0, "", err
+	}
 	if err = syscall.Kill(pid, 0); err != nil {
-		return "", 0, fmt.Errorf("container init is not running: %w", err)
+		return "", 0, "", fmt.Errorf("container init is not running: %w", err)
 	}
 	return
 }
@@ -593,6 +599,7 @@ func containerProcessRunning(container types.Container) bool {
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	// Stop hostexec server first
 	stopHostExecServer(container.HostExecPid)
+	cleanupCgroup(container.CpakId, container.CgroupPath)
 
 	// we don't care about the error here, we just want to make sure that
 	// the container filesystem is getting deleted

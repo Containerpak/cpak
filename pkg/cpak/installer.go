@@ -121,6 +121,7 @@ func (c *Cpak) InstallCpak(origin string, manifest *types.CpakManifest, branch s
 		ParsedDesktopEntries: manifest.DesktopEntries,
 		ParsedDependencies:   parsedManifestDependencies,
 		ParsedAddons:         manifest.Addons,
+		IdleTime:             manifest.IdleTime,
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,
 		Config:               config,

@@ -45,6 +45,9 @@ type Container struct {
 	// PolicyHash identifies the effective permissions used to create the namespaces.
 	PolicyHash string `json:"policy_hash"`
 
+	// CgroupPath is the delegated cgroup used for optional resource limits.
+	CgroupPath string `json:"cgroup_path"`
+
 	// Instance identifies the optional application instance.
 	Instance string `json:"instance"`
 

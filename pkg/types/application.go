@@ -78,6 +78,9 @@ type Application struct {
 	// ParsedAddons is the list of additional applications which it supports.
 	ParsedAddons []string `json:"parsed_addons"`
 
+	// IdleTime is the number of idle minutes before the container stops.
+	IdleTime int `json:"idle_time"`
+
 	// ParsedLayers is the list of layers of the application.
 	ParsedLayers []string `json:"parsed_layers"`
 

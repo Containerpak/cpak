@@ -173,6 +173,16 @@ func (s *Store) SetContainerPid(cpakId string, pid int) (err error) {
 	return s.Containers.Put(context.Background(), cpakId, container, 0)
 }
 
+func (s *Store) SetContainerRuntime(cpakId string, pid int, cgroupPath string) error {
+	container, err := s.Containers.Get(context.Background(), cpakId)
+	if err != nil {
+		return err
+	}
+	container.Pid = pid
+	container.CgroupPath = cgroupPath
+	return s.Containers.Put(context.Background(), cpakId, container, 0)
+}
+
 func (s *Store) RemoveApplicationByOriginAndBranch(origin, branch string) error {
 	apps, err := s.GetApplicationsByOrigin(origin, "", branch, "", "")
 	if err != nil {

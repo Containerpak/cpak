@@ -202,6 +202,10 @@ func NewOverride() types.Override {
 		Env:     []string{},
 		Network: true,
 		Process: false,
+
+		MemoryMaxMB: 0,
+		CPUQuota:    0,
+		PidsMax:     0,
 	}
 }
 
