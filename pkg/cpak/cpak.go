@@ -22,8 +22,9 @@ import (
 )
 
 type Cpak struct {
-	Options types.CpakOptions
-	Ctx     context.Context
+	Options    types.CpakOptions
+	Ctx        context.Context
+	servicePID int
 }
 
 // NewCpak creates a new cpak instance.

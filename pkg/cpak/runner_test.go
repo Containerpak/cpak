@@ -35,6 +35,13 @@ func tempSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "cpak.sock")
 }
 
+func TestCpakSocketPathCanBeIsolated(t *testing.T) {
+	t.Setenv("CPAK_SERVICE_SOCKET", "/tmp/cpak-test.sock")
+	if actual := cpakSocketPath(); actual != "/tmp/cpak-test.sock" {
+		t.Fatalf("socket path: got %s", actual)
+	}
+}
+
 func TestBuildNestedRunArgsEncodesTheWholeRequest(t *testing.T) {
 	params := types.RequestParams{
 		Action:      "run",

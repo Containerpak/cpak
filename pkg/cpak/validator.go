@@ -46,11 +46,13 @@ func ValidateManifest(m *types.CpakManifest) error {
 	return nil
 }
 
+// ManifestSchema returns the schema accepted by the runtime validator.
 func ManifestSchema() *jsonschema.Schema {
 	reflector := &jsonschema.Reflector{ExpandedStruct: true}
 	return reflector.Reflect(&types.CpakManifest{})
 }
 
+// ManifestV2Schema returns the editor schema for manifest version 2.
 func ManifestV2Schema() *jsonschema.Schema {
 	schema := ManifestSchema()
 	schema.ID = jsonschema.ID(types.ManifestSchemaURL)

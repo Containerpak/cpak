@@ -24,9 +24,16 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
-// cpakSocketPath is where the cpak service listens for the nested run requests
-// of the containers. It is bind mounted into every container by cmd/spawn.
-const cpakSocketPath = "/tmp/cpak.sock"
+// defaultCpakSocketPath is where the service is exposed inside containers.
+const defaultCpakSocketPath = "/tmp/cpak.sock"
+
+func cpakSocketPath() string {
+	path := os.Getenv("CPAK_SERVICE_SOCKET")
+	if path == "" {
+		return defaultCpakSocketPath
+	}
+	return path
+}
 
 const (
 	// socketDialTimeout bounds a single connection attempt to the service.
@@ -168,7 +175,7 @@ func (c *Cpak) runApplicationInstance(app types.Application, override types.Over
 // prepareSocketListener makes sure the cpak service is listening before a
 // container is started, so that a nested run has somewhere to connect to.
 func (c *Cpak) prepareSocketListener() (err error) {
-	if socketIsLive(cpakSocketPath) {
+	if socketIsLive(cpakSocketPath()) {
 		return
 	}
 
@@ -183,11 +190,39 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	if err != nil {
 		return fmt.Errorf("cannot start the cpak service: %w", err)
 	}
+	c.servicePID = cmd.Process.Pid
 	err = cmd.Process.Release()
 	if err != nil {
 		return fmt.Errorf("cannot detach the cpak service: %w", err)
 	}
-	return waitForSocket(cpakSocketPath, socketWaitTimeout)
+	return waitForSocket(cpakSocketPath(), socketWaitTimeout)
+}
+
+// StopOwnedService stops the service started by this Cpak instance.
+func (c *Cpak) StopOwnedService() error {
+	if c.servicePID <= 0 {
+		return nil
+	}
+	process, err := os.FindProcess(c.servicePID)
+	if err != nil {
+		return err
+	}
+	if err = process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	path := cpakSocketPath()
+	deadline := time.Now().Add(socketWaitTimeout)
+	for socketIsLive(path) && time.Now().Before(deadline) {
+		time.Sleep(socketWaitInterval)
+	}
+	if socketIsLive(path) {
+		return fmt.Errorf("cpak service did not stop: %s", path)
+	}
+	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	c.servicePID = 0
+	return nil
 }
 
 // socketIsLive reports whether something is accepting connections on path.
@@ -234,7 +269,7 @@ func clearStaleSocket(path string) error {
 }
 
 func (c *Cpak) StartSocketListener() (err error) {
-	return c.serveSocket(cpakSocketPath)
+	return c.serveSocket(cpakSocketPath())
 }
 
 // serveSocket serves nested run requests on socketPath. Starting a service
@@ -526,9 +561,10 @@ func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, 
 	}
 
 	// start a connection to the socket
-	conn, err := net.DialTimeout("unix", cpakSocketPath, socketDialTimeout)
+	socketPath := cpakSocketPath()
+	conn, err := net.DialTimeout("unix", socketPath, socketDialTimeout)
 	if err != nil {
-		return fmt.Errorf("cannot reach the cpak service on %s: %w", cpakSocketPath, err)
+		return fmt.Errorf("cannot reach the cpak service on %s: %w", socketPath, err)
 	}
 	defer conn.Close()
 

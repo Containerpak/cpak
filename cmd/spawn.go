@@ -366,13 +366,17 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, sandbox.PathGrant{Path: filepath.Clean(mount), ReadOnly: filepath.Clean(mount) == "/etc"})
 	}
 
-	cpakSockPath := "/tmp/cpak.sock"
-	if _, statErr := os.Stat(cpakSockPath); statErr == nil {
-		c.spawnVerbose("Mounting: ", cpakSockPath)
-		if err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath)); err != nil {
-			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockPath, err)
+	cpakSockSource := os.Getenv("CPAK_SERVICE_SOCKET")
+	if cpakSockSource == "" {
+		cpakSockSource = "/tmp/cpak.sock"
+	}
+	cpakSockTarget := "/tmp/cpak.sock"
+	if _, statErr := os.Stat(cpakSockSource); statErr == nil {
+		c.spawnVerbose("Mounting: ", cpakSockSource)
+		if err = tools.MountBind(cpakSockSource, filepath.Join(rootFs, cpakSockTarget)); err != nil {
+			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockSource, err)
 		}
-		grants = append(grants, sandbox.PathGrant{Path: cpakSockPath})
+		grants = append(grants, sandbox.PathGrant{Path: cpakSockTarget})
 	}
 	if hostExecSocketPath != "" {
 		if _, statErr := os.Stat(hostExecSocketPath); statErr != nil {

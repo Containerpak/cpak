@@ -308,6 +308,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
+	containerEnv = append(containerEnv, "CPAK_SERVICE_SOCKET="+defaultCpakSocketPath)
 	for _, envVar := range containerEnv {
 		cmds = append(cmds, "--env", envVar)
 	}
