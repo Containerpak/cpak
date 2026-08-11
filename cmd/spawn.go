@@ -20,6 +20,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
+	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
@@ -95,7 +96,7 @@ func (c *SpawnCmd) Run() error {
 		if err = c.setupBuildMountPoints(c.Rootfs); err != nil {
 			return err
 		}
-		if err = c.setupExtraLinks(c.Rootfs, c.ExtraLinks); err != nil {
+		if _, err = c.setupExtraLinks(c.Rootfs, c.ExtraLinks); err != nil {
 			return err
 		}
 		if err = c.pivotRoot(c.Rootfs); err != nil {
@@ -104,20 +105,22 @@ func (c *SpawnCmd) Run() error {
 		return c.installRuntimePackages(c.RuntimePackage)
 	}
 
-	err = c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, hostExecSocketPath)
+	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, hostExecSocketPath)
 	if err != nil {
 		return err
 	}
 
-	err = c.injectConfigurationFiles(c.Rootfs)
+	configurationGrants, err := c.injectConfigurationFiles(c.Rootfs)
 	if err != nil {
 		return err
 	}
+	grants = append(grants, configurationGrants...)
 
-	err = c.setupExtraLinks(c.Rootfs, c.ExtraLinks)
+	linkGrants, err := c.setupExtraLinks(c.Rootfs, c.ExtraLinks)
 	if err != nil {
 		return err
 	}
+	grants = append(grants, linkGrants...)
 
 	// Append shims obtained by overrides, to the allowed commands
 	if len(c.MountShims) > 0 {
@@ -153,7 +156,7 @@ func (c *SpawnCmd) Run() error {
 	}
 
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, c.LayersDir, c.Layers)
-	err = c.serveInit(listener, _envVars, time.Duration(c.IdleTime)*time.Minute)
+	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/"}}, grants...), time.Duration(c.IdleTime)*time.Minute)
 	if err != nil {
 		return err
 	}
@@ -230,7 +233,7 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	if err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp")); err != nil {
 		return fmt.Errorf("mount:/tmp: an error occurred while building the layer: %s", err)
 	}
-	if err := c.setupBaseDevices(rootFs); err != nil {
+	if _, err := c.setupBaseDevices(rootFs); err != nil {
 		return err
 	}
 	procPath := filepath.Join(rootFs, "/proc")
@@ -246,25 +249,33 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	return nil
 }
 
-func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, hostExecSocketPath string) error {
+func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, hostExecSocketPath string) ([]sandbox.PathGrant, error) {
+	grants := []sandbox.PathGrant{
+		{Path: "/tmp"},
+		{Path: "/dev"},
+		{Path: "/proc", ReadOnly: true},
+		{Path: "/sys", ReadOnly: true},
+	}
 	c.spawnVerbose("Mounting: /tmp")
 	err := tools.MountTmpfs(filepath.Join(rootFs, "/tmp"))
 	if err != nil {
-		return fmt.Errorf("mount:/tmp: an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("mount:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
-	if err = c.setupBaseDevices(rootFs); err != nil {
-		return err
+	deviceGrants, err := c.setupBaseDevices(rootFs)
+	if err != nil {
+		return nil, err
 	}
+	grants = append(grants, deviceGrants...)
 
 	procPath := filepath.Join(rootFs, "/proc")
 	if err = os.MkdirAll(procPath, 0755); err != nil {
-		return fmt.Errorf("mkdir:/proc: an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("mkdir:/proc: an error occurred while spawning the namespace: %s", err)
 	}
 	if err = syscall.Mount("proc", procPath, "proc", syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, ""); err != nil {
-		return fmt.Errorf("mount:/proc: an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("mount:/proc: an error occurred while spawning the namespace: %s", err)
 	}
 	if err = tools.MountBindReadOnly("/sys/", filepath.Join(rootFs, "/sys/"), true); err != nil {
-		return fmt.Errorf("mount:/sys: an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("mount:/sys: an error occurred while spawning the namespace: %s", err)
 	}
 
 	for _, mount := range overrideMounts {
@@ -283,7 +294,7 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 				c.spawnVerbose("is dir, creating ", mount)
 				err = os.MkdirAll(filepath.Join(rootFs, mount), 0755)
 				if err != nil {
-					return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", mount, err)
+					return nil, fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 			} else {
 				c.spawnVerbose("is file, creating ", mount)
@@ -291,16 +302,16 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 				c.spawnVerbose("parentDir ", parentDir)
 				err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 				if err != nil {
-					return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
+					return nil, fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
 				}
 				c.spawnVerbose("creating file ", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
-					return fmt.Errorf("create:%s: an error occurred while spawning the namespace: %s", mount, err)
+					return nil, fmt.Errorf("create:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 				err = file.Close()
 				if err != nil {
-					return fmt.Errorf("close:%s: an error occurred while spawning the namespace: %s", mount, err)
+					return nil, fmt.Errorf("close:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 			}
 		} else if err == nil {
@@ -309,11 +320,11 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 				c.spawnVerbose("is file, creating ", mount)
 				file, err := os.Create(filepath.Join(rootFs, mount))
 				if err != nil {
-					return fmt.Errorf("create:%s: an error occurred while spawning the namespace: %s", mount, err)
+					return nil, fmt.Errorf("create:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 				err = file.Close()
 				if err != nil {
-					return fmt.Errorf("close:%s: an error occurred while spawning the namespace: %s", mount, err)
+					return nil, fmt.Errorf("close:%s: an error occurred while spawning the namespace: %s", mount, err)
 				}
 			}
 		}
@@ -324,44 +335,49 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 			err = tools.MountBind(mount, filepath.Join(rootFs, mount))
 		}
 		if err != nil {
-			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
+			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: filepath.Clean(mount), ReadOnly: filepath.Clean(mount) == "/etc"})
 	}
 
 	cpakSockPath := "/tmp/cpak.sock"
 	if _, statErr := os.Stat(cpakSockPath); statErr == nil {
 		c.spawnVerbose("Mounting: ", cpakSockPath)
 		if err = tools.MountBind(cpakSockPath, filepath.Join(rootFs, cpakSockPath)); err != nil {
-			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockPath, err)
+			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockPath, err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: cpakSockPath})
 	}
 	if hostExecSocketPath != "" {
 		if _, statErr := os.Stat(hostExecSocketPath); statErr != nil {
-			return fmt.Errorf("hostexec socket is unavailable: %w", statErr)
+			return nil, fmt.Errorf("hostexec socket is unavailable: %w", statErr)
 		}
 		destination := filepath.Join(rootFs, hostExecSocketPath)
 		if !tools.IsSameFile(hostExecSocketPath, destination) {
 			err = tools.MountBind(hostExecSocketPath, destination)
 		}
 		if err != nil {
-			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", hostExecSocketPath, err)
+			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", hostExecSocketPath, err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: hostExecSocketPath})
 	}
 
-	return nil
+	return grants, nil
 }
 
-func (c *SpawnCmd) setupBaseDevices(rootFs string) error {
+func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) {
+	grants := []sandbox.PathGrant{}
 	deviceRoot := filepath.Join(rootFs, "/dev")
 	if err := tools.MountTmpfs(deviceRoot); err != nil {
-		return fmt.Errorf("mount:/dev: an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("mount:/dev: an error occurred while spawning the namespace: %s", err)
 	}
 	for _, device := range []string{"null", "zero", "random", "urandom", "tty"} {
 		source := filepath.Join("/dev", device)
 		destination := filepath.Join(deviceRoot, device)
 		if err := tools.MountBind(source, destination); err != nil {
-			return fmt.Errorf("mount:/dev/%s: an error occurred while spawning the namespace: %s", device, err)
+			return nil, fmt.Errorf("mount:/dev/%s: an error occurred while spawning the namespace: %s", device, err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: filepath.Join("/dev", device)})
 	}
 	for name, target := range map[string]string{
 		"fd":     "/proc/self/fd",
@@ -370,16 +386,17 @@ func (c *SpawnCmd) setupBaseDevices(rootFs string) error {
 		"stderr": "/proc/self/fd/2",
 	} {
 		if err := os.Symlink(target, filepath.Join(deviceRoot, name)); err != nil {
-			return fmt.Errorf("link:/dev/%s: an error occurred while spawning the namespace: %s", name, err)
+			return nil, fmt.Errorf("link:/dev/%s: an error occurred while spawning the namespace: %s", name, err)
 		}
 	}
-	return nil
+	return grants, nil
 }
 
-func (c *SpawnCmd) injectConfigurationFiles(rootFs string) error {
+func (c *SpawnCmd) injectConfigurationFiles(rootFs string) ([]sandbox.PathGrant, error) {
+	grants := []sandbox.PathGrant{}
 	nvidiaLibs, err := cpak.GetNvidiaLibs()
 	if err != nil {
-		return fmt.Errorf("an error occurred while spawning the namespace: %s", err)
+		return nil, fmt.Errorf("an error occurred while spawning the namespace: %s", err)
 	}
 
 	files := []string{
@@ -395,65 +412,69 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string) error {
 			continue
 		}
 		if readErr != nil {
-			return fmt.Errorf("read:%s: an error occurred while spawning the namespace: %s", conf, readErr)
+			return nil, fmt.Errorf("read:%s: an error occurred while spawning the namespace: %s", conf, readErr)
 		}
 		parentDir := filepath.Dir(conf)
 		err = os.MkdirAll(filepath.Join(rootFs, parentDir), 0755)
 		if err != nil {
-			return fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
+			return nil, fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %s", parentDir, err)
 		}
 
 		destination := filepath.Join(rootFs, conf)
 		if info, statErr := os.Lstat(destination); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			if err = os.Remove(destination); err != nil {
-				return fmt.Errorf("remove:%s: an error occurred while spawning the namespace: %s", conf, err)
+				return nil, fmt.Errorf("remove:%s: an error occurred while spawning the namespace: %s", conf, err)
 			}
 		}
 		c.spawnVerbose("Writing: ", conf)
 		if err = os.WriteFile(destination, content, 0644); err != nil {
-			return fmt.Errorf("write:%s: an error occurred while spawning the namespace: %s", conf, err)
+			return nil, fmt.Errorf("write:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
 		if err = tools.MountBindReadOnly(destination, destination, true); err != nil {
-			return fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", conf, err)
+			return nil, fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: conf, ReadOnly: true})
 	}
 
 	for _, lib := range nvidiaLibs {
 		c.spawnVerbose("Mounting: ", lib)
 		if err = tools.MountBindReadOnly(lib, filepath.Join(rootFs, lib), false); err != nil {
-			return fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", lib, err)
+			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", lib, err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: lib, ReadOnly: true})
 	}
 
 	nvidiaLibraryDirs := cpak.GetNvidiaLibraryDirs(nvidiaLibs)
 	if len(nvidiaLibraryDirs) > 0 {
 		ldConfigDir := filepath.Join(rootFs, "/etc/ld.so.conf.d")
 		if err = os.MkdirAll(ldConfigDir, 0755); err != nil {
-			return fmt.Errorf("mkdir:/etc/ld.so.conf.d: an error occurred while spawning the namespace: %s", err)
+			return nil, fmt.Errorf("mkdir:/etc/ld.so.conf.d: an error occurred while spawning the namespace: %s", err)
 		}
 		ldConfig := strings.Join(nvidiaLibraryDirs, "\n") + "\n"
 		if err = os.WriteFile(filepath.Join(ldConfigDir, "cpak-nvidia.conf"), []byte(ldConfig), 0644); err != nil {
-			return fmt.Errorf("write:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
+			return nil, fmt.Errorf("write:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
 		}
 	}
 
-	return nil
+	return grants, nil
 }
 
-func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) error {
+func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) ([]sandbox.PathGrant, error) {
+	grants := []sandbox.PathGrant{}
 	for _, link := range extraLinks {
 		linkParts := strings.SplitN(link, ":", 2)
 		if len(linkParts) != 2 {
-			return fmt.Errorf("invalid link format: an error occurred while spawning the namespace: %s", link)
+			return nil, fmt.Errorf("invalid link format: an error occurred while spawning the namespace: %s", link)
 		}
 
 		c.spawnVerbose("Linking: ", linkParts[0], " ", linkParts[1])
 		err := tools.MountBindReadOnly(linkParts[0], filepath.Join(rootFs, linkParts[1]), false)
 		if err != nil {
-			return fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", linkParts[0], linkParts[1], err)
+			return nil, fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", linkParts[0], linkParts[1], err)
 		}
+		grants = append(grants, sandbox.PathGrant{Path: linkParts[1], ReadOnly: true})
 	}
-	return nil
+	return grants, nil
 }
 
 func (c *SpawnCmd) installRuntimePackages(packages []string) error {
@@ -518,13 +539,23 @@ func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, idleTimeout time.Duration) error {
+func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
 	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
 	if _, err := os.Stat("/sbin/ldconfig"); err == nil {
 		l := exec.Command("/sbin/ldconfig")
 		if err = l.Run(); err != nil {
 			return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
 		}
+	}
+	version, err := sandbox.ApplyLandlock(grants)
+	if err != nil {
+		if errors.Is(err, sandbox.ErrUnavailable) {
+			c.Logger.Warning("Landlock is unavailable; continuing without filesystem restrictions")
+		} else {
+			return err
+		}
+	} else {
+		c.spawnVerbose("Landlock ABI: ", version)
 	}
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "CPAK_") {
