@@ -65,4 +65,45 @@ jobs:
           go test ./...
           go vet ./...
           CGO_ENABLED=0 go build -trimpath -o cpak .
-          ./cpak doctor --json
+          set +e
+          ./cpak doctor --json > doctor.json
+          doctor_status=$?
+          set -e
+          DOCTOR_STATUS="$doctor_status" python3 - <<'PY'
+          import json
+          import os
+
+          with open("doctor.json", encoding="utf-8") as report_file:
+              report = json.load(report_file)
+
+          checks = report.get("checks", [])
+          names = {check.get("name") for check in checks}
+          required_names = {
+              "Linux",
+              "unprivileged user namespaces",
+              "rootless OverlayFS",
+              "mount_setattr",
+              "seccomp",
+              "Landlock",
+              "cgroup v2 delegation",
+              "host init",
+              "desktop display",
+              "desktop audio",
+              "host command bridge",
+          }
+          missing = required_names - names
+          if missing:
+              raise SystemExit(f"doctor report is missing checks: {sorted(missing)}")
+
+          ready = bool(report.get("ready"))
+          required_ready = all(
+              bool(check.get("available"))
+              for check in checks
+              if check.get("required")
+          )
+          status = int(os.environ["DOCTOR_STATUS"])
+          if ready != required_ready:
+              raise SystemExit("doctor readiness does not match its required checks")
+          if (status == 0) != ready:
+              raise SystemExit("doctor exit status does not match its readiness report")
+          PY
