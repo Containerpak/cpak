@@ -132,18 +132,23 @@ const (
 	// UpdateStatusFailed is reported when the update did not complete and the
 	// previous installation was preserved.
 	UpdateStatusFailed UpdateStatus = "failed"
+
+	// UpdateStatusPermissionDenied is reported when the update requests new
+	// permissions that were not explicitly approved.
+	UpdateStatusPermissionDenied UpdateStatus = "permission-denied"
 )
 
 // UpdateResult describes what happened to a single application during an
 // update, it is meant to be formatted by the caller.
 type UpdateResult struct {
-	Origin            string       `json:"origin"`
-	Name              string       `json:"name"`
-	SourceType        string       `json:"source_type"`
-	Status            UpdateStatus `json:"status"`
-	OldVersion        string       `json:"old_version"`
-	NewVersion        string       `json:"new_version"`
-	PermissionChanges []string     `json:"permission_changes,omitempty"`
-	Reason            string       `json:"reason,omitempty"`
-	Err               error        `json:"-"`
+	Origin              string       `json:"origin"`
+	Name                string       `json:"name"`
+	SourceType          string       `json:"source_type"`
+	Status              UpdateStatus `json:"status"`
+	OldVersion          string       `json:"old_version"`
+	NewVersion          string       `json:"new_version"`
+	PermissionChanges   []string     `json:"permission_changes,omitempty"`
+	PermissionAdditions []string     `json:"permission_additions,omitempty"`
+	Reason              string       `json:"reason,omitempty"`
+	Err                 error        `json:"-"`
 }

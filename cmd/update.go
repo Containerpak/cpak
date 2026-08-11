@@ -17,8 +17,9 @@ import (
 )
 
 type UpdateCmd struct {
-	Remote string `arg:"remote" help:"Remote Git repository, all the installed cpak(s) if omitted"`
-	JSON   bool   `cli:"json,j" help:"Print output in JSON format"`
+	Remote         string `arg:"remote" help:"Remote Git repository, all the installed cpak(s) if omitted"`
+	JSON           bool   `cli:"json,j" help:"Print output in JSON format"`
+	NonInteractive bool   `cli:"non-interactive,n" help:"Reject updates that request additional permissions"`
 
 	cli.Base
 }
@@ -31,7 +32,20 @@ func (c *UpdateCmd) Run() error {
 		return fmt.Errorf("an error occurred while updating cpak(s): %s", err)
 	}
 
-	results, err := cp.Update(remote)
+	results, err := cp.UpdateWithOptions(remote, cpak.UpdateOptions{
+		ConfirmPermissions: func(requests []types.UpdateResult) bool {
+			if c.NonInteractive || c.JSON {
+				return false
+			}
+			c.Logger.Info("The following updates request additional permissions:")
+			data := make([][]string, 0, len(requests))
+			for _, result := range requests {
+				data = append(data, []string{result.Name, result.Origin, strings.Join(result.PermissionAdditions, ", ")})
+			}
+			tools.ShowTable([]string{"Name", "Origin", "Additional permissions"}, data)
+			return tools.ConfirmOperation("Approve these permissions and continue?")
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("an error occurred while updating cpak(s): %s", err)
 	}
@@ -50,7 +64,7 @@ func (c *UpdateCmd) Run() error {
 		return nil
 	}
 
-	header := []string{"Name", "Origin", "Source", "Status", "From", "To", "Details"}
+	header := []string{"Name", "Origin", "Source", "Status", "From", "To", "Permissions", "Details"}
 	data := [][]string{}
 	for _, result := range results {
 		data = append(data, []string{
@@ -60,6 +74,7 @@ func (c *UpdateCmd) Run() error {
 			string(result.Status),
 			result.OldVersion,
 			result.NewVersion,
+			strings.Join(result.PermissionAdditions, ", "),
 			result.Reason,
 		})
 	}
@@ -73,7 +88,7 @@ func (c *UpdateCmd) Run() error {
 func updateFailures(results []types.UpdateResult) error {
 	failed := []string{}
 	for _, result := range results {
-		if result.Status == types.UpdateStatusFailed {
+		if result.Status == types.UpdateStatusFailed || result.Status == types.UpdateStatusPermissionDenied {
 			failed = append(failed, result.Origin)
 		}
 	}

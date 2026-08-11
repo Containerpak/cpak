@@ -469,6 +469,9 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err = removeAddonConfiguration(appToRemove); err != nil {
 		return fmt.Errorf("remove addon configuration for %s: %w", appToRemove.Name, err)
 	}
+	if err = c.clearRollbackHistory(origin); err != nil {
+		return fmt.Errorf("remove rollback history for %s: %w", appToRemove.Name, err)
+	}
 
 	// an Audit is needed to remove resources (containers, exports, etc.)
 	// which are not used anymore

@@ -10,6 +10,11 @@ import (
 )
 
 func (c *Cpak) collectGarbage(apps []types.Application, repair bool) error {
+	history, err := c.rollbackHistoryApplications()
+	if err != nil {
+		return err
+	}
+	apps = append(apps, history...)
 	referencedLayers := map[string]struct{}{}
 	for _, app := range apps {
 		for _, layer := range app.ParsedLayers {

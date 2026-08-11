@@ -72,6 +72,11 @@ type updateDeps struct {
 	removeExports func(old types.Application, updated types.Application) error
 }
 
+// UpdateOptions controls updates which need explicit permission approval.
+type UpdateOptions struct {
+	ConfirmPermissions func([]types.UpdateResult) bool
+}
+
 func (c *Cpak) newUpdateDeps() updateDeps {
 	return updateDeps{
 		latestRelease: c.GetLatestRelease,
@@ -90,10 +95,19 @@ func (c *Cpak) newUpdateDeps() updateDeps {
 // according to how it was installed and its outcome is returned as a structured
 // result, so that the caller can format it.
 func (c *Cpak) Update(origin string) (results []types.UpdateResult, err error) {
-	return c.update(origin, c.newUpdateDeps())
+	return c.updateWithOptions(origin, c.newUpdateDeps(), UpdateOptions{})
 }
 
 func (c *Cpak) update(origin string, deps updateDeps) (results []types.UpdateResult, err error) {
+	return c.updateWithOptions(origin, deps, UpdateOptions{})
+}
+
+// UpdateWithOptions updates applications after checking requested permissions.
+func (c *Cpak) UpdateWithOptions(origin string, options UpdateOptions) (results []types.UpdateResult, err error) {
+	return c.updateWithOptions(origin, c.newUpdateDeps(), options)
+}
+
+func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateOptions) (results []types.UpdateResult, err error) {
 	apps, err := c.GetInstalledApps()
 	if err != nil {
 		return nil, err
@@ -112,17 +126,100 @@ func (c *Cpak) update(origin string, deps updateDeps) (results []types.UpdateRes
 		return nil, fmt.Errorf("application not installed: %s", origin)
 	}
 
-	results = []types.UpdateResult{}
+	preflight := make([]types.UpdateResult, 0, len(selected))
+	approvalNeeded := []types.UpdateResult{}
 	for _, app := range selected {
-		results = append(results, c.updateApplication(app, deps))
+		result := c.preflightUpdate(app, deps)
+		preflight = append(preflight, result)
+		if len(result.PermissionAdditions) > 0 {
+			approvalNeeded = append(approvalNeeded, result)
+		}
+	}
+
+	approved := len(approvalNeeded) == 0 || options.ConfirmPermissions != nil && options.ConfirmPermissions(approvalNeeded)
+	approvedAdditions := map[string]map[string]bool{}
+	if approved {
+		for _, result := range approvalNeeded {
+			approvedAdditions[result.Origin] = map[string]bool{}
+			for _, addition := range result.PermissionAdditions {
+				approvedAdditions[result.Origin][addition] = true
+			}
+		}
+	}
+	results = make([]types.UpdateResult, 0, len(preflight))
+	for index, app := range selected {
+		result := preflight[index]
+		if result.Status != "" {
+			results = append(results, result)
+			continue
+		}
+		if len(result.PermissionAdditions) > 0 && !approved {
+			result.Status = types.UpdateStatusPermissionDenied
+			result.Reason = "additional permissions were not approved"
+			results = append(results, result)
+			continue
+		}
+		results = append(results, c.updateApplication(app, deps, approvedAdditions[app.Origin]))
 	}
 
 	return results, nil
 }
 
+func (c *Cpak) preflightUpdate(app types.Application, deps updateDeps) (result types.UpdateResult) {
+	result = types.UpdateResult{
+		Origin:     app.Origin,
+		Name:       app.Name,
+		SourceType: app.SourceType(),
+		OldVersion: app.Version,
+		NewVersion: app.Version,
+	}
+	if app.Commit != "" {
+		result.Status = types.UpdateStatusPinned
+		result.Reason = "installed from an immutable commit"
+		return result
+	}
+
+	branch := app.Branch
+	release := app.Release
+	switch result.SourceType {
+	case "branch":
+	case "release":
+		latest, err := deps.latestRelease(app.Origin)
+		if err != nil {
+			if errors.Is(err, ErrLatestReleaseUnsupported) {
+				result.Status = types.UpdateStatusUnsupported
+				result.Reason = err.Error()
+				return result
+			}
+			return failedUpdate(result, err)
+		}
+		if latest == app.Release {
+			result.Status = types.UpdateStatusUpToDate
+			return result
+		}
+		release = latest
+		result.NewVersion = latest
+	default:
+		result.Status = types.UpdateStatusUnsupported
+		result.Reason = "unknown source type"
+		return result
+	}
+
+	manifest, err := deps.fetchManifest(app.Origin, branch, release, "")
+	if err != nil {
+		return failedUpdate(result, err)
+	}
+	if err = c.ValidateManifest(manifest); err != nil {
+		return failedUpdate(result, err)
+	}
+	result.PermissionChanges = app.ParsedOverride.Diff(manifest.Override)
+	result.PermissionAdditions = app.ParsedOverride.Additions(manifest.Override)
+	return result
+}
+
 // updateApplication updates a single installed application, restoring the
 // previous store record and exports whenever a step fails.
-func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result types.UpdateResult) {
+func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approvedAdditions map[string]bool) (result types.UpdateResult) {
 	result = types.UpdateResult{
 		Origin:     app.Origin,
 		Name:       app.Name,
@@ -154,10 +251,6 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 			}
 			return failedUpdate(result, errLatest)
 		}
-		if latest == app.Release {
-			result.Status = types.UpdateStatusUpToDate
-			return result
-		}
 		release = latest
 	default:
 		result.Status = types.UpdateStatusUnsupported
@@ -172,6 +265,15 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 
 	if err = c.ValidateManifest(manifest); err != nil {
 		return failedUpdate(result, err)
+	}
+	result.PermissionChanges = app.ParsedOverride.Diff(manifest.Override)
+	result.PermissionAdditions = app.ParsedOverride.Additions(manifest.Override)
+	for _, addition := range result.PermissionAdditions {
+		if !approvedAdditions[addition] {
+			result.Status = types.UpdateStatusPermissionDenied
+			result.Reason = "additional permissions were not approved"
+			return result
+		}
 	}
 
 	dependencies, err := deps.installDeps(app.Origin, manifest)
@@ -217,8 +319,6 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
 	}
-	result.PermissionChanges = app.ParsedOverride.Diff(updated.ParsedOverride)
-
 	if sameInstallation(app, updated) {
 		if err = deps.createExports(updated); err != nil {
 			return failedUpdate(result, err)
@@ -244,6 +344,10 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps) (result
 	}
 
 	if err = deps.stop(app); err != nil {
+		restoreExports(app, updated, deps)
+		return failedUpdate(result, err)
+	}
+	if err = c.recordRollbackHistory(app); err != nil {
 		restoreExports(app, updated, deps)
 		return failedUpdate(result, err)
 	}

@@ -18,6 +18,7 @@ import (
 type CLI struct {
 	Install         cmd.InstallCmd         `cmd:"install" help:"Install a package from a remote Git repository"`
 	Update          cmd.UpdateCmd          `cmd:"update" help:"Update one or all the packages in the local store"`
+	Rollback        cmd.RollbackCmd        `cmd:"rollback" help:"Restore the previous installed version of a package"`
 	Remove          cmd.RemoveCmd          `cmd:"remove" help:"Remove a package from the local store"`
 	List            cmd.ListCmd            `cmd:"list" help:"List all the packages in the local store"`
 	Shell           cmd.ShellCmd           `cmd:"shell" help:"Spawn a shell inside a container"`

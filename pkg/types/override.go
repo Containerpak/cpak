@@ -99,3 +99,39 @@ func (o Override) Diff(next Override) []string {
 	}
 	return changes
 }
+
+// Additions returns permissions newly granted by next.
+func (o Override) Additions(next Override) []string {
+	current := reflect.ValueOf(o)
+	updated := reflect.ValueOf(next)
+	typeOfOverride := current.Type()
+	changes := []string{}
+	for index := 0; index < current.NumField(); index++ {
+		field := typeOfOverride.Field(index)
+		key := strings.Split(field.Tag.Get("json"), ",")[0]
+		if key == "" {
+			continue
+		}
+		switch current.Field(index).Kind() {
+		case reflect.Bool:
+			if !current.Field(index).Bool() && updated.Field(index).Bool() {
+				changes = append(changes, key)
+			}
+		case reflect.Slice:
+			for item := 0; item < updated.Field(index).Len(); item++ {
+				found := false
+				for currentItem := 0; currentItem < current.Field(index).Len(); currentItem++ {
+					if reflect.DeepEqual(current.Field(index).Index(currentItem).Interface(), updated.Field(index).Index(item).Interface()) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					changes = append(changes, key)
+					break
+				}
+			}
+		}
+	}
+	return changes
+}

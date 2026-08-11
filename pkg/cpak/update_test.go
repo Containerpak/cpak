@@ -166,7 +166,9 @@ func TestUpdateBranchInstallRefreshesRecord(t *testing.T) {
 	})
 
 	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}", imageDigest: "sha256:new"}
-	results, err := c.update(testOrigin, stub.deps())
+	results, err := c.updateWithOptions(testOrigin, stub.deps(), UpdateOptions{
+		ConfirmPermissions: func([]types.UpdateResult) bool { return true },
+	})
 	if err != nil {
 		t.Fatalf("update returned an error: %v", err)
 	}
@@ -245,7 +247,9 @@ func TestUpdateBranchInstallRefreshesOverride(t *testing.T) {
 	manifest := newTestManifest()
 	manifest.Override.FsExtra = []string{"/etc/machine-id"}
 	stub := &updateStub{manifest: manifest, layers: []string{"layer"}, config: "{}"}
-	results, err := c.update(testOrigin, stub.deps())
+	results, err := c.updateWithOptions(testOrigin, stub.deps(), UpdateOptions{
+		ConfirmPermissions: func([]types.UpdateResult) bool { return true },
+	})
 	if err != nil {
 		t.Fatalf("update returned an error: %v", err)
 	}
@@ -256,6 +260,81 @@ func TestUpdateBranchInstallRefreshesOverride(t *testing.T) {
 	apps := storedApplications(t, c)
 	if len(apps) != 1 || len(apps[0].ParsedOverride.FsExtra) != 1 || apps[0].ParsedOverride.FsExtra[0] != "/etc/machine-id" {
 		t.Fatalf("expected the refreshed override, got %+v", apps)
+	}
+}
+
+func TestUpdateRejectsAdditionalPermissionsBeforeMutation(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:       testCpakId("branch", "main"),
+		Name:         "demo",
+		Version:      "main",
+		Branch:       "main",
+		Origin:       testOrigin,
+		ParsedLayers: []string{"oldlayer"},
+		Config:       "{}",
+	})
+
+	manifest := newTestManifest()
+	manifest.Override.FsExtra = []string{"/etc/machine-id"}
+	stub := &updateStub{manifest: manifest, layers: []string{"newlayer"}, config: "{}"}
+	results, err := c.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if results[0].Status != types.UpdateStatusPermissionDenied {
+		t.Fatalf("expected permission denial, got %q", results[0].Status)
+	}
+	if len(results[0].PermissionAdditions) != 1 || results[0].PermissionAdditions[0] != "fsExtra" {
+		t.Fatalf("unexpected permission additions: %v", results[0].PermissionAdditions)
+	}
+	if stub.pulled != 0 || stub.exported != 0 || stub.stopped != 0 {
+		t.Fatalf("update mutated state before approval: %+v", stub)
+	}
+	apps := storedApplications(t, c)
+	if len(apps) != 1 || apps[0].ParsedLayers[0] != "oldlayer" {
+		t.Fatalf("installation changed without approval: %+v", apps)
+	}
+}
+
+func TestUpdateRejectsPermissionsAddedAfterPreflight(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:       testCpakId("branch", "main"),
+		Name:         "demo",
+		Version:      "main",
+		Branch:       "main",
+		Origin:       testOrigin,
+		ParsedLayers: []string{"oldlayer"},
+		Config:       "{}",
+	})
+
+	approved := newTestManifest()
+	approved.Override.Network = true
+	changed := newTestManifest()
+	changed.Override.Network = true
+	changed.Override.DeviceDri = true
+	stub := &updateStub{manifest: approved, layers: []string{"newlayer"}, config: "{}"}
+	deps := stub.deps()
+	fetches := 0
+	deps.fetchManifest = func(origin, branch, release, commit string) (*types.CpakManifest, error) {
+		fetches++
+		if fetches == 1 {
+			return approved, nil
+		}
+		return changed, nil
+	}
+	results, err := c.updateWithOptions(testOrigin, deps, UpdateOptions{
+		ConfirmPermissions: func([]types.UpdateResult) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if results[0].Status != types.UpdateStatusPermissionDenied {
+		t.Fatalf("expected permission denial, got %q", results[0].Status)
+	}
+	if stub.pulled != 0 {
+		t.Fatal("update pulled layers after the manifest changed")
 	}
 }
 

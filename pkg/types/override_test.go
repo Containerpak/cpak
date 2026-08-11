@@ -17,3 +17,12 @@ func TestOverrideDiffReportsChangedPermissions(t *testing.T) {
 		t.Fatalf("expected %v, got %v", expected, changes)
 	}
 }
+
+func TestOverrideAdditionsReportsOnlyNewPermissions(t *testing.T) {
+	before := Override{Network: true, FsExtra: []string{"/one"}}
+	after := Override{Network: true, DeviceDri: true, FsExtra: []string{"/one", "/two"}}
+	additions := before.Additions(after)
+	if len(additions) != 2 || additions[0] != "deviceDri" || additions[1] != "fsExtra" {
+		t.Fatalf("unexpected additions: %v", additions)
+	}
+}
