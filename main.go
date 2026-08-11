@@ -30,6 +30,7 @@ type CLI struct {
 	Service         cmd.ServiceCmd         `cmd:"service" help:"Manage cpak services"`
 	Stop            cmd.StopCmd            `cmd:"stop" help:"Stop a running container"`
 	Dedup           cmd.DedupCmd           `cmd:"dedup" help:"Deduplicate layers in the local store"`
+	GC              cmd.GCCmd              `cmd:"gc" help:"Find or remove unreferenced data"`
 	Audit           cmd.AuditCmd           `cmd:"audit" help:"Audit the local store for integrity"`
 	Override        cmd.OverrideCmd        `cmd:"override" help:"Manage application overrides"`
 	Addon           cmd.AddonCmd           `cmd:"addon" help:"Manage application addons"`

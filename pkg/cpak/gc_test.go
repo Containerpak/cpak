@@ -34,3 +34,46 @@ func TestCollectGarbageKeepsReferencedLayers(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectGarbageReportsBeforeApplying(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	orphan := c.GetInStoreDir("layers", "orphan")
+	cached := filepath.Join(c.Options.CachePath, "download")
+	if err := os.MkdirAll(orphan, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(c.Options.CachePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "data"), []byte("layer"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cached, []byte("cache"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := c.collectGarbageReport(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Applied || len(report.Layers) != 1 || len(report.Cache) != 1 || report.Bytes < 10 {
+		t.Fatalf("unexpected dry-run report: %+v", report)
+	}
+	for _, path := range []string{orphan, cached} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("dry run removed %s: %v", path, err)
+		}
+	}
+	report, err = c.collectGarbageReport(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Applied {
+		t.Fatal("apply report is not marked as applied")
+	}
+	for _, path := range []string{orphan, cached} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("apply kept %s: %v", path, err)
+		}
+	}
+}

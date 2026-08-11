@@ -2,6 +2,7 @@ package cpak
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -9,10 +10,52 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+type GarbageItem struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+type GarbageReport struct {
+	Applied bool          `json:"applied"`
+	Layers  []GarbageItem `json:"layers"`
+	Cache   []GarbageItem `json:"cache"`
+	Bytes   int64         `json:"bytes"`
+}
+
+func (c *Cpak) CollectGarbage(apply bool) (GarbageReport, error) {
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return GarbageReport{}, err
+	}
+	apps, err := store.GetApplications()
+	closeErr := store.Close()
+	if err != nil {
+		return GarbageReport{}, err
+	}
+	if closeErr != nil {
+		return GarbageReport{}, closeErr
+	}
+	return c.collectGarbageReport(apps, apply)
+}
+
 func (c *Cpak) collectGarbage(apps []types.Application, repair bool) error {
+	report, err := c.collectGarbageReport(apps, repair)
+	if err == nil && !repair {
+		for _, item := range report.Layers {
+			logger.Printf("Layer %s is not referenced by any installed application.", item.Path)
+		}
+		for _, item := range report.Cache {
+			logger.Printf("Cached layer %s can be removed.", item.Path)
+		}
+	}
+	return err
+}
+
+func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (GarbageReport, error) {
+	report := GarbageReport{Applied: apply, Layers: []GarbageItem{}, Cache: []GarbageItem{}}
 	history, err := c.rollbackHistoryApplications()
 	if err != nil {
-		return err
+		return report, err
 	}
 	apps = append(apps, history...)
 	referencedLayers := map[string]struct{}{}
@@ -22,20 +65,29 @@ func (c *Cpak) collectGarbage(apps []types.Application, repair bool) error {
 		}
 	}
 
-	if err := c.collectOrphanedLayers(referencedLayers, repair); err != nil {
-		return err
+	report.Layers, err = c.collectOrphanedLayers(referencedLayers, apply)
+	if err != nil {
+		return report, err
 	}
-	return c.collectCachedLayers(repair)
+	report.Cache, err = c.collectCachedLayers(apply)
+	if err != nil {
+		return report, err
+	}
+	for _, item := range append(append([]GarbageItem{}, report.Layers...), report.Cache...) {
+		report.Bytes += item.Bytes
+	}
+	return report, nil
 }
 
-func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, repair bool) error {
+func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, apply bool) ([]GarbageItem, error) {
+	items := []GarbageItem{}
 	layersDir := c.GetInStoreDir("layers")
 	entries, err := os.ReadDir(layersDir)
 	if os.IsNotExist(err) {
-		return nil
+		return items, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -45,34 +97,59 @@ func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, repair bool
 			continue
 		}
 		path := filepath.Join(layersDir, entry.Name())
-		if !repair {
-			logger.Printf("Layer %s is not referenced by any installed application.", path)
+		item, err := garbageItem(path)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+		if !apply {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("remove orphaned layer %s: %w", path, err)
+			return nil, fmt.Errorf("remove orphaned layer %s: %w", path, err)
 		}
 	}
-	return nil
+	return items, nil
 }
 
-func (c *Cpak) collectCachedLayers(repair bool) error {
+func (c *Cpak) collectCachedLayers(apply bool) ([]GarbageItem, error) {
+	items := []GarbageItem{}
 	entries, err := os.ReadDir(c.Options.CachePath)
 	if os.IsNotExist(err) {
-		return nil
+		return items, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, entry := range entries {
 		path := filepath.Join(c.Options.CachePath, entry.Name())
-		if !repair {
-			logger.Printf("Cached layer %s can be removed.", path)
+		item, err := garbageItem(path)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+		if !apply {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("remove cached layer %s: %w", path, err)
+			return nil, fmt.Errorf("remove cached layer %s: %w", path, err)
 		}
 	}
-	return nil
+	return items, nil
+}
+
+func garbageItem(path string) (GarbageItem, error) {
+	item := GarbageItem{Path: path}
+	err := filepath.WalkDir(path, func(entryPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		item.Bytes += info.Size()
+		return nil
+	})
+	return item, err
 }
