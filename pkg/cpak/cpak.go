@@ -99,8 +99,15 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 	if err != nil {
 		return
 	}
+	cleanupLegacyRuntimeTools(options.BinPath)
 
 	return options, nil
+}
+
+func cleanupLegacyRuntimeTools(binPath string) {
+	for _, name := range []string{"nsenter", "rootlessctl", "rootlesskit", "rootlesskit-docker-proxy"} {
+		_ = os.Remove(filepath.Join(binPath, name))
+	}
 }
 
 func bindDaBaDeeOptions(config *configuration.Configuration, options *storage.StorageOptions) {

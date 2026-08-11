@@ -35,6 +35,7 @@ type CLI struct {
 	Init            cmd.InitCmd            `cmd:"init" help:"Initialize a new cpak package in the current directory"`
 	GenSchema       cmd.GenSchemaCmd       `cmd:"gen-schema" help:"Generate the JSON schema for the cpak manifest"`
 	Validate        cmd.ValidateCmd        `cmd:"validate" help:"Validate a cpak manifest"`
+	Doctor          cmd.DoctorCmd          `cmd:"doctor" help:"Check host support for the cpak runtime"`
 	MigrateManifest cmd.MigrateManifestCmd `cmd:"migrate-manifest" help:"Migrate a manifest to version 2"`
 	HostExecServer  cmd.HostExecServerCmd  `cmd:"hostexec-server" help:"Start the hostexec server"`
 	HostExecClient  cmd.HostExecClientCmd  `cmd:"hostexec-client" help:"Start the hostexec client"`
