@@ -172,9 +172,3 @@ License: MIT
 License: MIT
 [https://github.com/go-gorm/gorm/blob/v1.26.1/LICENSE](https://github.com/go-gorm/gorm/blob/v1.26.1/LICENSE)
 
-## Binaries
-
-**github.com/rootless-containers/rootlesskit**
-License: Apache-2.0
-[https://github.com/rootless-containers/rootlesskit/blob/master/LICENSE](https://github.com/rootless-containers/rootlesskit/blob/master/LICENSE)
-

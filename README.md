@@ -1,170 +1,149 @@
 <div align="center">
   <img src="cpak-logo.svg#gh-light-mode-only" height="120">
   <img src="cpak-logo.svg#gh-dark-mode-only" height="120">
-  <p>A fast, decentralized, portable,  powerful and low-memory footprint package 
-    format for Linux.</p>
+  <p>A portable, low-overhead application format for Linux.</p>
   <p>
     <a href="https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md">
-      <img src="https://img.shields.io/badge/License-FPAL_TCV_1.0-orange.svg" alt="License: FPAL-tcv-1.0">
+      <img src="https://img.shields.io/badge/License-FPAL_TCV_1.0-orange.svg" alt="License: FPAL-TCV-1.0">
     </a>
   </p>
 </div>
 
 ---
 
-cpak is meant to simplify the process of distributing software via OCI images,
-and to integrate with the operating system, bringing the benefits of
-containerization to the desktop*, in a truly native fashion.
+Cpak installs applications from OCI images while keeping package metadata in a
+Git repository. It provides native desktop integration, shared content-addressed
+layers, atomic updates and a rootless Linux sandbox from one Go binary.
 
-*cpak works for desktop, server and basically everything that runs Linux. 
+## Install
 
-> **Note:**
-> cpak is still in early development.
+Download the binary for the current `v2` build from the
+[continuous release](https://github.com/Containerpak/cpak/releases/tag/continuous),
+then install it in a directory on `PATH`:
 
-## Installation
+```sh
+install -Dm755 cpak "$HOME/.local/bin/cpak"
+cpak doctor
+```
 
-cpak is standalone, and can be installed by downloading the latest release from
-the releases page (when those will be available), or by building it from source.
+`cpak doctor` checks user namespaces, rootless OverlayFS, seccomp, Landlock,
+cgroup delegation, display, audio and the controlled host command bridge. It
+prints a JSON report with `cpak doctor --json`.
 
-### Building from source
-
-cpak is written in Go, and can be built with the following command:
+To build from source:
 
 ```sh
 make all
 ```
 
-This will generate a `cpak` binary in the current directory. Note that using
-`go` directly is not recommended, as it will fail due to the missing
-`rootlesskit.tar.gz` tarball, which cpak embeds.
+The build produces one `cpak` binary and does not embed a second container
+runtime.
 
-The `cpak-test` script can be used as an alternative to build and run cpak
-in one command, it requires the `rootlesskit.tar.gz` tarball to be present in
-the `pkg/tools` directory.
+## Use
 
-## Usage
-
-cpak has a command-line interface, which can be used to create, install and
-remove packages, among other things.
+Install and run an application by its package repository:
 
 ```sh
-Usage:
-  cpak [command]
-
-Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  help        Help about any command
-  install     Install a package from a remote Git repository
-  list        List all installed packages
-  remove      Remove a package installed from a remote Git repository
-  run         Run a package from a remote Git repository
-  shell       Shell into a package
-  spawn       Spawn a new namespace
-
-Flags:
-  -h, --help      help for cpak
-  -v, --version   version for cpak
-
-Use "cpak [command] --help" for more information about a command.
+cpak install github.com/containerpak/bottles
+cpak run github.com/containerpak/bottles bottles
 ```
 
-## Technical details
+Other common operations:
 
-### Container's lifecycle
+```sh
+cpak list
+cpak update
+cpak stop github.com/containerpak/bottles
+cpak audit
+cpak audit --repair
+```
 
-cpak uses `rootlesskit` to spawn a new namespace, and then uses `unshare` to
-enter it and run the cpak `spawn` command. This command is responsible for
-creating the container's filesystem, mounting all the OCI image layers, setting
-up the pivot_root and finally executing the requested command.
+Applications can be pinned to a branch, release or commit. If none is selected,
+Cpak follows the `main` branch.
 
-In cpak, containers are of volatile nature, and are destroyed as soon as the
-main process (the `spawn` command) exits. This is done to ensure that the
-container's filesystem is always in a clean state at each run.
+## Addons and SDKs
 
-The container always refers to an application, and is identified by its
-internal Id.
+An application declares which optional packages it supports. Enabled addons are
+mounted above the application layers without expanding its permissions. This is
+useful for SDKs in an editor:
 
-Once a container is spawned, cpak will use it for all the subsequent commands
-that require a container for that application, so that the container is not
-recreated at each command execution, leading to a faster and more efficient
-experience and letting the user request multiple instances of the same
-applications simultaneously.
+```sh
+cpak addon list github.com/containerpak/vscode
+cpak addon enable github.com/containerpak/vscode github.com/containerpak/sdk-go
+cpak addon enable github.com/containerpak/vscode github.com/containerpak/sdk-node-lts
+```
 
-### Applications
+The selection belongs to that application. Disabling an addon rebuilds its
+runtime view, and an addon cannot be removed while another installed package is
+using it.
 
-An application, in the context of cpak, is an OCI image that contains one
-or more software packages.
+## Manifest v2
 
-In cpak, applications are identified by their origin, which is the Git
-repository URL from which the application was installed.
-
-#### Versioning
-
-cpak uses Git branches, tags and commits to identify the version of an
-application. When installing an application, the user can specify the branch,
-tag or commit to use, and cpak will use that to fetch the application's
-manifest. By default, cpak will use the `main` branch if no version, branch or
-tag is specified.
-
-The user can install multiple versions of the same application, and can choose
-which version to run when executing the `run` command, by specifying the
-version's branch, tag or commit.
-
-#### Manifest
-
-The application's manifest is a JSON file that contains all the information
-about the application:
-
-> **Note:**
-> the manifest is still in early development, and is subject to change
-> when [this issue](https://github.com/Containerpak/cpak/issues/1) will be
-> resolved.
+Each package repository contains a strict `cpak.json` manifest. Unknown fields
+and declared features that Cpak cannot apply are rejected.
 
 ```json
 {
-  "name": "My application",
-  "description": "My application's description",
-  "version": "0.0.1",
-  "image": "ghcr.io/my-org/my-app:latest",
-  "binaries": ["/usr/bin/my-app"],
-  "desktop_entries": ["/usr/share/applications/my-app.desktop"],
-  "dependencies": ["my-dependency"],
-  "addons": ["my-addition"]
+  "manifest_version": "2.0",
+  "name": "Example",
+  "description": "Example application.",
+  "version": "1.0.0",
+  "image": "ghcr.io/example/example:main",
+  "binaries": ["/usr/bin/example"],
+  "desktop_entries": ["/usr/share/applications/example.desktop"],
+  "dependencies": [],
+  "addons": [],
+  "idle_time": 0,
+  "override": {
+    "socketWayland": true,
+    "deviceDri": true,
+    "fsHostHome": true,
+    "network": true
+  }
 }
 ```
 
-The manifest contains the following fields:
+Create, validate and migrate manifests with the CLI:
 
-- `name`: the application's name
-- `description`: the application's description
-- `version`: the application's version (in that specific branch or tag)
-- `image`: the application's OCI image [1]
-- `binaries`: a list of binaries that the application provides
-- `desktop_entries`: a list of desktop entries that the application provides
-- `dependencies`: a list of applications that the application depends on
-- `addons`: a list of addons that the application supports
+```sh
+cpak init --help
+cpak validate cpak.json
+cpak gen-schema
+cpak migrate-manifest cpak.json
+```
 
-##### Dependencies
+Dependencies are installed with the application. Addons remain optional. The
+structured update result records every effective permission change.
 
-Dependencies are applications that the application depends on, and that must be
-installed alongside the application. Dependencies are installed recursively,
-meaning that if an application depends on another application, which in turn
-depends on another application, all the dependencies will be installed.
+## Runtime and sandbox
 
-Dependencies does not have to use the same OCI image as the application, and
-can be installed from different Git repositories, by just specifying the
-repository URL (origin) in the manifest.
+Cpak creates user, mount, PID, IPC, UTS, cgroup and optional network namespaces
+directly through the Linux kernel. A per-container PID 1 owns the lifecycle and
+accepts bounded local execution requests over a private Unix socket. OverlayFS
+combines immutable OCI layers with disposable runtime state.
 
-Dependencies' exports (binaries and desktop entries) are then made available to
-the application, so that it can use them.
+The runtime applies `no_new_privs`, seccomp and Landlock where the host kernel
+supports it. Filesystem paths, devices, sockets, networking, process sharing and
+host commands are controlled by the manifest and user overrides. `hrun` exposes
+only explicitly allowed host commands and validates the peer process before
+execution.
 
-##### Addons
+Resource limits use delegated cgroup v2 controllers when available. Hosts
+without a compatible cgroup manager can run applications without limits; a
+requested limit fails with a direct diagnostic instead of being ignored.
 
-Addons are optional features that the application supports, and that can be
-installed alongside the application. Those are other cpak applications that
-provide additional features to the application, and that can be installed
-separately.
+## Store
 
-For example, if an application depends on an IDE, but the user does not want
-to install it, the IDE can be listed as an addition, so that the user
-can install it later if needed, and choose which one to install.
+Layers are addressed by digest and shared across packages. Installs and updates
+stage data before changing the active application record. Interrupted updates
+are recovered on the next start, while garbage collection retains every layer
+referenced by an installed package.
+
+The package origin remains a normal Git repository, so the manifest can follow a
+branch, release or immutable commit while the OCI digest records the exact image
+that was installed.
+
+## Documentation
+
+The full user and package author documentation is available at
+[cpak.it](https://cpak.it/).
