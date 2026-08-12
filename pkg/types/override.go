@@ -32,8 +32,9 @@ type Override struct {
 	DeviceUsb   bool `json:"deviceUsb" jsonschema:"description=Expose USB devices,default=false" flag:"deviceUsb,bool"`
 	DeviceAll   bool `json:"deviceAll" jsonschema:"description=Expose all /dev,default=false" flag:"deviceAll,bool"`
 
-	Notification bool `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
-	OpenURI      bool `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
+	Notification     bool `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
+	OpenURI          bool `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
+	HostApplications bool `json:"hostApplications" jsonschema:"description=Expose and launch host desktop applications,default=false" flag:"hostApplications,bool"`
 
 	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions"`
 
@@ -71,6 +72,7 @@ func NewOverride() Override {
 		DeviceKvm:           true,
 		DeviceShm:           true,
 		DeviceAll:           false,
+		HostApplications:    false,
 		Filesystem:          []FilesystemPermission{},
 		FsHost:              false,
 		FsHostEtc:           false,
@@ -89,7 +91,7 @@ func NewOverride() Override {
 }
 
 type FilesystemPermission struct {
-	Path   string `json:"path" jsonschema:"pattern=^(?:home|host|/.*)$,description=Host path or portable home and host scope"`
+	Path   string `json:"path" jsonschema:"pattern=^(?:home|host|xdg-(?:desktop|documents|download|music|pictures|public-share|templates|videos)|/.*)$,description=Host path or portable home host and XDG scope"`
 	Access string `json:"access" jsonschema:"enum=read-only,enum=read-write,description=Filesystem access mode"`
 }
 

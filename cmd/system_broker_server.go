@@ -18,10 +18,12 @@ import (
 )
 
 type SystemBrokerServerCmd struct {
-	SocketPath string `cli:"socket-path" help:"Path for the Unix domain socket"`
-	TokenFile  string `cli:"token-file" help:"File containing the broker token"`
-	Notify     bool   `cli:"notify" help:"Allow desktop notification requests"`
-	OpenURI    bool   `cli:"open-uri" help:"Allow external URI requests"`
+	SocketPath       string `cli:"socket-path" help:"Path for the Unix domain socket"`
+	TokenFile        string `cli:"token-file" help:"File containing the broker token"`
+	Notify           bool   `cli:"notify" help:"Allow desktop notification requests"`
+	OpenURI          bool   `cli:"open-uri" help:"Allow external URI requests"`
+	HostApplications string `cli:"host-applications" help:"Host application catalog path"`
+	DesktopRuntime   string `cli:"desktop-runtime" help:"Host path for the nested desktop runtime"`
 
 	cli.Base
 }
@@ -33,11 +35,21 @@ func (c *SystemBrokerServerCmd) Run() error {
 	}
 	ctx, stop := signalContext()
 	defer stop()
+	var applications map[string]string
+	if c.HostApplications != "" {
+		applications, err = systembroker.LoadApplicationCatalog(c.HostApplications)
+		if err != nil {
+			return err
+		}
+	}
 	return systembroker.Serve(ctx, systembroker.Options{
-		SocketPath:   c.SocketPath,
-		Token:        token,
-		AllowNotify:  c.Notify,
-		AllowOpenURI: c.OpenURI,
+		SocketPath:            c.SocketPath,
+		Token:                 token,
+		AllowNotify:           c.Notify,
+		AllowOpenURI:          c.OpenURI,
+		AllowHostApplications: c.HostApplications != "",
+		Applications:          applications,
+		RuntimeDirectory:      c.DesktopRuntime,
 	})
 }
 

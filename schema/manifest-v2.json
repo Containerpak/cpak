@@ -44,8 +44,8 @@
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^(?:home|host|/.*)$",
-          "description": "Host path or portable home and host scope"
+          "pattern": "^(?:home|host|xdg-(?:desktop|documents|download|music|pictures|public-share|templates|videos)|/.*)$",
+          "description": "Host path or portable home host and XDG scope"
         },
         "access": {
           "type": "string",
@@ -170,6 +170,11 @@
           "description": "Allow opening external URIs",
           "default": false
         },
+        "hostApplications": {
+          "type": "boolean",
+          "description": "Expose and launch host desktop applications",
+          "default": false
+        },
         "filesystem": {
           "items": {
             "$ref": "#/$defs/FilesystemPermission"
@@ -257,6 +262,7 @@
         "deviceAll",
         "notification",
         "openURI",
+        "hostApplications",
         "network",
         "process",
         "userNamespaces",

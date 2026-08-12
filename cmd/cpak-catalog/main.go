@@ -233,6 +233,7 @@ func summarizePermissions(override types.Override) []bootstrap.Permission {
 
 	add(override.Notification, "Notifications", "desktop notifications")
 	add(override.OpenURI, "External links", "open URIs on the host")
+	add(override.HostApplications, "Host applications", "desktop catalog and launch broker")
 	for _, filesystem := range override.Filesystem {
 		permissions = append(permissions, bootstrap.Permission{
 			Name:   "Files",

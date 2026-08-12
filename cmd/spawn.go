@@ -32,6 +32,7 @@ import (
 const cpakInContainerPath = "/usr/local/bin/cpak"
 const hostExecShimPath = "/usr/local/bin/cpak-hostexec-shim"
 const systemBrokerShimPath = "/usr/local/bin/cpak-system-broker-shim"
+const desktopRuntimeTarget = "/run/cpak/desktop-runtime"
 
 type SpawnCmd struct {
 	Verbose        bool     `cli:"verbose,v" help:"enable verbose output"`
@@ -49,6 +50,7 @@ type SpawnCmd struct {
 	MountShims     []string `cli:"mount-shims,M" help:"set the mount shims"`
 	SystemShims    []string `cli:"system-shims" help:"set the system integration shims"`
 	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
+	DesktopRuntime string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
 	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
 	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
@@ -140,6 +142,13 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	grants = append(grants, linkGrants...)
+	if c.DesktopRuntime != "" {
+		desktopRuntimeGrant, err := c.setupDesktopRuntime(c.Rootfs, c.DesktopRuntime)
+		if err != nil {
+			return err
+		}
+		grants = append(grants, desktopRuntimeGrant)
+	}
 
 	// Append shims obtained by overrides, to the allowed commands
 	if len(c.MountShims) > 0 {
@@ -393,11 +402,13 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, sandbox.PathGrant{Path: "/run/host", ReadOnly: true})
 	}
 	for _, permission := range filesystem {
-		grant, mountErr := c.mountFilesystemPermission(rootFs, permission)
+		grant, mounted, mountErr := c.mountFilesystemPermission(rootFs, permission)
 		if mountErr != nil {
 			return nil, mountErr
 		}
-		grants = append(grants, grant)
+		if mounted {
+			grants = append(grants, grant)
+		}
 	}
 
 	for _, mount := range overrideMounts {
@@ -495,27 +506,35 @@ func decodeFilesystemPermissions(encoded []string) ([]types.FilesystemPermission
 	return permissions, nil
 }
 
-func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.FilesystemPermission) (sandbox.PathGrant, error) {
+func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.FilesystemPermission) (sandbox.PathGrant, bool, error) {
 	source, target, err := types.ResolveFilesystemPermission(permission)
 	if err != nil {
-		return sandbox.PathGrant{}, err
+		if errors.Is(err, types.ErrXDGUserDirectoryUnavailable) {
+			c.spawnVerbose("(filesystem) XDG directory is unavailable, ignoring: ", permission.Path)
+			return sandbox.PathGrant{}, false, nil
+		}
+		return sandbox.PathGrant{}, false, err
 	}
 	if _, err := os.Stat(source); err != nil {
-		return sandbox.PathGrant{}, fmt.Errorf("filesystem path %s is unavailable: %w", source, err)
+		if os.IsNotExist(err) && strings.HasPrefix(permission.Path, "xdg-") {
+			c.spawnVerbose("(filesystem) XDG directory is unavailable, ignoring: ", source)
+			return sandbox.PathGrant{}, false, nil
+		}
+		return sandbox.PathGrant{}, false, fmt.Errorf("filesystem path %s is unavailable: %w", source, err)
 	}
 	destination, err := prepareRootfsMountTarget(rootFs, target, source)
 	if err != nil {
-		return sandbox.PathGrant{}, fmt.Errorf("prepare filesystem target %s: %w", target, err)
+		return sandbox.PathGrant{}, false, fmt.Errorf("prepare filesystem target %s: %w", target, err)
 	}
 	c.spawnVerbose("(filesystem) Mounting: ", source, " as ", target)
 	if permission.Access == "read-only" {
 		if err := tools.MountBindReadOnlyPrepared(source, destination, false); err != nil {
-			return sandbox.PathGrant{}, fmt.Errorf("mount filesystem %s: %w", source, err)
+			return sandbox.PathGrant{}, false, fmt.Errorf("mount filesystem %s: %w", source, err)
 		}
 	} else if err := tools.MountBindPrepared(source, destination); err != nil {
-		return sandbox.PathGrant{}, fmt.Errorf("mount filesystem %s: %w", source, err)
+		return sandbox.PathGrant{}, false, fmt.Errorf("mount filesystem %s: %w", source, err)
 	}
-	return sandbox.PathGrant{Path: target, ReadOnly: permission.Access == "read-only"}, nil
+	return sandbox.PathGrant{Path: target, ReadOnly: permission.Access == "read-only"}, true, nil
 }
 
 func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) {
@@ -684,6 +703,28 @@ func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) ([]sandbo
 		grants = append(grants, sandbox.PathGrant{Path: linkParts[1], ReadOnly: true})
 	}
 	return grants, nil
+}
+
+func (c *SpawnCmd) setupDesktopRuntime(rootFs, source string) (sandbox.PathGrant, error) {
+	if !filepath.IsAbs(source) {
+		return sandbox.PathGrant{}, errors.New("desktop runtime path must be absolute")
+	}
+	info, err := os.Stat(source)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		return sandbox.PathGrant{}, errors.New("desktop runtime path must be a private directory")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return sandbox.PathGrant{}, errors.New("desktop runtime path has an unexpected owner")
+	}
+	destination, err := prepareRootfsMountTarget(rootFs, desktopRuntimeTarget, source)
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("prepare desktop runtime: %w", err)
+	}
+	if err := tools.MountBindPrepared(source, destination); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("mount desktop runtime: %w", err)
+	}
+	return sandbox.PathGrant{Path: desktopRuntimeTarget}, nil
 }
 
 func (c *SpawnCmd) installRuntimePackages(packages []string) error {
@@ -1017,7 +1058,7 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 		return fmt.Errorf("chmod system broker shim: %w", err)
 	}
 	for _, name := range shims {
-		if name != "notify-send" && name != "xdg-open" {
+		if name != "notify-send" && name != "xdg-open" && name != "cpak-launch-app" {
 			return fmt.Errorf("invalid system broker shim: %s", name)
 		}
 		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/local/bin", name))

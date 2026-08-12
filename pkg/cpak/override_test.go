@@ -93,6 +93,16 @@ func TestWaylandDisplayPreservesActiveName(t *testing.T) {
 	}
 }
 
+func TestWaylandDisplayAcceptsNestedRuntimeSocket(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	want := filepath.Join("/run/user", uid, "cpak-broker-test", "desktop", "wayland-0")
+	t.Setenv("WAYLAND_DISPLAY", want)
+
+	if got := waylandDisplay(uid); got != want {
+		t.Fatalf("Wayland display: got %s, want %s", got, want)
+	}
+}
+
 func TestWaylandRejectsDisplayOutsideRuntimeDirectory(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	t.Setenv("WAYLAND_DISPLAY", "/tmp/foreign-wayland")

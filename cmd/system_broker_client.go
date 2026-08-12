@@ -38,7 +38,15 @@ func (c *SystemBrokerClientCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	if err := systembroker.Call(socketPath, token, c.Operation, c.Args); err != nil {
+	environment := map[string]string{}
+	if c.Operation == systembroker.OperationLaunchApplication {
+		for _, name := range []string{"WAYLAND_DISPLAY", "DISPLAY", "XDG_ACTIVATION_TOKEN"} {
+			if value := os.Getenv(name); value != "" {
+				environment[name] = value
+			}
+		}
+	}
+	if err := systembroker.CallWithEnvironment(socketPath, token, c.Operation, c.Args, environment); err != nil {
 		return fmt.Errorf("system broker request failed: %w", err)
 	}
 	return nil

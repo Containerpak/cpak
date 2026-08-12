@@ -250,6 +250,32 @@ func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T)
 	}
 }
 
+func TestContainerEnvironmentIncludesHostApplicationCatalog(t *testing.T) {
+	app := types.Application{
+		Config:         `{"config":{"Env":["XDG_DATA_DIRS=/opt/desktop/share:/usr/share"]}}`,
+		ParsedOverride: types.Override{HostApplications: true},
+	}
+	environment, err := containerEnvironment(app, types.Container{CpakId: "container-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "XDG_DATA_DIRS=/run/cpak/host-applications/share:/opt/desktop/share:/usr/share"
+	if !slicesContain(environment, want) {
+		t.Fatalf("host application catalog is missing from %v", environment)
+	}
+	if !slicesContain(environment, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget) {
+		t.Fatalf("host OS release is missing from %v", environment)
+	}
+}
+
+func TestHostApplicationCatalogPrecedesImageDataDirectories(t *testing.T) {
+	environment := []string{"LANG=en_US.UTF-8", "XDG_DATA_DIRS=/opt/desktop/share:/usr/share"}
+	got := prependEnvironmentPath(environment, "XDG_DATA_DIRS", "/run/cpak/host-applications/share", "/usr/local/share:/usr/share")
+	if !slicesContain(got, "XDG_DATA_DIRS=/run/cpak/host-applications/share:/opt/desktop/share:/usr/share") {
+		t.Fatalf("host application catalog is missing from %v", got)
+	}
+}
+
 func TestSystemBrokerRuntimeUsesPrivateDirectory(t *testing.T) {
 	runtimeDirectory := t.TempDir()
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {

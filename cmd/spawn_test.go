@@ -96,7 +96,7 @@ func TestGenerateMachineIDUsesAPrivateContainerIdentifier(t *testing.T) {
 func TestCreateSystemBrokerShimIsExecutable(t *testing.T) {
 	rootfs := t.TempDir()
 	command := &SpawnCmd{}
-	if err := command.createSystemBrokerShimAndLinks(rootfs, []string{"notify-send", "xdg-open"}); err != nil {
+	if err := command.createSystemBrokerShimAndLinks(rootfs, []string{"notify-send", "xdg-open", "cpak-launch-app"}); err != nil {
 		t.Fatal(err)
 	}
 	shim := filepath.Join(rootfs, systemBrokerShimPath)
@@ -107,7 +107,7 @@ func TestCreateSystemBrokerShimIsExecutable(t *testing.T) {
 	if info.Mode().Perm() != 0755 {
 		t.Fatalf("shim mode: got %o, want 755", info.Mode().Perm())
 	}
-	for _, name := range []string{"notify-send", "xdg-open"} {
+	for _, name := range []string{"notify-send", "xdg-open", "cpak-launch-app"} {
 		link := filepath.Join(rootfs, "usr/local/bin", name)
 		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("system broker link %s: %v", name, err)

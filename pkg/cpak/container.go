@@ -192,7 +192,22 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 			os.RemoveAll(container.StatePath)
 			return types.Container{}, err
 		}
-		container.SystemBrokerPid, err = c.startSystemBrokerProcess(container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, filepath.Join(container.StatePath, "system-broker.log"), override)
+		catalogPath := ""
+		desktopRuntime := ""
+		if override.HostApplications {
+			_, catalogPath, err = prepareHostApplicationCatalog(container.StatePath)
+			if err == nil {
+				desktopRuntime, err = createDesktopRuntime(container.SystemBrokerSocketPath)
+			}
+			if err != nil {
+				stopHostExecServer(container.HostExecPid)
+				cleanupSystemBrokerRuntime(container)
+				os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+				os.RemoveAll(container.StatePath)
+				return types.Container{}, err
+			}
+		}
+		container.SystemBrokerPid, err = c.startSystemBrokerProcess(container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, filepath.Join(container.StatePath, "system-broker.log"), catalogPath, desktopRuntime, override)
 		if err != nil {
 			stopHostExecServer(container.HostExecPid)
 			cleanupSystemBrokerRuntime(container)
@@ -359,6 +374,11 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
 	cmds = append(cmds, "--extra-links", cpakBinary+":"+cpakInContainerPath)
+	if override.HostApplications {
+		if source := hostOSReleaseSource(); source != "" {
+			cmds = append(cmds, "--extra-links", source+":"+hostOSReleaseTarget)
+		}
+	}
 	dependencyLinks, err := c.dependencyLinks(app)
 	if err != nil {
 		return "", 0, "", err
@@ -376,6 +396,13 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_TOKEN_FILE="+systemBrokerTokenTarget)
 		cmds = append(cmds, "--extra-links", container.SystemBrokerSocketPath+":"+systemBrokerSocketTarget)
 		cmds = append(cmds, "--extra-links", container.SystemBrokerTokenPath+":"+systemBrokerTokenTarget)
+		if override.HostApplications {
+			catalogRoot, _ := hostApplicationCatalogPaths(container.StatePath)
+			cmds = append(cmds, "--extra-links", catalogRoot+":"+hostApplicationsTarget)
+			cmds = append(cmds, "--desktop-runtime", desktopRuntimePath(container.SystemBrokerSocketPath))
+			cmds = append(cmds, "--env", "CPAK_HOST_APPLICATIONS="+filepath.Join(hostApplicationsTarget, "share"))
+			cmds = append(cmds, "--env", "CPAK_DESKTOP_RUNTIME="+desktopRuntimeTarget)
+		}
 	}
 	// Join allowed commands into a single string (e.g., colon-separated) for the env var
 	allowedCmdsStr := strings.Join(effectiveHostCommands(override), ":")
@@ -385,6 +412,12 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
+	if override.HostApplications {
+		containerEnv = prependEnvironmentPath(containerEnv, "XDG_DATA_DIRS", filepath.Join(hostApplicationsTarget, "share"), "/usr/local/share:/usr/share")
+		if hostOSReleaseSource() != "" {
+			containerEnv = append(containerEnv, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
+		}
+	}
 	if override.SocketWayland {
 		containerEnv = append(containerEnv, "WAYLAND_DISPLAY="+waylandDisplay(strconv.Itoa(os.Getuid())))
 	}
@@ -635,9 +668,16 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 		return nil, fmt.Errorf("decode application config: %w", err)
 	}
 
+	override := resolvedOverride(app)
 	envVars := append([]string{}, os.Environ()...)
 	envVars = append(envVars, config.Config.Env...)
-	envVars = append(envVars, resolvedOverride(app).Env...)
+	envVars = append(envVars, override.Env...)
+	if override.HostApplications {
+		envVars = prependEnvironmentPath(envVars, "XDG_DATA_DIRS", filepath.Join(hostApplicationsTarget, "share"), "/usr/local/share:/usr/share")
+		if hostOSReleaseSource() != "" {
+			envVars = append(envVars, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
+		}
+	}
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 	if container.SystemBrokerSocketPath != "" {
@@ -671,6 +711,20 @@ func buildContainerPath(imageEnv []string) string {
 		path = append(path, entry)
 	}
 	return strings.Join(path, ":")
+}
+
+func prependEnvironmentPath(environment []string, name, entry, fallback string) []string {
+	prefix := name + "="
+	value := fallback
+	result := make([]string, 0, len(environment)+1)
+	for _, variable := range environment {
+		if strings.HasPrefix(variable, prefix) {
+			value = strings.TrimPrefix(variable, prefix)
+			continue
+		}
+		result = append(result, variable)
+	}
+	return append(result, prefix+entry+":"+value)
 }
 
 func (c *Cpak) dependencyLinks(app types.Application) ([]string, error) {
@@ -939,14 +993,20 @@ func privateRuntimeDirectory(path string) bool {
 
 func cleanupSystemBrokerRuntime(container types.Container) {
 	if container.SystemBrokerSocketPath != "" {
-		_ = os.Remove(container.SystemBrokerSocketPath)
+		_ = os.RemoveAll(filepath.Dir(container.SystemBrokerSocketPath))
 	}
-	if container.SystemBrokerTokenPath != "" {
-		_ = os.Remove(container.SystemBrokerTokenPath)
+}
+
+func desktopRuntimePath(socketPath string) string {
+	return filepath.Join(filepath.Dir(socketPath), "desktop")
+}
+
+func createDesktopRuntime(socketPath string) (string, error) {
+	path := desktopRuntimePath(socketPath)
+	if err := os.Mkdir(path, 0700); err != nil {
+		return "", fmt.Errorf("create desktop runtime: %w", err)
 	}
-	if container.SystemBrokerSocketPath != "" {
-		_ = os.Remove(filepath.Dir(container.SystemBrokerSocketPath))
-	}
+	return path, nil
 }
 
 func writeSystemBrokerToken(path string) error {
@@ -968,7 +1028,7 @@ func writeSystemBrokerToken(path string) error {
 	return nil
 }
 
-func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath string, override types.Override) (int, error) {
+func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath, catalogPath, desktopRuntime string, override types.Override) (int, error) {
 	cpakBinary, err := getCpakBinary()
 	if err != nil {
 		return 0, fmt.Errorf("cannot find cpak binary for system broker: %w", err)
@@ -979,6 +1039,9 @@ func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath string, o
 	}
 	if override.OpenURI {
 		args = append(args, "--open-uri")
+	}
+	if override.HostApplications {
+		args = append(args, "--host-applications", catalogPath, "--desktop-runtime", desktopRuntime)
 	}
 	log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {

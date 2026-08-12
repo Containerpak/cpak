@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -146,4 +147,54 @@ func TestServeDoesNotReplaceAnActiveBroker(t *testing.T) {
 	if err := Serve(ctx, options); err == nil {
 		t.Fatal("active broker socket was replaced")
 	}
+}
+
+func TestLaunchApplicationUsesCatalogAndNestedDisplay(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	displayPath := filepath.Join(runtimeDirectory, "wayland-0")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: displayPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	token := strings.Repeat("a", 64)
+	desktopEntry := filepath.Join(t.TempDir(), "demo.desktop")
+	called := false
+	options := testOptions(t)
+	options.AllowHostApplications = true
+	options.Applications = map[string]string{token: desktopEntry}
+	options.RuntimeDirectory = runtimeDirectory
+	options.LaunchApplication = func(_ context.Context, entry string, args, environment []string) error {
+		called = true
+		if entry != desktopEntry || len(args) != 1 || args[0] != "file:///tmp/demo" {
+			t.Fatalf("unexpected launch: %s %v", entry, args)
+		}
+		if !containsString(environment, "WAYLAND_DISPLAY="+displayPath) {
+			t.Fatalf("nested display is missing: %v", environment)
+		}
+		return nil
+	}
+	startBroker(t, options)
+	if err := CallWithEnvironment(options.SocketPath, options.Token, OperationLaunchApplication, []string{token, "file:///tmp/demo"}, map[string]string{"WAYLAND_DISPLAY": "wayland-0"}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("host application backend was not called")
+	}
+	if err := CallWithEnvironment(options.SocketPath, options.Token, OperationLaunchApplication, []string{strings.Repeat("b", 64)}, map[string]string{"WAYLAND_DISPLAY": "wayland-0"}); err == nil {
+		t.Fatal("application outside the catalog was accepted")
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

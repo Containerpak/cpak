@@ -195,7 +195,7 @@ func waylandDisplay(uid string) string {
 	}
 	if filepath.IsAbs(display) {
 		clean := filepath.Clean(display)
-		if filepath.Dir(clean) == runtimeDir {
+		if strings.HasPrefix(clean, runtimeDir+string(filepath.Separator)) {
 			return clean
 		}
 		return "wayland-0"
@@ -213,6 +213,9 @@ func systemBrokerOperations(o types.Override) []string {
 	}
 	if o.OpenURI {
 		operations = append(operations, "xdg-open")
+	}
+	if o.HostApplications {
+		operations = append(operations, "cpak-launch-app")
 	}
 	return operations
 }

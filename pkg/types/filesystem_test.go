@@ -6,7 +6,9 @@
 package types
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -15,6 +17,7 @@ func TestFilesystemPermissionRoundTrip(t *testing.T) {
 		{Path: "/home/user/Games", Access: "read-write"},
 		{Path: "home", Access: "read-write"},
 		{Path: "host", Access: "read-only"},
+		{Path: "xdg-documents", Access: "read-write"},
 	} {
 		encoded, err := EncodeFilesystemPermission(permission)
 		if err != nil {
@@ -65,8 +68,49 @@ func TestFilesystemPermissionsAcceptPortableScopes(t *testing.T) {
 	if err := ValidateFilesystemPermissions([]FilesystemPermission{
 		{Path: "home", Access: "read-write"},
 		{Path: "host", Access: "read-only"},
+		{Path: "xdg-download", Access: "read-write"},
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResolveXDGUserDirectory(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config")
+	if err := os.MkdirAll(config, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, "user-dirs.dirs"), []byte("XDG_DOCUMENTS_DIR=\"$HOME/My Documents\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	source, target, err := ResolveFilesystemPermission(FilesystemPermission{Path: "xdg-documents", Access: "read-write"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, "My Documents")
+	if source != want || target != want {
+		t.Fatalf("got %q -> %q, want %q", source, target, want)
+	}
+}
+
+func TestResolveDisabledXDGUserDirectory(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config")
+	if err := os.MkdirAll(config, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, "user-dirs.dirs"), []byte("XDG_DOCUMENTS_DIR=\"$HOME\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", config)
+
+	_, _, err := ResolveFilesystemPermission(FilesystemPermission{Path: "xdg-documents", Access: "read-write"})
+	if !errors.Is(err, ErrXDGUserDirectoryUnavailable) {
+		t.Fatalf("disabled XDG directory returned %v", err)
 	}
 }
 

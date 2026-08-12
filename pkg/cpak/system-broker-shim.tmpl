@@ -8,6 +8,7 @@ set -e
 case "$(basename "$0")" in
     notify-send) OPERATION=notify ;;
     xdg-open) OPERATION=open-uri ;;
+    cpak-launch-app) OPERATION=launch-application ;;
     *) echo "CPAK SYSTEM BROKER ERROR: unsupported shim." >&2; exit 1 ;;
 esac
 
