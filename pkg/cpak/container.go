@@ -367,6 +367,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
+	containerEnv = inheritHostTimezone(containerEnv)
 	if override.HostApplications {
 		containerEnv = prependEnvironmentPath(containerEnv, "XDG_DATA_DIRS", filepath.Join(hostApplicationsTarget, "share"), "/usr/local/share:/usr/share")
 		if hostOSReleaseSource() != "" {
@@ -453,6 +454,16 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		return "", 0, "", fmt.Errorf("container init is not running: %w", err)
 	}
 	return
+}
+
+func inheritHostTimezone(env []string) []string {
+	result := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "TZ=") {
+			result = append(result, entry)
+		}
+	}
+	return result
 }
 
 // StopContainer stops the containers related to the given application.

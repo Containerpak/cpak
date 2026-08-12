@@ -548,6 +548,8 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) (
 		"/etc/hosts",
 		"/etc/passwd",
 		"/etc/group",
+		"/etc/localtime",
+		"/etc/timezone",
 	}
 
 	for _, conf := range files {

@@ -260,6 +260,17 @@ func TestHostApplicationCatalogPrecedesImageDataDirectories(t *testing.T) {
 	}
 }
 
+func TestInheritHostTimezoneRemovesImageTimezone(t *testing.T) {
+	environment := []string{"LANG=en_US.UTF-8", "TZ=UTC", "PATH=/usr/bin"}
+	got := inheritHostTimezone(environment)
+	if slicesContain(got, "TZ=UTC") {
+		t.Fatalf("image timezone was kept in %v", got)
+	}
+	if !slicesContain(got, "LANG=en_US.UTF-8") || !slicesContain(got, "PATH=/usr/bin") {
+		t.Fatalf("unrelated environment was removed from %v", got)
+	}
+}
+
 func TestSystemBrokerRuntimeUsesPrivateDirectory(t *testing.T) {
 	runtimeDirectory := t.TempDir()
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
