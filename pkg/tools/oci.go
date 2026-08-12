@@ -8,14 +8,14 @@ package tools
 import (
 	"fmt"
 
-	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 )
 
 // ValidateImageName checks if the given image name is in the correct format.
 //
 // Note: this method is not complete, it is just a basic check.
 func ValidateImageName(image string) error {
-	if _, err := name.ParseReference(image); err != nil {
+	if _, err := oci.ParseReference(image); err != nil {
 		return fmt.Errorf("invalid image name: %w", err)
 	}
 

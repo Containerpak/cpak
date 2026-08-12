@@ -122,11 +122,90 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if !strings.Contains(string(content), "TryExec=cpak") {
 		t.Fatalf("desktop entry checks guest binary availability: %q", content)
 	}
+	alias := originalDesktopEntryExportPath(entry)
+	aliasContent, err := os.ReadFile(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"NoDisplay=true",
+		"X-cpak-Origin=github.com/containerpak/example",
+		"X-cpak-ID=unsafe/base64=id",
+	} {
+		if !strings.Contains(string(aliasContent), value) {
+			t.Fatalf("desktop alias is missing %q: %s", value, aliasContent)
+		}
+	}
 	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
 		t.Fatalf("legacy desktop entry directory still exists: %s", legacyDir)
 	}
 	if _, err := os.Stat(legacyIcon); !os.IsNotExist(err) {
 		t.Fatalf("legacy icon still exists: %s", legacyIcon)
+	}
+}
+
+func TestExportDesktopAliasDoesNotReplaceUserEntry(t *testing.T) {
+	c := newTestCpak(t)
+	layer := "desktop-layer"
+	layerDir := c.GetInStoreDir("layers", layer)
+	entry := "/usr/share/applications/example.desktop"
+	entryPath := filepath.Join(layerDir, strings.TrimLeft(entry, "/"))
+	if err := os.MkdirAll(filepath.Dir(entryPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	alias := originalDesktopEntryExportPath(entry)
+	if err := os.MkdirAll(filepath.Dir(alias), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const existing = "[Desktop Entry]\nName=User application\n"
+	if err := os.WriteFile(alias, []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+	app := types.Application{
+		CpakId:               "application-id",
+		Origin:               "github.com/containerpak/example",
+		ParsedDesktopEntries: []string{entry},
+		ParsedLayers:         []string{layer},
+	}
+	if err := c.createExports(app); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != existing {
+		t.Fatalf("user desktop entry was replaced: %q", content)
+	}
+}
+
+func TestRemoveDesktopAliasChecksPackageIdentity(t *testing.T) {
+	newTestCpak(t)
+	entry := "example.desktop"
+	path := originalDesktopEntryExportPath(entry)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := "[Desktop Entry]\nX-cpak-Origin=github.com/containerpak/example\nX-cpak-ID=new-id\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := types.Application{CpakId: "old-id", Origin: "github.com/containerpak/example"}
+	if err := removeDesktopAlias(old, entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("new alias was removed with the old package: %v", err)
+	}
+	updated := types.Application{CpakId: "new-id", Origin: old.Origin}
+	if err := removeDesktopAlias(updated, entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("owned alias was not removed: %v", err)
 	}
 }
 

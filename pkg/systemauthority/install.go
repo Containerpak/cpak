@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	systemBinaryPath = "/usr/local/bin/cpak"
-	serviceFilePath  = "/usr/local/share/dbus-1/system-services/it.cpak.SystemAuthority1.service"
-	busPolicyPath    = "/etc/dbus-1/system.d/it.cpak.SystemAuthority1.conf"
-	polkitPolicyPath = "/usr/local/share/polkit-1/actions/it.cpak.system.policy"
-	sddmConfigPath   = "/etc/sddm.conf.d/90-cpak-sessions.conf"
+	systemBinaryPath  = "/usr/local/bin/cpak"
+	serviceFilePath   = "/usr/local/share/dbus-1/system-services/it.cpak.SystemAuthority1.service"
+	busPolicyPath     = "/etc/dbus-1/system.d/it.cpak.SystemAuthority1.conf"
+	polkitPolicyPath  = "/usr/local/share/polkit-1/actions/it.cpak.system.policy"
+	sddmConfigPath    = "/etc/sddm.conf.d/90-cpak-sessions.conf"
+	lightdmConfigPath = "/etc/lightdm/lightdm.conf.d/90-cpak-sessions.conf"
 )
 
 //go:embed assets/it.cpak.SystemAuthority1.service
@@ -34,6 +35,9 @@ var polkitPolicy []byte
 
 //go:embed assets/90-cpak-sessions.conf
 var sddmConfig []byte
+
+//go:embed assets/90-cpak-lightdm-sessions.conf
+var lightdmConfig []byte
 
 func Install() error {
 	if os.Geteuid() != 0 {
@@ -69,6 +73,14 @@ func Install() error {
 			return fmt.Errorf("write SDDM session configuration: %w", err)
 		}
 	}
+	if displayManagerExists("/usr/sbin/lightdm", "/usr/bin/lightdm", "/usr/local/sbin/lightdm", "/usr/local/bin/lightdm") {
+		if err := ensureDirectory(filepath.Dir(lightdmConfigPath), 0); err != nil {
+			return fmt.Errorf("create LightDM configuration directory: %w", err)
+		}
+		if err := writeAtomic(lightdmConfigPath, lightdmConfig, 0644); err != nil {
+			return fmt.Errorf("write LightDM session configuration: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -79,7 +91,7 @@ func Uninstall() error {
 	if err := DefaultRegistry().Purge(); err != nil {
 		return fmt.Errorf("remove registered login sessions: %w", err)
 	}
-	for _, path := range []string{serviceFilePath, busPolicyPath, polkitPolicyPath, sddmConfigPath, systemBinaryPath} {
+	for _, path := range []string{serviceFilePath, busPolicyPath, polkitPolicyPath, sddmConfigPath, lightdmConfigPath, systemBinaryPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove system integration file: %w", err)
 		}

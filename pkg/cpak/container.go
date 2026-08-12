@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,9 +23,9 @@ import (
 	"syscall"
 	"time"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/tools"
@@ -102,7 +103,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		return
 	}
 
-	config := &v1.ConfigFile{}
+	config := &oci.ConfigFile{}
 	err = json.Unmarshal([]byte(app.Config), config)
 	if err != nil {
 		return
@@ -263,7 +264,13 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 2
+const containerRuntimePolicyVersion = 3
+
+const openURIMimeApps = `[Default Applications]
+x-scheme-handler/http=cpak-open-uri.desktop;
+x-scheme-handler/https=cpak-open-uri.desktop;
+x-scheme-handler/mailto=cpak-open-uri.desktop;
+`
 
 func containerPolicyHash(override types.Override, components, addons []types.Application) (string, error) {
 	return containerPolicyHashVersion(containerRuntimePolicyVersion, override, components, addons)
@@ -294,7 +301,12 @@ func containerPolicyHashVersion(runtimeVersion int, override types.Override, com
 // The container is started by calling our spawn function, which is the
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
-func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
+func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
+	if override.OpenURI {
+		if err = ensureOpenURIMimeApps(os.Environ()); err != nil {
+			return "", 0, "", err
+		}
+	}
 	layers := ""
 	for _, layer := range composedLayers(app, components, addons) {
 		layers += layer + "|"
@@ -326,6 +338,11 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	cmds = append(cmds, "--user-uid", strconv.Itoa(os.Getuid()))
 	cmds = append(cmds, "--app-id", app.CpakId)
+	machineID, err := c.applicationMachineID(app.CpakId)
+	if err != nil {
+		return "", 0, "", err
+	}
+	cmds = append(cmds, "--machine-id", machineID)
 	cmds = append(cmds, "--container-id", container.CpakId)
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
@@ -376,6 +393,10 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
 	containerEnv = inheritHostTimezone(containerEnv)
+	containerEnv = inheritHostCursor(containerEnv)
+	if override.OpenURI {
+		containerEnv = openURIEnvironment(containerEnv)
+	}
 	if override.HostApplications {
 		containerEnv = prependEnvironmentPath(containerEnv, "XDG_DATA_DIRS", filepath.Join(hostApplicationsTarget, "share"), "/usr/local/share:/usr/share")
 		if hostOSReleaseSource() != "" {
@@ -634,7 +655,7 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 }
 
 func containerEnvironment(app types.Application, container types.Container) ([]string, error) {
-	config := &v1.ConfigFile{}
+	config := &oci.ConfigFile{}
 	if err := json.Unmarshal([]byte(app.Config), config); err != nil {
 		return nil, fmt.Errorf("decode application config: %w", err)
 	}
@@ -643,6 +664,10 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 	envVars := append([]string{}, os.Environ()...)
 	envVars = append(envVars, config.Config.Env...)
 	envVars = append(envVars, override.Env...)
+	envVars = inheritHostCursor(envVars)
+	if override.OpenURI {
+		envVars = openURIEnvironment(envVars)
+	}
 	if override.HostApplications {
 		envVars = prependEnvironmentPath(envVars, "XDG_DATA_DIRS", filepath.Join(hostApplicationsTarget, "share"), "/usr/local/share:/usr/share")
 		if hostOSReleaseSource() != "" {
@@ -695,6 +720,151 @@ func prependEnvironmentPath(environment []string, name, entry, fallback string) 
 		result = append(result, variable)
 	}
 	return append(result, prefix+entry+":"+value)
+}
+
+func openURIEnvironment(environment []string) []string {
+	environment = prependEnvironmentPath(environment, "XDG_DATA_DIRS", "/usr/local/share", "/usr/local/share:/usr/share")
+	environment = prependEnvironmentPath(environment, "XDG_CONFIG_DIRS", "/usr/local/etc/xdg", "/etc/xdg")
+	prefix := "XDG_CURRENT_DESKTOP="
+	desktop := ""
+	result := make([]string, 0, len(environment)+1)
+	for _, variable := range environment {
+		if strings.HasPrefix(variable, prefix) {
+			desktop = strings.TrimPrefix(variable, prefix)
+			continue
+		}
+		result = append(result, variable)
+	}
+	if desktop == "" {
+		desktop = os.Getenv("XDG_CURRENT_DESKTOP")
+	}
+	for _, name := range strings.Split(desktop, ":") {
+		if strings.EqualFold(name, "cpak") {
+			return append(result, prefix+desktop)
+		}
+	}
+	if desktop == "" {
+		return append(result, prefix+"cpak")
+	}
+	return append(result, prefix+"cpak:"+desktop)
+}
+
+func (c *Cpak) applicationMachineID(applicationID string) (string, error) {
+	if strings.TrimSpace(applicationID) == "" {
+		return "", errors.New("create application machine ID: application ID is empty")
+	}
+	digest := sha256.Sum256([]byte(applicationID))
+	directory := c.GetInStoreDir("identities")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", fmt.Errorf("create application identity directory: %w", err)
+	}
+	path := filepath.Join(directory, hex.EncodeToString(digest[:])+".machine-id")
+	read := func() (string, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		value := strings.TrimSpace(string(data))
+		if len(value) != 32 {
+			return "", errors.New("stored application machine ID is invalid")
+		}
+		decoded, err := hex.DecodeString(value)
+		if err != nil {
+			return "", errors.New("stored application machine ID is invalid")
+		}
+		for _, octet := range decoded {
+			if octet != 0 {
+				return value, nil
+			}
+		}
+		return "", errors.New("stored application machine ID is invalid")
+	}
+	if value, err := read(); err == nil {
+		return value, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read application machine ID: %w", err)
+	}
+	data := make([]byte, 16)
+	if _, err := rand.Read(data); err != nil {
+		return "", fmt.Errorf("generate application machine ID: %w", err)
+	}
+	value := hex.EncodeToString(data)
+	if value == strings.Repeat("0", 32) {
+		return "", errors.New("generate application machine ID: invalid random value")
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(err) {
+		value, err = read()
+		if err != nil {
+			return "", fmt.Errorf("read concurrent application machine ID: %w", err)
+		}
+		return value, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("create application machine ID: %w", err)
+	}
+	if _, err = file.WriteString(value + "\n"); err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("write application machine ID: %w", err)
+	}
+	return value, nil
+}
+
+func ensureOpenURIMimeApps(environment []string) error {
+	configHome := environmentValue(environment, "XDG_CONFIG_HOME")
+	if configHome == "" {
+		home := environmentValue(environment, "HOME")
+		if home == "" {
+			return errors.New("configure open URI integration: HOME is unavailable")
+		}
+		configHome = filepath.Join(home, ".config")
+	}
+	if !filepath.IsAbs(configHome) || filepath.Clean(configHome) != configHome || strings.ContainsRune(configHome, '\x00') {
+		return errors.New("configure open URI integration: XDG config path is invalid")
+	}
+	if err := os.MkdirAll(configHome, 0700); err != nil {
+		return fmt.Errorf("configure open URI integration: create config directory: %w", err)
+	}
+	path := filepath.Join(configHome, "cpak-mimeapps.list")
+	temporary, err := os.CreateTemp(configHome, ".cpak-mimeapps-*")
+	if err != nil {
+		return fmt.Errorf("configure open URI integration: create temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err = temporary.Chmod(0644); err == nil {
+		_, err = temporary.WriteString(openURIMimeApps)
+	}
+	if err == nil {
+		err = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("configure open URI integration: write defaults: %w", err)
+	}
+	if err = os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("configure open URI integration: replace defaults: %w", err)
+	}
+	return nil
+}
+
+func environmentValue(environment []string, name string) string {
+	prefix := name + "="
+	value := ""
+	for _, variable := range environment {
+		if strings.HasPrefix(variable, prefix) {
+			value = strings.TrimPrefix(variable, prefix)
+		}
+	}
+	return value
 }
 
 func (c *Cpak) dependencyLinks(app types.Application) ([]string, error) {

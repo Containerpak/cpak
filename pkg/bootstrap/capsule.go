@@ -125,12 +125,16 @@ func validMetadataText(value string, limit int) bool {
 	return true
 }
 
-func PackInstaller(installer, cpak []byte) []byte {
-	result := make([]byte, 0, len(installer)+len(cpak)+footerSize)
+func PackInstaller(installer, cpak []byte) ([]byte, error) {
+	capacity, err := checkedCapacity(len(installer), len(cpak), footerSize)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]byte, 0, capacity)
 	result = append(result, installer...)
 	result = append(result, cpak...)
 	result = appendFooter(result, payloadMagic, uint64(len(cpak)))
-	return result
+	return result, nil
 }
 
 func SignCapsule(installer []byte, metadata Metadata, privateKey ed25519.PrivateKey) ([]byte, error) {
@@ -158,12 +162,28 @@ func AppendSignedMetadata(installer, metadata, signature []byte) ([]byte, error)
 	if len(signature) != signatureSize {
 		return nil, fmt.Errorf("invalid signature length: %d", len(signature))
 	}
-	result := make([]byte, 0, len(installer)+len(metadata)+signatureSize+footerSize)
+	capacity, err := checkedCapacity(len(installer), len(metadata), signatureSize, footerSize)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]byte, 0, capacity)
 	result = append(result, installer...)
 	result = append(result, metadata...)
 	result = append(result, signature...)
 	result = appendFooter(result, capsuleMagic, uint64(len(metadata)))
 	return result, nil
+}
+
+func checkedCapacity(parts ...int) (int, error) {
+	capacity := 0
+	maximum := int(^uint(0) >> 1)
+	for _, part := range parts {
+		if part < 0 || part > maximum-capacity {
+			return 0, errors.New("capsule size exceeds the platform limit")
+		}
+		capacity += part
+	}
+	return capacity, nil
 }
 
 func ReadCapsule(source io.ReaderAt, size int64, publicKey ed25519.PublicKey) (Capsule, error) {

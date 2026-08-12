@@ -8,33 +8,9 @@ This product includes software developed by third parties.
 License: Apache-2.0
 [https://github.com/mirkobrombin/dabadee/blob/v1.0.0/LICENSE](https://github.com/mirkobrombin/dabadee/blob/v1.0.0/LICENSE)
 
-**github.com/containerd/stargz-snapshotter/estargz**
-License: Apache-2.0
-[https://github.com/containerd/stargz-snapshotter/blob/estargz/v0.14.3/estargz/LICENSE](https://github.com/containerd/stargz-snapshotter/blob/estargz/v0.14.3/estargz/LICENSE)
-
 **github.com/creack/pty**
 License: MIT
 [https://github.com/creack/pty/blob/v1.1.21/LICENSE](https://github.com/creack/pty/blob/v1.1.21/LICENSE)
-
-**github.com/docker/cli/cli/config**
-License: Apache-2.0
-[https://github.com/docker/cli/blob/v24.0.0/LICENSE](https://github.com/docker/cli/blob/v24.0.0/LICENSE)
-
-**github.com/docker/distribution/registry/client/auth/challenge**
-License: Apache-2.0
-[https://github.com/docker/distribution/blob/v2.8.2/LICENSE](https://github.com/docker/distribution/blob/v2.8.2/LICENSE)
-
-**github.com/docker/docker-credential-helpers**
-License: MIT
-[https://github.com/docker/docker-credential-helpers/blob/v0.7.0/LICENSE](https://github.com/docker/docker-credential-helpers/blob/v0.7.0/LICENSE)
-
-**github.com/docker/docker/pkg/homedir**
-License: Apache-2.0
-[https://github.com/docker/docker/blob/v25.0.6/LICENSE](https://github.com/docker/docker/blob/v25.0.6/LICENSE)
-
-**github.com/google/go-containerregistry**
-License: Apache-2.0
-[https://github.com/google/go-containerregistry/blob/v0.16.1/LICENSE](https://github.com/google/go-containerregistry/blob/v0.16.1/LICENSE)
 
 **github.com/google/uuid**
 License: BSD-3-Clause
@@ -64,10 +40,6 @@ License: MIT
 License: MIT
 [https://github.com/mattn/go-runewidth/blob/v0.0.16/LICENSE](https://github.com/mattn/go-runewidth/blob/v0.0.16/LICENSE)
 
-**github.com/mattn/go-sqlite3**
-License: MIT
-[https://github.com/mattn/go-sqlite3/blob/v1.14.22/LICENSE](https://github.com/mattn/go-sqlite3/blob/v1.14.22/LICENSE)
-
 **github.com/minio/highwayhash**
 License: Apache-2.0
 [https://github.com/minio/highwayhash/blob/v1.0.2/LICENSE](https://github.com/minio/highwayhash/blob/v1.0.2/LICENSE)
@@ -79,10 +51,6 @@ License: MIT
 **github.com/mitchellh/colorstring**
 License: MIT
 [https://github.com/mitchellh/colorstring/blob/d06e56a500db/LICENSE](https://github.com/mitchellh/colorstring/blob/d06e56a500db/LICENSE)
-
-**github.com/mitchellh/go-homedir**
-License: MIT
-[https://github.com/mitchellh/go-homedir/blob/v1.1.0/LICENSE](https://github.com/mitchellh/go-homedir/blob/v1.1.0/LICENSE)
 
 **github.com/olekukonko/tablewriter**
 License: MIT

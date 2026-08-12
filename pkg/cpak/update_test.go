@@ -81,6 +81,7 @@ type updateStub struct {
 
 	lastBranch  string
 	lastRelease string
+	lastOrigin  string
 
 	exportedApps []string
 	removedPairs [][2]string
@@ -111,8 +112,9 @@ func (s *updateStub) deps() updateDeps {
 			}
 			return nil, nil
 		},
-		pull: func(image, cpakImageId string) ([]string, string, string, error) {
+		pull: func(image, cpakImageId, origin string) ([]string, string, string, error) {
 			s.pulled++
+			s.lastOrigin = origin
 			if s.pullErr != nil {
 				return nil, "", "", s.pullErr
 			}
@@ -184,6 +186,9 @@ func TestUpdateBranchInstallRefreshesRecord(t *testing.T) {
 	}
 	if stub.lastBranch != "main" || stub.lastRelease != "" {
 		t.Fatalf("expected the recorded branch to be refreshed, got branch %q release %q", stub.lastBranch, stub.lastRelease)
+	}
+	if stub.lastOrigin != testOrigin {
+		t.Fatalf("image pull used origin %q, expected %q", stub.lastOrigin, testOrigin)
 	}
 	if stub.exported != 1 || stub.stopped != 1 {
 		t.Fatalf("expected one export and one stop, got %d and %d", stub.exported, stub.stopped)
@@ -487,6 +492,29 @@ func TestUpdateReleaseInstallAlreadyLatest(t *testing.T) {
 	}
 	if stub.fetched != 0 || stub.pulled != 0 {
 		t.Fatalf("expected no manifest fetch nor pull for an application already at the latest release")
+	}
+	if stub.exported != 1 {
+		t.Fatalf("expected current exports to be refreshed, got %d refreshes", stub.exported)
+	}
+}
+
+func TestUpdateReleaseInstallFailsWhenExportsCannotBeRefreshed(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:  testCpakId("release", "v1.0.0"),
+		Name:    "demo",
+		Version: "v1.0.0",
+		Release: "v1.0.0",
+		Origin:  testOrigin,
+	})
+
+	stub := &updateStub{latest: "v1.0.0", exportErr: errors.New("export failed")}
+	results, err := c.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if results[0].Status != types.UpdateStatusFailed {
+		t.Fatalf("expected status failed, got %q", results[0].Status)
 	}
 }
 

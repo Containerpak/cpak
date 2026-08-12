@@ -18,7 +18,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -33,7 +33,7 @@ func executeContainer(ctx context.Context, owner string, capabilities map[string
 	if err != nil {
 		return 0, err
 	}
-	binary, err := trustedPodmanBinary()
+	binary, err := trustedContainerBinary(containerBackend(request))
 	if err != nil {
 		return 0, err
 	}
@@ -190,6 +190,9 @@ func containerExecArguments(request ContainerRequest) []string {
 }
 
 func validateContainerRequest(request ContainerRequest) error {
+	if request.Backend != "" && request.Backend != "podman" && request.Backend != "docker" {
+		return errors.New("unsupported host container backend")
+	}
 	if len(request.Resources) > 32 || len(request.Command) > 128 || len(request.Environment) > 64 || len(request.Mounts) > 32 || len(request.Ports) > 32 {
 		return errors.New("container request is too large")
 	}
@@ -229,7 +232,7 @@ func validateContainerRequest(request ContainerRequest) error {
 		}
 	}
 	if request.Image != "" {
-		if _, err := name.ParseReference(request.Image); err != nil {
+		if _, err := oci.ParseReference(request.Image); err != nil {
 			return errors.New("invalid container image")
 		}
 	}
@@ -340,14 +343,24 @@ func validateContainerPort(value string) error {
 	return nil
 }
 
-func trustedPodmanBinary() (string, error) {
-	path, err := exec.LookPath("podman")
+func containerBackend(request ContainerRequest) string {
+	if request.Backend == "" {
+		return "podman"
+	}
+	return request.Backend
+}
+
+func trustedContainerBinary(backend string) (string, error) {
+	if backend != "podman" && backend != "docker" {
+		return "", errors.New("unsupported host container backend")
+	}
+	path, err := exec.LookPath(backend)
 	if err != nil {
-		return "", errors.New("host container backend is unavailable: podman")
+		return "", fmt.Errorf("host container backend is unavailable: %s", backend)
 	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", errors.New("host container backend is unavailable: podman")
+		return "", fmt.Errorf("host container backend is unavailable: %s", backend)
 	}
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {

@@ -65,7 +65,7 @@ type updateDeps struct {
 	latestRelease func(origin string) (string, error)
 	fetchManifest func(origin, branch, release, commit string) (*types.CpakManifest, error)
 	installDeps   func(origin string, manifest *types.CpakManifest) ([]types.Dependency, error)
-	pull          func(image, cpakImageId string) ([]string, string, string, error)
+	pull          func(image, cpakImageId, origin string) ([]string, string, string, error)
 	buildRuntime  func(layers []string, sources []types.RuntimeSource) ([]string, error)
 	stop          func(app types.Application) error
 	createExports func(app types.Application) error
@@ -82,7 +82,7 @@ func (c *Cpak) newUpdateDeps() updateDeps {
 		latestRelease: c.GetLatestRelease,
 		fetchManifest: c.FetchManifest,
 		installDeps:   c.installDependencies,
-		pull:          c.Pull,
+		pull:          c.pull,
 		buildRuntime:  c.BuildRuntimeLayers,
 		stop:          c.stopApplicationContainers,
 		createExports: c.createExports,
@@ -150,6 +150,11 @@ func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateO
 	for index, app := range selected {
 		result := preflight[index]
 		if result.Status != "" {
+			if result.Status == types.UpdateStatusUpToDate {
+				if err := deps.createExports(app); err != nil {
+					result = failedUpdate(result, err)
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -298,7 +303,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		return failedUpdate(result, err)
 	}
 
-	layers, config, imageDigest, err := deps.pull(image, cpakImageId)
+	layers, config, imageDigest, err := deps.pull(image, cpakImageId, app.Origin)
 	if err != nil {
 		return failedUpdate(result, err)
 	}

@@ -173,7 +173,7 @@ func TestSystemBrokerShimsAreExplicit(t *testing.T) {
 		}},
 	}
 	shims := systemBrokerShims(override)
-	if !reflect.DeepEqual(shims, []string{"notify-send", "xdg-open", "podman", "docker"}) {
+	if !reflect.DeepEqual(shims, []string{"notify-send", "xdg-open", "gio", "podman", "docker"}) {
 		t.Fatalf("system broker shims: %v", shims)
 	}
 }

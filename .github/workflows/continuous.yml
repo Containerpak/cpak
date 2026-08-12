@@ -58,8 +58,8 @@ jobs:
         run: |
           mkdir -p dist
           for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/cpak-linux-${arch}" .
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "/tmp/cpak-installer-linux-${arch}" ./cmd/cpak-installer
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.selfUpdateMode=enabled -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=auto" -o "dist/cpak-linux-${arch}" .
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=auto" -o "/tmp/cpak-installer-linux-${arch}" ./cmd/cpak-installer
             go run ./cmd/cpak-pack \
               --installer "/tmp/cpak-installer-linux-${arch}" \
               --cpak "dist/cpak-linux-${arch}" \

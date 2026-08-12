@@ -164,6 +164,38 @@ func TestContainerCallStreamsOutputAndExitCode(t *testing.T) {
 	}
 }
 
+func TestDockerShimSelectsDockerBackend(t *testing.T) {
+	options := testOptions(t)
+	options.ContainerOwner = "app-id"
+	options.ContainerCapabilities = map[string]bool{types.HostActionContainersRead: true}
+	options.Containers = func(_ context.Context, _ string, _ map[string]bool, _ []ContainerPathGrant, request ContainerRequest, _, _ io.Writer) (int, error) {
+		if request.Backend != "docker" || request.Operation != "ps" {
+			t.Fatalf("unexpected Docker request: %+v", request)
+		}
+		return 0, nil
+	}
+	startBroker(t, options)
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "docker", []string{"ps"}, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPodmanShimKeepsLegacyRequestShape(t *testing.T) {
+	options := testOptions(t)
+	options.ContainerOwner = "app-id"
+	options.ContainerCapabilities = map[string]bool{types.HostActionContainersRead: true}
+	options.Containers = func(_ context.Context, _ string, _ map[string]bool, _ []ContainerPathGrant, request ContainerRequest, _, _ io.Writer) (int, error) {
+		if request.Backend != "" || request.Operation != "ps" {
+			t.Fatalf("unexpected Podman request: %+v", request)
+		}
+		return 0, nil
+	}
+	startBroker(t, options)
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "podman", []string{"ps"}, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestContainerCallCancellationReachesProvider(t *testing.T) {
 	options := testOptions(t)
 	options.ContainerOwner = "app-id"
@@ -218,6 +250,25 @@ func TestValidateURIArgs(t *testing.T) {
 	for _, value := range []string{"/tmp/file", "file:///tmp/file", "javascript:alert(1)", "https://example.com\x00bad"} {
 		if err := validateOpenURI(OpenURIRequest{URI: value}); err == nil {
 			t.Fatalf("invalid URI %q was accepted", value)
+		}
+	}
+}
+
+func TestParseGIOOpen(t *testing.T) {
+	request, err := parseGIOOpen([]string{"open", "https://usecpak.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.URI != "https://usecpak.org" {
+		t.Fatalf("URI: got %q", request.URI)
+	}
+	for _, args := range [][]string{
+		{"open"},
+		{"open", "https://one.example", "https://two.example"},
+		{"mime", "x-scheme-handler/https"},
+	} {
+		if _, err = parseGIOOpen(args); err == nil {
+			t.Fatalf("accepted gio arguments %v", args)
 		}
 	}
 }

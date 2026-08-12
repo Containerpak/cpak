@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -41,14 +41,18 @@ func resolveManifestImage(manifest *types.CpakManifest, branch, release, commit 
 	if tag == "" {
 		return "", fmt.Errorf("Git source %q does not produce a valid OCI tag", value)
 	}
-	ref, err := name.ParseReference(manifest.Image)
+	ref, err := oci.ParseReference(manifest.Image)
 	if err != nil {
 		return "", fmt.Errorf("parse image: %w", err)
 	}
-	if _, ok := ref.(name.Digest); ok {
+	if ref.IsDigest {
 		return "", fmt.Errorf("image_ref source cannot be used with an image digest")
 	}
-	return ref.Context().Name() + ":" + tag, nil
+	ref, err = ref.WithTag(tag)
+	if err != nil {
+		return "", err
+	}
+	return ref.Name(), nil
 }
 
 func sourceImageTag(value string) string {

@@ -33,10 +33,28 @@ const cpakInContainerPath = "/usr/local/bin/cpak"
 const systemBrokerShimPath = "/usr/local/bin/cpak-system-broker-shim"
 const desktopRuntimeTarget = "/run/cpak/desktop-runtime"
 
+const openURIHandlerDesktopPath = "/usr/local/share/applications/cpak-open-uri.desktop"
+const openURIHandlerDefaultsPath = "/usr/local/etc/xdg/cpak-mimeapps.list"
+
+const openURIHandlerDesktopEntry = `[Desktop Entry]
+Type=Application
+Name=cpak URI opener
+NoDisplay=true
+Exec=/usr/local/bin/xdg-open %u
+MimeType=x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
+`
+
+const openURIHandlerDefaults = `[Default Applications]
+x-scheme-handler/http=cpak-open-uri.desktop;
+x-scheme-handler/https=cpak-open-uri.desktop;
+x-scheme-handler/mailto=cpak-open-uri.desktop;
+`
+
 type SpawnCmd struct {
 	Verbose        bool     `cli:"verbose,v" help:"enable verbose output"`
 	UserUid        int      `cli:"user-uid" help:"set the user uid"`
 	AppId          string   `cli:"app-id" help:"set the app id"`
+	MachineId      string   `cli:"machine-id" help:"set the application machine id"`
 	ContainerId    string   `cli:"container-id" help:"set the container id"`
 	Rootfs         string   `cli:"rootfs" help:"set the rootfs"`
 	Env            []string `cli:"env,e" help:"set environment variables"`
@@ -100,7 +118,7 @@ func (c *SpawnCmd) Run() error {
 		}
 		return c.installRuntimePackages(c.RuntimePackage)
 	}
-	machineIDGrant, err := c.injectMachineID(c.Rootfs)
+	machineIDGrant, err := c.injectMachineID(c.Rootfs, c.MachineId)
 	if err != nil {
 		return err
 	}
@@ -138,6 +156,11 @@ func (c *SpawnCmd) Run() error {
 		if err := c.createSystemBrokerShimAndLinks(c.Rootfs, c.SystemShims); err != nil {
 			return err
 		}
+		if containsString(c.SystemShims, "xdg-open") {
+			if err := c.installOpenURIHandler(c.Rootfs); err != nil {
+				return err
+			}
+		}
 	}
 
 	err = c.createCpakFile(c.AppId, c.Rootfs)
@@ -165,10 +188,16 @@ func (c *SpawnCmd) Run() error {
 	return nil
 }
 
-func (c *SpawnCmd) injectMachineID(rootFs string) (sandbox.PathGrant, error) {
-	machineID, err := generateMachineID(rand.Reader)
-	if err != nil {
-		return sandbox.PathGrant{}, fmt.Errorf("generate container machine ID: %w", err)
+func (c *SpawnCmd) injectMachineID(rootFs, machineID string) (sandbox.PathGrant, error) {
+	if machineID == "" {
+		var err error
+		machineID, err = generateMachineID(rand.Reader)
+		if err != nil {
+			return sandbox.PathGrant{}, fmt.Errorf("generate container machine ID: %w", err)
+		}
+	}
+	if err := validateMachineID(machineID); err != nil {
+		return sandbox.PathGrant{}, err
 	}
 	destination, err := prepareRootfsFile(rootFs, "/etc/machine-id")
 	if err != nil {
@@ -195,6 +224,22 @@ func generateMachineID(reader io.Reader) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func validateMachineID(value string) error {
+	if len(value) != 32 || value != strings.ToLower(value) {
+		return errors.New("machine ID must be 32 lowercase hexadecimal characters")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		return errors.New("machine ID must be 32 lowercase hexadecimal characters")
+	}
+	for _, octet := range decoded {
+		if octet != 0 {
+			return nil
+		}
+	}
+	return errors.New("machine ID cannot be all zeroes")
 }
 
 func setEnvironmentVariables(containerId, rootFs string, envVars []string, stateDir, layersDir, layers string) []string {
@@ -512,7 +557,7 @@ func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) 
 	if err := os.Symlink("pts/ptmx", filepath.Join(deviceRoot, "ptmx")); err != nil {
 		return nil, fmt.Errorf("link:/dev/ptmx: an error occurred while spawning the namespace: %s", err)
 	}
-	for _, device := range []string{"null", "zero", "random", "urandom", "tty"} {
+	for _, device := range []string{"full", "null", "zero", "random", "urandom", "tty"} {
 		source := filepath.Join("/dev", device)
 		destination, prepareErr := prepareRootfsMountTarget(rootFs, filepath.Join("/dev", device), source)
 		if prepareErr != nil {
@@ -960,7 +1005,7 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 		return fmt.Errorf("chmod system broker shim: %w", err)
 	}
 	for _, name := range shims {
-		if name != "notify-send" && name != "xdg-open" && name != "cpak-launch-app" && name != "podman" && name != "docker" {
+		if name != "notify-send" && name != "xdg-open" && name != "gio" && name != "cpak-launch-app" && name != "podman" && name != "docker" {
 			return fmt.Errorf("invalid system broker shim: %s", name)
 		}
 		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/local/bin", name))
@@ -977,4 +1022,37 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 		}
 	}
 	return nil
+}
+
+func (c *SpawnCmd) installOpenURIHandler(rootFs string) error {
+	path, err := prepareRootfsFile(rootFs, openURIHandlerDesktopPath)
+	if err != nil {
+		return fmt.Errorf("prepare open URI desktop entry: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(openURIHandlerDesktopEntry), 0644); err != nil {
+		return fmt.Errorf("write open URI desktop entry: %w", err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		return fmt.Errorf("chmod open URI desktop entry: %w", err)
+	}
+	defaults, err := prepareRootfsFile(rootFs, openURIHandlerDefaultsPath)
+	if err != nil {
+		return fmt.Errorf("prepare open URI defaults: %w", err)
+	}
+	if err := os.WriteFile(defaults, []byte(openURIHandlerDefaults), 0644); err != nil {
+		return fmt.Errorf("write open URI defaults: %w", err)
+	}
+	if err := os.Chmod(defaults, 0644); err != nil {
+		return fmt.Errorf("chmod open URI defaults: %w", err)
+	}
+	return nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

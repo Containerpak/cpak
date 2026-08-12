@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"golang.org/x/term"
 )
 
@@ -43,7 +44,17 @@ func main() {
 		return
 	}
 
-	if !*forceTerminal && !term.IsTerminal(int(os.Stdin.Fd())) && os.Getenv("DISPLAY") != "" {
+	if !*forceTerminal && !term.IsTerminal(int(os.Stdin.Fd())) && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
+		backend := desktopui.SelectBackend("")
+		handled, nativeErr := desktopui.Install(backend, capsule.Metadata.Name, capsule.Metadata.Description, capsule.Metadata.Origin, func(progress func(string)) error {
+			return install(capsule, progress)
+		})
+		if handled {
+			if nativeErr != nil {
+				fail(nativeErr)
+			}
+			return
+		}
 		runGUI(capsule)
 		return
 	}

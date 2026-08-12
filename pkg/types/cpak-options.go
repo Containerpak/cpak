@@ -36,6 +36,9 @@ type CpakOptions struct {
 	// the downloaded images and unpacked layers.
 	CachePath string `json:"cache_path" conf:"cache_path"`
 
+	// RegistryAuthPath stores public registry credential bindings.
+	RegistryAuthPath string `json:"registry_auth_path" conf:"registry_auth_path"`
+
 	// DaBaDeeStoreopts is the configuration for the DaBaDee store.
 	DaBaDeeStoreOptions storage.StorageOptions `json:"dabadee_store"`
 

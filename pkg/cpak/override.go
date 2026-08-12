@@ -219,7 +219,7 @@ func systemBrokerShims(o types.Override) []string {
 		shims = append(shims, "notify-send")
 	}
 	if o.OpenURI {
-		shims = append(shims, "xdg-open")
+		shims = append(shims, "xdg-open", "gio")
 	}
 	if o.HostApplications {
 		shims = append(shims, "cpak-launch-app")

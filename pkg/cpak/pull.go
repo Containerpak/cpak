@@ -7,7 +7,6 @@ package cpak
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,9 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/crane"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/oci"
+	"github.com/mirkobrombin/cpak/pkg/registryauth"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/schollz/progressbar/v3"
 )
@@ -27,42 +26,26 @@ import (
 // Note: cpak does not offer a standard containers storage, it uses a custom
 // storage based on the image layers.
 func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfig string, imageDigest string, err error) {
+	return c.pull(image, cpakImageId, "")
+}
+
+func (c *Cpak) pull(image string, cpakImageId string, origin string) (layers []string, ociConfig string, imageDigest string, err error) {
 	err = tools.ValidateImageName(image)
 	if err != nil {
 		return
 	}
 
-	// getting the v1.Image of the remote image
-	img, err := crane.Pull(image, crane.WithContext(c.Ctx))
+	client := &oci.Client{}
+	if origin != "" {
+		client.Credentials = registryauth.Provider{Origin: origin, Path: c.Options.RegistryAuthPath}
+	}
+	img, err := client.Resolve(c.Ctx, image)
 	if err != nil {
 		return
 	}
-	imageHash, err := img.Digest()
-	if err != nil {
-		return
-	}
-	imageDigest = imageHash.String()
-
-	// getting the image config
-	ociConfigObj, err := img.ConfigFile()
-	if err != nil {
-		return
-	}
-
-	ociConfigBytes, err := json.Marshal(ociConfigObj)
-	if err != nil {
-		return
-	}
-
-	ociConfig = string(ociConfigBytes)
-
-	// unpacking the image layers into the storage/images folder
-	layerObjs, err := img.Layers()
-	if err != nil {
-		return
-	}
-
-	layers, err = c.unpackImageLayers(cpakImageId, img, layerObjs)
+	imageDigest = img.Digest
+	ociConfig = string(img.Config)
+	layers, err = c.unpackImageLayers(cpakImageId, client, img.Reference, img.Layers)
 	if err != nil {
 		return
 	}
@@ -75,13 +58,9 @@ func (c *Cpak) Pull(image string, cpakImageId string) (layers []string, ociConfi
 //
 // Note: only the layers that are not already present in the storage are
 // downloaded and unpacked.
-func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.Layer) (layers []string, err error) {
+func (c *Cpak) unpackImageLayers(digest string, client *oci.Client, ref oci.Reference, layerObjs []oci.Descriptor) (layers []string, err error) {
 	for _, layer := range layerObjs {
-		layerv1Hash, err := layer.Digest()
-		if err != nil {
-			return layers, err
-		}
-		layerDigest := strings.Split(layerv1Hash.String(), ":")[1]
+		layerDigest := strings.TrimPrefix(layer.Digest, "sha256:")
 
 		available, err := c.layerAvailable(layerDigest)
 		if err != nil {
@@ -93,7 +72,7 @@ func (c *Cpak) unpackImageLayers(digest string, image v1.Image, layerObjs []v1.L
 			continue
 		}
 
-		err = c.downloadLayer(image, layer, layerDigest)
+		err = c.downloadLayer(client, ref, layer, layerDigest)
 		if err != nil {
 			return layers, err
 		}
@@ -160,7 +139,7 @@ func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
 // 	return
 // }
 
-func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err error) {
+func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.Descriptor, digest string) (err error) {
 	if _, err = c.GetInCacheDirMkdir(); err != nil {
 		return err
 	}
@@ -169,22 +148,19 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 		return err
 	}
 	layerInCacheDir := layerFile.Name()
+	defer layerFile.Close()
 	defer os.Remove(layerInCacheDir)
-	layerContent, err := layer.Compressed()
+	layerContent, err := client.Blob(c.Ctx, ref, layer)
 	if err != nil {
 		return
 	}
 
 	defer layerContent.Close()
 
-	layerSize, err := layer.Size()
-	if err != nil {
-		return
-	}
+	layerSize := layer.Size
+	layerHash := digest[:min(12, len(digest))]
 
-	layerHash := digest[strings.Index(digest, ":")+1:][:12]
-
-	bar := progressbar.NewOptions(int(layerSize),
+	bar := progressbar.NewOptions64(layerSize,
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "━",
 			SaucerHead:    "╸",
@@ -203,9 +179,20 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 	hash := sha256.New()
 	writer := io.MultiWriter(layerFile, hash, bar)
 
-	_, err = io.Copy(writer, layerContent)
+	written, copyErr := io.Copy(writer, io.LimitReader(layerContent, layer.Size))
+	err = copyErr
 	if err != nil {
 		return
+	}
+	if written != layer.Size {
+		return fmt.Errorf("layer size mismatch for %s: expected %d, received %d", digest, layer.Size, written)
+	}
+	extra, copyErr := io.Copy(io.Discard, io.LimitReader(layerContent, 1))
+	if copyErr != nil {
+		return copyErr
+	}
+	if extra != 0 {
+		return fmt.Errorf("layer size mismatch for %s: expected %d, received more than %d", digest, layer.Size, layer.Size)
 	}
 	if err = layerFile.Close(); err != nil {
 		return

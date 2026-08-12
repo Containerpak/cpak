@@ -126,3 +126,22 @@ func TestValidateContainerShapeRejectsIrrelevantFields(t *testing.T) {
 		}
 	}
 }
+
+func TestContainerBackendSelection(t *testing.T) {
+	if got := containerBackend(ContainerRequest{}); got != "podman" {
+		t.Fatalf("default backend: got %q, want podman", got)
+	}
+	if got := containerBackend(ContainerRequest{Backend: "docker"}); got != "docker" {
+		t.Fatalf("selected backend: got %q, want docker", got)
+	}
+	if err := validateContainerRequest(ContainerRequest{Backend: "nerdctl", Operation: "ps"}); err == nil {
+		t.Fatal("unsupported container backend was accepted")
+	}
+}
+
+func TestTrustedContainerBinaryReportsMissingSelectedBackend(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := trustedContainerBinary("docker"); err == nil || !strings.Contains(err.Error(), "docker") {
+		t.Fatalf("missing Docker backend error: %v", err)
+	}
+}

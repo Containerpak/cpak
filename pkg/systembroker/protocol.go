@@ -58,6 +58,7 @@ type LaunchApplicationRequest struct {
 }
 
 type ContainerRequest struct {
+	Backend     string           `json:"backend,omitempty"`
 	Operation   string           `json:"operation"`
 	Resources   []string         `json:"resources,omitempty"`
 	Command     []string         `json:"command,omitempty"`

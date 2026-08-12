@@ -29,7 +29,7 @@ func TestBuildManifestLockIncludesRecursiveDependencies(t *testing.T) {
 		"github.com/example/grandchild\x00\x00\x00abc": grandchild,
 	}
 	deps := manifestLockDeps{
-		resolveImage: func(image string) (string, error) {
+		resolveImage: func(_ string, image string) (string, error) {
 			return image + "@sha256:" + strings.Repeat("a", 64), nil
 		},
 		fetchManifest: func(origin, branch, release, commit string) (*types.CpakManifest, error) {
@@ -57,7 +57,7 @@ func TestBuildManifestLockRejectsDependencyCycle(t *testing.T) {
 	child := validManifestForTest()
 	child.Dependencies = []types.Dependency{{Origin: "github.com/example/child"}}
 	deps := manifestLockDeps{
-		resolveImage: func(image string) (string, error) {
+		resolveImage: func(_ string, image string) (string, error) {
 			return image + "@sha256:" + strings.Repeat("a", 64), nil
 		},
 		fetchManifest: func(_, _, _, _ string) (*types.CpakManifest, error) { return child, nil },
@@ -74,7 +74,7 @@ func TestVerifyManifestLockUsesEmbeddedManifests(t *testing.T) {
 	child.Name = "child"
 	child.Image = "ghcr.io/example/child:main"
 	deps := manifestLockDeps{
-		resolveImage: func(image string) (string, error) {
+		resolveImage: func(_ string, image string) (string, error) {
 			return image + "@sha256:" + strings.Repeat("b", 64), nil
 		},
 		fetchManifest: func(_, _, _, _ string) (*types.CpakManifest, error) { return child, nil },

@@ -160,3 +160,14 @@ func TestRegistryPurgeRemovesOnlyRegisteredSessions(t *testing.T) {
 		t.Fatalf("unrelated session was removed: %v", err)
 	}
 }
+
+func TestDisplayManagerConfigsIncludeLocalSessionDirectory(t *testing.T) {
+	for name, config := range map[string][]byte{"SDDM": sddmConfig, "LightDM": lightdmConfig} {
+		if !strings.Contains(string(config), DefaultSessionDirectory) {
+			t.Fatalf("%s config does not include %s", name, DefaultSessionDirectory)
+		}
+	}
+	if !strings.Contains(string(lightdmConfig), DefaultSystemSessions) {
+		t.Fatalf("LightDM config does not preserve %s", DefaultSystemSessions)
+	}
+}

@@ -7,6 +7,15 @@ set -e
 
 SHIM="$(basename "$0")"
 case "$SHIM" in
+    gio)
+        if [ "${1:-}" != "open" ]; then
+            if [ -x /usr/bin/gio ]; then
+                exec /usr/bin/gio "$@"
+            fi
+            echo "CPAK SYSTEM BROKER ERROR: the guest gio command is unavailable." >&2
+            exit 127
+        fi
+        ;;
     notify-send|xdg-open|cpak-launch-app|podman|docker) ;;
     *) echo "CPAK SYSTEM BROKER ERROR: unsupported shim." >&2; exit 1 ;;
 esac

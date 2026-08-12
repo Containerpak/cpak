@@ -26,6 +26,12 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 			return err
 		}
 		return client.OpenURI(ctx, request)
+	case "gio":
+		request, err := parseGIOOpen(args)
+		if err != nil {
+			return err
+		}
+		return client.OpenURI(ctx, request)
 	case "cpak-launch-app":
 		request, err := parseApplication(args, environment)
 		if err != nil {
@@ -37,10 +43,20 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 		if err != nil {
 			return err
 		}
+		if shim == "docker" {
+			request.Backend = "docker"
+		}
 		return client.Containers(ctx, request)
 	default:
 		return errors.New("unsupported system integration shim")
 	}
+}
+
+func parseGIOOpen(args []string) (OpenURIRequest, error) {
+	if len(args) != 2 || args[0] != "open" {
+		return OpenURIRequest{}, errors.New("gio broker access is limited to one URI passed to gio open")
+	}
+	return parseOpenURI(args[1:])
 }
 
 func parseOpenURI(args []string) (OpenURIRequest, error) {

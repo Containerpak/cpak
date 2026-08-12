@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -39,18 +39,18 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if manifest.Image == "" {
 		return errors.New("image is mandatory and must be populated")
 	}
-	if _, err = name.ParseReference(manifest.Image); err != nil {
+	if _, err = oci.ParseReference(manifest.Image); err != nil {
 		return fmt.Errorf("image must be a valid OCI reference: %w", err)
 	}
 	if manifest.ImageRef != "" && manifest.ImageRef != "source" {
 		return fmt.Errorf("unsupported image_ref: %s", manifest.ImageRef)
 	}
 	if manifest.ImageRef == "source" {
-		ref, parseErr := name.ParseReference(manifest.Image)
+		ref, parseErr := oci.ParseReference(manifest.Image)
 		if parseErr != nil {
 			return fmt.Errorf("image must be a valid OCI reference: %w", parseErr)
 		}
-		if _, ok := ref.(name.Digest); ok {
+		if ref.IsDigest {
 			return errors.New("image_ref source cannot be used with an image digest")
 		}
 	}

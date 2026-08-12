@@ -182,6 +182,78 @@ func TestContainerEnvironmentKeepsImageAndOverrideValues(t *testing.T) {
 	}
 }
 
+func TestOpenURIEnvironmentUsesPrivateDesktopDefaults(t *testing.T) {
+	environment := openURIEnvironment([]string{
+		"XDG_CURRENT_DESKTOP=GNOME",
+		"XDG_DATA_DIRS=/opt/share",
+		"XDG_CONFIG_DIRS=/opt/config",
+	})
+	if !slicesContain(environment, "XDG_CURRENT_DESKTOP=cpak:GNOME") {
+		t.Fatalf("cpak desktop is missing: %v", environment)
+	}
+	if !slicesContain(environment, "XDG_DATA_DIRS=/usr/local/share:/opt/share") {
+		t.Fatalf("URI handler data directory is missing: %v", environment)
+	}
+	if !slicesContain(environment, "XDG_CONFIG_DIRS=/usr/local/etc/xdg:/opt/config") {
+		t.Fatalf("URI handler config directory is missing: %v", environment)
+	}
+}
+
+func TestOpenURIEnvironmentKeepsTheHostDesktop(t *testing.T) {
+	t.Setenv("XDG_CURRENT_DESKTOP", "GNOME")
+	environment := openURIEnvironment(nil)
+	if !slicesContain(environment, "XDG_CURRENT_DESKTOP=cpak:GNOME") {
+		t.Fatalf("host desktop is missing: %v", environment)
+	}
+}
+
+func TestApplicationMachineIDIsStableAndPrivate(t *testing.T) {
+	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	first, err := cp.applicationMachineID("application-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cp.applicationMachineID("application-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := cp.applicationMachineID("application-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("machine ID changed: %s != %s", first, second)
+	}
+	if first == other {
+		t.Fatalf("applications share machine ID %s", first)
+	}
+	if len(first) != 32 {
+		t.Fatalf("machine ID length: got %d", len(first))
+	}
+}
+
+func TestEnsureOpenURIMimeAppsWritesDesktopSpecificDefaults(t *testing.T) {
+	config := t.TempDir()
+	if err := ensureOpenURIMimeApps([]string{"XDG_CONFIG_HOME=" + config}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(config, "cpak-mimeapps.list")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != openURIMimeApps {
+		t.Fatalf("mime defaults: got %q", content)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Fatalf("mime defaults mode: got %o, want 644", info.Mode().Perm())
+	}
+}
+
 func TestGetCpakBinaryUsesTheRunningExecutable(t *testing.T) {
 	got, err := getCpakBinary()
 	if err != nil {
@@ -283,6 +355,27 @@ func TestInheritHostTimezoneRemovesImageTimezone(t *testing.T) {
 	}
 	if !slicesContain(got, "LANG=en_US.UTF-8") || !slicesContain(got, "PATH=/usr/bin") {
 		t.Fatalf("unrelated environment was removed from %v", got)
+	}
+}
+
+func TestInheritHostCursorKeepsApplicationValues(t *testing.T) {
+	t.Setenv("XCURSOR_THEME", "HostTheme")
+	t.Setenv("XCURSOR_SIZE", "48")
+	environment := inheritHostCursor([]string{"XCURSOR_THEME=ApplicationTheme", "XCURSOR_SIZE=32"})
+	if !slicesContain(environment, "XCURSOR_THEME=ApplicationTheme") || !slicesContain(environment, "XCURSOR_SIZE=32") {
+		t.Fatalf("application cursor settings were replaced: %v", environment)
+	}
+	if slicesContain(environment, "XCURSOR_THEME=HostTheme") || slicesContain(environment, "XCURSOR_SIZE=48") {
+		t.Fatalf("host cursor settings replaced application settings: %v", environment)
+	}
+}
+
+func TestInheritHostCursorAddsHostValues(t *testing.T) {
+	t.Setenv("XCURSOR_THEME", "Adwaita")
+	t.Setenv("XCURSOR_SIZE", "24")
+	environment := inheritHostCursor(nil)
+	if !slicesContain(environment, "XCURSOR_THEME=Adwaita") || !slicesContain(environment, "XCURSOR_SIZE=24") {
+		t.Fatalf("host cursor settings are missing: %v", environment)
 	}
 }
 

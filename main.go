@@ -6,11 +6,18 @@
 package main
 
 import (
+	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/mirkobrombin/cpak/cmd"
+	"github.com/mirkobrombin/cpak/pkg/selfupdate"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
@@ -49,14 +56,22 @@ type CLI struct {
 	System             cmd.SystemCmd             `cmd:"system" help:"Manage privileged system integration"`
 	SystemAuthority    cmd.SystemAuthorityCmd    `cmd:"system-authority" help:"Start the privileged system authority"`
 	Session            cmd.SessionCmd            `cmd:"session" help:"Manage desktop and kiosk login sessions"`
+	Auth               cmd.AuthCmd               `cmd:"auth" help:"Manage package registry access"`
+	SelfUpdate         cmd.SelfUpdateCmd         `cmd:"self-update" help:"Update the cpak binary"`
 
 	cli.Base
 }
 
 var version = "0.0.1"
+var selfUpdateMode = "enabled"
+
+//go:embed cpak-icon.png
+var cpakIcon []byte
 
 func main() {
-	app, err := cli.New(&CLI{}, cli.WithVersion(version))
+	root := &CLI{}
+	root.SelfUpdate.Configure(version, selfUpdateMode, cpakIcon)
+	app, err := cli.New(root, cli.WithVersion(version))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -70,4 +85,61 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func (c *CLI) Before() error {
+	if skipUpdateCheck(os.Args) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	checker := selfupdate.Checker{CurrentVersion: version, Mode: selfUpdateMode}
+	release, available, err := checker.Check(ctx, 24*time.Hour)
+	if err != nil || !available {
+		return nil
+	}
+	if startDesktopUpdate(checker, release.Version) {
+		return nil
+	}
+	if selfUpdateMode == "managed" {
+		fmt.Fprintf(os.Stderr, "cpak %s is available; ask your package maintainer to update it.\n", release.Version)
+	} else {
+		fmt.Fprintf(os.Stderr, "cpak %s is available. Run cpak self-update to install it.\n", release.Version)
+	}
+	return nil
+}
+
+func startDesktopUpdate(checker selfupdate.Checker, release string) bool {
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" || checker.WasNotified(release) {
+		return false
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	command := exec.Command(executable, "self-update", "--desktop")
+	command.Stdin = nil
+	command.Stdout = nil
+	command.Stderr = nil
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err = command.Start(); err != nil {
+		return false
+	}
+	_ = command.Process.Release()
+	if err = checker.MarkNotified(release); err != nil {
+		return false
+	}
+	return true
+}
+
+func skipUpdateCheck(args []string) bool {
+	if len(args) < 2 || strings.HasPrefix(version, "0.0.0-") || version == "0.0.1" || version == "dev" {
+		return true
+	}
+	for _, argument := range args[1:] {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "dedup" || argument == "host-action" {
+			return true
+		}
+	}
+	return false
 }

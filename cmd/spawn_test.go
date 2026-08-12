@@ -108,10 +108,21 @@ func TestGenerateMachineIDUsesAPrivateContainerIdentifier(t *testing.T) {
 	}
 }
 
+func TestValidateMachineIDRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"", "ABCDEF0123456789ABCDEF0123456789", "00000000000000000000000000000000", "not-a-machine-id"} {
+		if err := validateMachineID(value); err == nil {
+			t.Fatalf("machine ID %q was accepted", value)
+		}
+	}
+	if err := validateMachineID("30313233343536373839616263646566"); err != nil {
+		t.Fatalf("valid machine ID was rejected: %v", err)
+	}
+}
+
 func TestCreateSystemBrokerShimIsExecutable(t *testing.T) {
 	rootfs := t.TempDir()
 	command := &SpawnCmd{}
-	if err := command.createSystemBrokerShimAndLinks(rootfs, []string{"notify-send", "xdg-open", "cpak-launch-app"}); err != nil {
+	if err := command.createSystemBrokerShimAndLinks(rootfs, []string{"notify-send", "xdg-open", "gio", "cpak-launch-app"}); err != nil {
 		t.Fatal(err)
 	}
 	shim := filepath.Join(rootfs, systemBrokerShimPath)
@@ -122,11 +133,40 @@ func TestCreateSystemBrokerShimIsExecutable(t *testing.T) {
 	if info.Mode().Perm() != 0755 {
 		t.Fatalf("shim mode: got %o, want 755", info.Mode().Perm())
 	}
-	for _, name := range []string{"notify-send", "xdg-open", "cpak-launch-app"} {
+	for _, name := range []string{"notify-send", "xdg-open", "gio", "cpak-launch-app"} {
 		link := filepath.Join(rootfs, "usr/local/bin", name)
 		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("system broker link %s: %v", name, err)
 		}
+	}
+}
+
+func TestInstallOpenURIHandlerCreatesPrivateDesktopEntry(t *testing.T) {
+	rootfs := t.TempDir()
+	command := &SpawnCmd{}
+	if err := command.installOpenURIHandler(rootfs); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(rootfs, openURIHandlerDesktopPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"Exec=/usr/local/bin/xdg-open %u",
+		"x-scheme-handler/http",
+		"x-scheme-handler/https",
+		"x-scheme-handler/mailto",
+	} {
+		if !strings.Contains(string(content), value) {
+			t.Fatalf("desktop entry is missing %q: %s", value, content)
+		}
+	}
+	defaults, err := os.ReadFile(filepath.Join(rootfs, openURIHandlerDefaultsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(defaults) != openURIHandlerDefaults {
+		t.Fatalf("desktop defaults: got %q", defaults)
 	}
 }
 

@@ -61,7 +61,8 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 			Root:         filepath.Join(installationPath, "dabadee"),
 			WithMetadata: true,
 		},
-		CachePath: filepath.Join(installationPath, "cache"),
+		CachePath:        filepath.Join(installationPath, "cache"),
+		RegistryAuthPath: filepath.Join(homedir, ".config", "cpak", "registry-auth.json"),
 	}
 
 	var confPaths []string

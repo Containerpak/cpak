@@ -21,7 +21,7 @@ func TestCapsuleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := PackInstaller([]byte("installer"), []byte("cpak"))
+	base := testPackInstaller(t)
 	metadata := testMetadata()
 	digest := sha256.Sum256(base)
 	metadata.InstallerSHA256 = hex.EncodeToString(digest[:])
@@ -55,7 +55,7 @@ func TestCapsuleRejectsTamperedMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packed, err := SignCapsule(PackInstaller([]byte("installer"), []byte("cpak")), testMetadata(), privateKey)
+	packed, err := SignCapsule(testPackInstaller(t), testMetadata(), privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestCapsuleRejectsTamperedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packed, err := SignCapsule(PackInstaller([]byte("installer"), []byte("cpak")), testMetadata(), privateKey)
+	packed, err := SignCapsule(testPackInstaller(t), testMetadata(), privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestCapsuleRejectsWrongArchitecture(t *testing.T) {
 	} else {
 		metadata.Arch = "amd64"
 	}
-	packed, err := SignCapsule(PackInstaller([]byte("installer"), []byte("cpak")), metadata, privateKey)
+	packed, err := SignCapsule(testPackInstaller(t), metadata, privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +129,22 @@ func TestCapsuleRejectsWrongArchitecture(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "architecture") {
 		t.Fatalf("expected architecture error, got %v", err)
 	}
+}
+
+func TestCheckedCapacityRejectsOverflow(t *testing.T) {
+	maximum := int(^uint(0) >> 1)
+	if _, err := checkedCapacity(maximum, 1); err == nil {
+		t.Fatal("overflowing capacity was accepted")
+	}
+}
+
+func testPackInstaller(t *testing.T) []byte {
+	t.Helper()
+	packed, err := PackInstaller([]byte("installer"), []byte("cpak"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return packed
 }
 
 func testMetadata() Metadata {

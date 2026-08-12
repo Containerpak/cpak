@@ -31,7 +31,11 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	if err = os.WriteFile(*outputPath, bootstrap.PackInstaller(installer, payload), 0755); err != nil {
+	packed, err := bootstrap.PackInstaller(installer, payload)
+	if err != nil {
+		fail(err)
+	}
+	if err = os.WriteFile(*outputPath, packed, 0755); err != nil {
 		fail(err)
 	}
 }

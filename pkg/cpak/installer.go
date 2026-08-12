@@ -8,6 +8,7 @@ package cpak
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -138,8 +140,11 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 	imageIdBase := manifest.Name + ":" + sourceType + ":" + version + ":" + origin
 	cpakImageId := base64.StdEncoding.EncodeToString([]byte(imageIdBase))
 
-	layers, config, imageDigest, err := c.Pull(image, cpakImageId)
+	layers, config, imageDigest, err := c.pull(image, cpakImageId, origin)
 	if err != nil {
+		if errors.Is(err, oci.ErrAuthenticationRequired) {
+			return fmt.Errorf("%s requires registry access; run cpak auth login %s", manifest.Name, origin)
+		}
 		return
 	}
 	layers, err = c.BuildRuntimeLayers(layers, manifest.RuntimeSources)
@@ -408,7 +413,94 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 		}
 	}
 	newContent := strings.Join(lines, "\n")
-	return os.WriteFile(desktopDest, []byte(newContent), 0755)
+	if err := os.WriteFile(desktopDest, []byte(newContent), 0755); err != nil {
+		return err
+	}
+	return exportDesktopAlias(app, entryBase, newContent)
+}
+
+func exportDesktopAlias(app types.Application, name, content string) error {
+	path := originalDesktopEntryExportPath(name)
+	if existing, err := os.ReadFile(path); err == nil {
+		if desktopEntryValue(existing, "X-cpak-Origin") != app.Origin {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	} else if desktopEntryExistsInSystemData(name) {
+		return nil
+	}
+
+	content = setDesktopEntryValue(content, "NoDisplay", "true")
+	content = setDesktopEntryValue(content, "X-cpak-Origin", app.Origin)
+	content = setDesktopEntryValue(content, "X-cpak-ID", app.CpakId)
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func originalDesktopEntryExportPath(name string) string {
+	return filepath.Join(os.Getenv("HOME"), ".local", "share", "applications", filepath.Base(name))
+}
+
+func desktopEntryExistsInSystemData(name string) bool {
+	directories := os.Getenv("XDG_DATA_DIRS")
+	if directories == "" {
+		directories = "/usr/local/share:/usr/share"
+	}
+	for _, directory := range strings.Split(directories, ":") {
+		if directory == "" || !filepath.IsAbs(directory) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(directory, "applications", filepath.Base(name))); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func setDesktopEntryValue(content, key, value string) string {
+	lines := strings.Split(content, "\n")
+	inDesktopEntry := false
+	insertAt := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			if inDesktopEntry {
+				insertAt = i
+				break
+			}
+			inDesktopEntry = line == "[Desktop Entry]"
+			continue
+		}
+		if !inDesktopEntry {
+			continue
+		}
+		insertAt = i + 1
+		if strings.HasPrefix(line, key+"=") {
+			lines[i] = key + "=" + value
+			return strings.Join(lines, "\n")
+		}
+	}
+	if insertAt < 0 {
+		return content
+	}
+	lines = append(lines, "")
+	copy(lines[insertAt+1:], lines[insertAt:])
+	lines[insertAt] = key + "=" + value
+	return strings.Join(lines, "\n")
+}
+
+func removeDesktopAlias(app types.Application, name string) error {
+	path := originalDesktopEntryExportPath(name)
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if desktopEntryValue(content, "X-cpak-ID") != app.CpakId {
+		return nil
+	}
+	return os.Remove(path)
 }
 
 func rewriteDesktopExec(origin, command string) string {
@@ -703,6 +795,9 @@ func (c *Cpak) removeExports(app types.Application) error {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			logger.Printf("Warning: could not remove desktop entry %s: %v", path, err)
 		}
+		if err := removeDesktopAlias(app, entry); err != nil {
+			logger.Printf("Warning: could not remove desktop alias %s: %v", entry, err)
+		}
 	}
 
 	iconsDir := filepath.Join(home, ".local", "share", "icons")
@@ -766,6 +861,9 @@ func (c *Cpak) removeStaleExports(old types.Application, updated types.Applicati
 			if err := os.Remove(desktopEntryExportPath(old, entry)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
+			if err := removeDesktopAlias(old, entry); err != nil {
+				return err
+			}
 		}
 
 		iconsDir := filepath.Join(home, ".local", "share", "icons")
@@ -795,6 +893,9 @@ func (c *Cpak) removeStaleExports(old types.Application, updated types.Applicati
 				continue
 			}
 			if err := os.Remove(desktopEntryExportPath(old, entry)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err := removeDesktopAlias(old, entry); err != nil {
 				return err
 			}
 		}

@@ -13,29 +13,30 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/crane"
-	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/mirkobrombin/cpak/pkg/oci"
+	"github.com/mirkobrombin/cpak/pkg/registryauth"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 type manifestLockDeps struct {
-	resolveImage  func(string) (string, error)
+	resolveImage  func(string, string) (string, error)
 	fetchManifest func(string, string, string, string) (*types.CpakManifest, error)
 }
 
 // BuildManifestLock resolves the package graph to immutable OCI digests.
 func (c *Cpak) BuildManifestLock(origin string, manifest *types.CpakManifest) (types.ManifestLock, error) {
 	deps := manifestLockDeps{
-		resolveImage: func(image string) (string, error) {
-			ref, err := name.ParseReference(image)
+		resolveImage: func(origin, image string) (string, error) {
+			ref, err := oci.ParseReference(image)
 			if err != nil {
 				return "", err
 			}
-			digest, err := crane.Digest(image, crane.WithContext(c.Ctx))
+			client := &oci.Client{Credentials: registryauth.Provider{Origin: origin, Path: c.Options.RegistryAuthPath}}
+			digest, err := client.Digest(c.Ctx, image)
 			if err != nil {
 				return "", err
 			}
-			return ref.Context().Name() + "@" + digest, nil
+			return ref.ContextName() + "@" + digest, nil
 		},
 		fetchManifest: c.FetchManifest,
 	}
@@ -195,17 +196,17 @@ func (c *Cpak) validateLockedPackage(locked types.LockedPackage) error {
 	if digest != locked.ManifestSHA256 || locked.Manifest.Image != locked.Image {
 		return fmt.Errorf("locked package %s has inconsistent manifest data", locked.Origin)
 	}
-	ref, err := name.ParseReference(locked.ResolvedImage)
+	ref, err := oci.ParseReference(locked.ResolvedImage)
 	if err != nil {
 		return fmt.Errorf("invalid resolved image for %s: %w", locked.Origin, err)
 	}
-	if _, ok := ref.(name.Digest); !ok {
+	if !ref.IsDigest {
 		return fmt.Errorf("resolved image for %s is not pinned by digest", locked.Origin)
 	}
 	return nil
 }
 
-func lockPackage(origin, branch, release, commit string, manifest *types.CpakManifest, resolveImage func(string) (string, error)) (types.LockedPackage, error) {
+func lockPackage(origin, branch, release, commit string, manifest *types.CpakManifest, resolveImage func(string, string) (string, error)) (types.LockedPackage, error) {
 	digest, err := manifestDigest(manifest)
 	if err != nil {
 		return types.LockedPackage{}, err
@@ -214,7 +215,7 @@ func lockPackage(origin, branch, release, commit string, manifest *types.CpakMan
 	if err != nil {
 		return types.LockedPackage{}, fmt.Errorf("resolve image reference: %w", err)
 	}
-	resolved, err := resolveImage(image)
+	resolved, err := resolveImage(origin, image)
 	if err != nil {
 		return types.LockedPackage{}, fmt.Errorf("resolve image %s: %w", image, err)
 	}
