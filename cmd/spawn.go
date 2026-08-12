@@ -527,6 +527,16 @@ func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) 
 	if err := tools.MountTmpfsPrepared(deviceRoot); err != nil {
 		return nil, fmt.Errorf("mount:/dev: an error occurred while spawning the namespace: %s", err)
 	}
+	ptsRoot, err := prepareRootfsDirectory(rootFs, "/dev/pts")
+	if err != nil {
+		return nil, fmt.Errorf("mkdir:/dev/pts: an error occurred while spawning the namespace: %s", err)
+	}
+	if err := tools.MountDevptsPrepared(ptsRoot); err != nil {
+		return nil, fmt.Errorf("mount:/dev/pts: an error occurred while spawning the namespace: %s", err)
+	}
+	if err := os.Symlink("pts/ptmx", filepath.Join(deviceRoot, "ptmx")); err != nil {
+		return nil, fmt.Errorf("link:/dev/ptmx: an error occurred while spawning the namespace: %s", err)
+	}
 	for _, device := range []string{"null", "zero", "random", "urandom", "tty"} {
 		source := filepath.Join("/dev", device)
 		destination, prepareErr := prepareRootfsMountTarget(rootFs, filepath.Join("/dev", device), source)

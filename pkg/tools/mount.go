@@ -196,6 +196,23 @@ func MountTmpfsPrepared(targetDir string) error {
 	return syscall.Mount("tmpfs", targetDir, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
 }
 
+func MountDevptsPrepared(targetDir string) error {
+	info, err := os.Lstat(targetDir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("devpts destination must be a directory: %s", targetDir)
+	}
+	return syscall.Mount(
+		"devpts",
+		targetDir,
+		"devpts",
+		syscall.MS_NOSUID|syscall.MS_NOEXEC,
+		"newinstance,ptmxmode=0666,mode=0620,gid=0",
+	)
+}
+
 func GetHostMounts() (mounts []string) {
 	file, err := os.Open("/proc/mounts")
 	if err != nil {

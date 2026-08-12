@@ -116,3 +116,21 @@ func TestMountPreparedRejectsUnsafeDestination(t *testing.T) {
 		t.Fatal("accepted mismatched mount destination")
 	}
 }
+
+func TestMountDevptsPreparedRejectsUnsafeDestination(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MountDevptsPrepared(file); err == nil {
+		t.Fatal("accepted file devpts destination")
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := MountDevptsPrepared(link); err == nil {
+		t.Fatal("accepted symlink devpts destination")
+	}
+}
