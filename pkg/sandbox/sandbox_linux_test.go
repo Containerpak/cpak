@@ -152,6 +152,21 @@ func TestLandlockAllowsWritableChildOfReadOnlyRoot(t *testing.T) {
 	runSandboxHelper(t, "readonly-root", writable, "")
 }
 
+func TestLandlockDeviceGrantExcludesDirectoryAccess(t *testing.T) {
+	access := landlockGrantAccess(7, false, unix.S_IFCHR)
+	directoryAccess := landlockAccess(7) &^ landlockFileAccess(7)
+	if access&directoryAccess != 0 {
+		t.Fatalf("device grant contains directory access: %#x", access)
+	}
+	if access&unix.LANDLOCK_ACCESS_FS_WRITE_FILE == 0 || access&unix.LANDLOCK_ACCESS_FS_IOCTL_DEV == 0 {
+		t.Fatalf("device grant is missing writable device access: %#x", access)
+	}
+}
+
+func TestLandlockAllowsDeviceGrant(t *testing.T) {
+	runSandboxHelper(t, "landlock-device", "/dev/null", "")
+}
+
 func TestSandboxHelper(t *testing.T) {
 	mode := os.Getenv("CPAK_SANDBOX_HELPER")
 	if mode == "" {
@@ -229,6 +244,25 @@ func TestSandboxHelper(t *testing.T) {
 		}
 		if err := os.WriteFile(filepath.Join(writable, "new"), []byte("ok"), 0o644); err != nil {
 			failSandboxHelper("write writable child: %v", err)
+		}
+		os.Exit(0)
+	case "landlock-device":
+		device := os.Getenv("CPAK_SANDBOX_ALLOWED")
+		if _, err := ApplyLandlock([]PathGrant{{Path: device}}); err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				os.Exit(77)
+			}
+			failSandboxHelper(err)
+		}
+		file, err := os.OpenFile(device, os.O_WRONLY, 0)
+		if err != nil {
+			failSandboxHelper("open device: %v", err)
+		}
+		if _, err = file.Write([]byte("cpak")); err != nil {
+			failSandboxHelper("write device: %v", err)
+		}
+		if err = file.Close(); err != nil {
+			failSandboxHelper("close device: %v", err)
 		}
 		os.Exit(0)
 	default:

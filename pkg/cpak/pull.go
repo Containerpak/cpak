@@ -241,9 +241,6 @@ func (c *Cpak) downloadLayer(image v1.Image, layer v1.Layer, digest string) (err
 	}
 
 	cmds := []string{}
-	if isVerbose {
-		cmds = append(cmds, "--debug")
-	}
 	cmds = append(cmds, "dedup")
 	if isVerbose {
 		cmds = append(cmds, "--verbose")

@@ -42,10 +42,12 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 		if openErr != nil {
 			return 0, fmt.Errorf("open landlock path %s: %w", grant.Path, openErr)
 		}
-		access := landlockReadAccess(version)
-		if !grant.ReadOnly {
-			access = handled
+		var stat unix.Stat_t
+		if statErr := unix.Fstat(fd, &stat); statErr != nil {
+			unix.Close(fd)
+			return 0, fmt.Errorf("stat landlock path %s: %w", grant.Path, statErr)
 		}
+		access := landlockGrantAccess(version, grant.ReadOnly, stat.Mode)
 		addErr := landlockAddPathRule(ruleset, access, fd)
 		closeErr := unix.Close(fd)
 		if addErr != nil {
@@ -66,6 +68,17 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 		return 0, fmt.Errorf("restrict with landlock: %w", err)
 	}
 	return version, nil
+}
+
+func landlockGrantAccess(version int, readOnly bool, mode uint32) uint64 {
+	access := landlockReadAccess(version)
+	if !readOnly {
+		access = landlockAccess(version)
+	}
+	if mode&unix.S_IFMT != unix.S_IFDIR {
+		access &= landlockFileAccess(version)
+	}
+	return access
 }
 
 func ApplySeccomp(allowUserNamespaces bool) error {
@@ -200,6 +213,17 @@ func landlockAccess(version int) uint64 {
 
 func landlockReadAccess(version int) uint64 {
 	access := uint64(unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_READ_DIR)
+	if version >= 5 {
+		access |= unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
+	}
+	return access
+}
+
+func landlockFileAccess(version int) uint64 {
+	access := uint64(unix.LANDLOCK_ACCESS_FS_EXECUTE | unix.LANDLOCK_ACCESS_FS_WRITE_FILE | unix.LANDLOCK_ACCESS_FS_READ_FILE)
+	if version >= 3 {
+		access |= unix.LANDLOCK_ACCESS_FS_TRUNCATE
+	}
 	if version >= 5 {
 		access |= unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
 	}

@@ -325,9 +325,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		filesystemArgs = append(filesystemArgs, "--filesystem", encoded)
 	}
 	cmds := []string{}
-	if isVerbose {
-		cmds = append(cmds, "--debug")
-	}
 	cmds = append(cmds, "spawn")
 	cmds = append(cmds, filesystemArgs...)
 	if isVerbose {
