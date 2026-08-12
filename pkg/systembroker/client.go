@@ -69,6 +69,9 @@ func (c Client) call(ctx context.Context, action string, payload any) error {
 
 	request := Request{Version: ProtocolVersion, Token: c.Token, Action: action, Payload: encoded}
 	if err := json.NewEncoder(connection).Encode(request); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("write system broker request: %w", err)
 	}
 	decoder := json.NewDecoder(connection)

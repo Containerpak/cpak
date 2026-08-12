@@ -168,8 +168,10 @@ func TestContainerCallCancellationReachesProvider(t *testing.T) {
 	options := testOptions(t)
 	options.ContainerOwner = "app-id"
 	options.ContainerCapabilities = map[string]bool{types.HostActionContainersRead: true}
+	started := make(chan struct{})
 	canceled := make(chan struct{})
 	options.Containers = func(ctx context.Context, _ string, _ map[string]bool, _ []ContainerPathGrant, _ ContainerRequest, _, _ io.Writer) (int, error) {
+		close(started)
 		<-ctx.Done()
 		close(canceled)
 		return 130, ctx.Err()
@@ -180,6 +182,11 @@ func TestContainerCallCancellationReachesProvider(t *testing.T) {
 	go func() {
 		done <- testClient(options).Containers(ctx, ContainerRequest{Operation: "ps"})
 	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("container provider did not start")
+	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled client: %v", err)
