@@ -29,7 +29,7 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	}
 
 	if o.SocketWayland {
-		mounts = append(mounts, "/run/user/"+curUid+"/wayland-0")
+		mounts = append(mounts, waylandSocketPath(curUid))
 	}
 
 	if o.SocketX11 && o.SocketWayland {
@@ -168,6 +168,34 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	// mounts = append(mounts, foundMounts...)
 
 	return uniqueStrings(mounts), uniqueStrings(shims)
+}
+
+func waylandSocketPath(uid string) string {
+	runtimeDir := filepath.Join("/run/user", uid)
+	display := waylandDisplay(uid)
+	if filepath.IsAbs(display) {
+		return display
+	}
+	return filepath.Join(runtimeDir, display)
+}
+
+func waylandDisplay(uid string) string {
+	runtimeDir := filepath.Join("/run/user", uid)
+	display := os.Getenv("WAYLAND_DISPLAY")
+	if display == "" {
+		display = "wayland-0"
+	}
+	if filepath.IsAbs(display) {
+		clean := filepath.Clean(display)
+		if filepath.Dir(clean) == runtimeDir {
+			return clean
+		}
+		return "wayland-0"
+	}
+	if filepath.Base(display) != display {
+		return "wayland-0"
+	}
+	return display
 }
 
 func systemBrokerOperations(o types.Override) []string {

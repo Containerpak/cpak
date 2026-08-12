@@ -61,6 +61,36 @@ func TestAtSpiRejectsAddressOutsideRuntimeDirectory(t *testing.T) {
 	}
 }
 
+func TestWaylandUsesActiveDisplay(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	t.Setenv("WAYLAND_DISPLAY", "wayland-3")
+
+	mounts, _ := GetOverrideMounts(types.Override{SocketWayland: true})
+	want := "/run/user/" + uid + "/wayland-3"
+	if !slicesContain(mounts, want) {
+		t.Fatalf("Wayland mounts %v do not contain %s", mounts, want)
+	}
+}
+
+func TestWaylandDisplayPreservesActiveName(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	t.Setenv("WAYLAND_DISPLAY", "wayland-4")
+
+	if got := waylandDisplay(uid); got != "wayland-4" {
+		t.Fatalf("Wayland display: got %s, want wayland-4", got)
+	}
+}
+
+func TestWaylandRejectsDisplayOutsideRuntimeDirectory(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	t.Setenv("WAYLAND_DISPLAY", "/tmp/foreign-wayland")
+
+	mounts, _ := GetOverrideMounts(types.Override{SocketWayland: true})
+	if slicesContain(mounts, "/tmp/foreign-wayland") {
+		t.Fatalf("Wayland mounts accepted a socket outside /run/user/%s", uid)
+	}
+}
+
 func TestLoadOverrideDoesNotCreateMissingState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
