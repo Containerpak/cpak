@@ -263,12 +263,20 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
+const containerRuntimePolicyVersion = 2
+
 func containerPolicyHash(override types.Override, components, addons []types.Application) (string, error) {
+	return containerPolicyHashVersion(containerRuntimePolicyVersion, override, components, addons)
+}
+
+func containerPolicyHashVersion(runtimeVersion int, override types.Override, components, addons []types.Application) (string, error) {
 	policy := struct {
+		Runtime    int                   `json:"runtime"`
 		Override   types.Override        `json:"override"`
 		Components []addonPolicyIdentity `json:"components,omitempty"`
 		Addons     []addonPolicyIdentity `json:"addons,omitempty"`
 	}{
+		Runtime:    runtimeVersion,
 		Override:   override,
 		Components: addonPolicyIdentities(components),
 		Addons:     addonPolicyIdentities(addons),

@@ -214,6 +214,21 @@ func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 	}
 }
 
+func TestContainerPolicyHashChangesWithRuntime(t *testing.T) {
+	override := types.NewOverride()
+	first, err := containerPolicyHashVersion(1, override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := containerPolicyHashVersion(2, override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("different runtime versions produced the same policy hash")
+	}
+}
+
 func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T) {
 	app := types.Application{Config: `{"config":{}}`}
 	container := types.Container{
