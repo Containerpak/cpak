@@ -38,6 +38,9 @@ type CpakManifest struct {
 	// DesktopEntries is the list of exported desktop entries of the application.
 	DesktopEntries []string `json:"desktop_entries,omitempty" jsonschema:"items.pattern=.+\\.desktop$,description=.desktop entry files"`
 
+	// Sessions are login sessions which can be registered with a display manager.
+	Sessions []Session `json:"sessions,omitempty" jsonschema:"description=Desktop and kiosk login sessions"`
+
 	// Dependencies is the list of dependencies of the application, it is
 	// expected to be a list of origin repositories.
 	//
@@ -83,4 +86,13 @@ type RuntimeSource struct {
 	SHA256    string `json:"sha256" jsonschema:"pattern=^[A-Fa-f0-9]{64}$,description=SHA256 checksum of the artifact"`
 	Size      int64  `json:"size" jsonschema:"minimum=1,description=Size of the artifact in bytes"`
 	Installer string `json:"installer" jsonschema:"enum=dpkg,description=Native installer used inside the cpak environment"`
+}
+
+type Session struct {
+	ID          string   `json:"id" jsonschema:"pattern=^[a-z0-9]+(?:[.-][a-z0-9]+)*$,maxLength=96,description=Globally unique session identifier"`
+	Name        string   `json:"name" jsonschema:"minLength=1,maxLength=80,description=Session name shown by the display manager"`
+	Description string   `json:"description" jsonschema:"maxLength=160,description=Short session description"`
+	Kind        string   `json:"kind" jsonschema:"enum=desktop,enum=kiosk,description=Login session type"`
+	Entrypoint  string   `json:"entrypoint" jsonschema:"pattern=^/,description=Exported binary used to start the session"`
+	Override    Override `json:"override" jsonschema:"description=Permissions used by the full login session"`
 }

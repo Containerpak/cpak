@@ -11,12 +11,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
+
+var sessionIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
 
 // ValidateManifest validates a manifest file, by ensuring all
 // required fields are present.
@@ -64,10 +67,22 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 			return err
 		}
 	}
+	if err = migrateLegacyHostCommands(&manifest.Override); err != nil {
+		return err
+	}
+	if err = types.ValidateHostActions(manifest.Override.HostActions); err != nil {
+		return err
+	}
+	if err = validateSessions(manifest); err != nil {
+		return err
+	}
 	if manifest.Override.SocketBluetooth && !manifest.Override.Network {
 		return errors.New("Bluetooth access requires network namespace sharing")
 	}
 	if manifest.ManifestVersion == "1.0" {
+		if len(manifest.Override.HostActions) > 0 {
+			return errors.New("host actions require manifest version 2.0")
+		}
 		if manifest.FilesystemDeclared() || len(manifest.Override.Filesystem) > 0 {
 			return errors.New("filesystem permissions require manifest version 2.0")
 		}
@@ -80,6 +95,62 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 		}
 	}
 	return ValidateManifest(manifest)
+}
+
+func validateSessions(manifest *types.CpakManifest) error {
+	binaries := make(map[string]bool, len(manifest.Binaries))
+	for _, binary := range manifest.Binaries {
+		binaries[binary] = true
+	}
+	ids := make(map[string]bool, len(manifest.Sessions))
+	for _, session := range manifest.Sessions {
+		if len(session.ID) == 0 || len(session.ID) > 96 || !sessionIDPattern.MatchString(session.ID) {
+			return fmt.Errorf("invalid session id: %q", session.ID)
+		}
+		if ids[session.ID] {
+			return fmt.Errorf("session is declared more than once: %s", session.ID)
+		}
+		ids[session.ID] = true
+		if err := validateSessionText(session.Name, 80); err != nil {
+			return fmt.Errorf("invalid session name for %s", session.ID)
+		}
+		if session.Description != "" {
+			if err := validateSessionText(session.Description, 160); err != nil {
+				return fmt.Errorf("invalid session description for %s", session.ID)
+			}
+		}
+		if session.Kind != "desktop" && session.Kind != "kiosk" {
+			return fmt.Errorf("unsupported session kind for %s: %s", session.ID, session.Kind)
+		}
+		if !binaries[session.Entrypoint] {
+			return fmt.Errorf("session %s entrypoint is not an exported binary", session.ID)
+		}
+		if session.Override.AsRoot {
+			return fmt.Errorf("session %s cannot run as root", session.ID)
+		}
+		if len(session.Override.AllowedHostCommands) > 0 {
+			return fmt.Errorf("session %s cannot declare host commands", session.ID)
+		}
+		if err := types.ValidateHostActions(session.Override.HostActions); err != nil {
+			return fmt.Errorf("session %s: %w", session.ID, err)
+		}
+		if err := types.ValidateFilesystemPermissions(session.Override.Filesystem); err != nil {
+			return fmt.Errorf("session %s: %w", session.ID, err)
+		}
+	}
+	return nil
+}
+
+func validateSessionText(value string, limit int) error {
+	if value == "" || len(value) > limit || strings.ContainsAny(value, "\x00\r\n") {
+		return errors.New("invalid session text")
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return errors.New("invalid session text")
+		}
+	}
+	return nil
 }
 
 // DecodeManifest parses a manifest without accepting unknown fields.
@@ -122,7 +193,7 @@ func MigrateManifest(manifest *types.CpakManifest) error {
 		manifest.ManifestVersion = "1.0"
 	}
 	if manifest.ManifestVersion == "2.0" {
-		return nil
+		return migrateLegacyHostCommands(&manifest.Override)
 	}
 	if manifest.ManifestVersion != "1.0" {
 		return fmt.Errorf("unsupported manifest version: %s", manifest.ManifestVersion)
@@ -149,10 +220,33 @@ func MigrateManifest(manifest *types.CpakManifest) error {
 	override.FsHostEtc = false
 	override.FsHostHome = false
 	override.FsExtra = nil
+	if err := migrateLegacyHostCommands(&override); err != nil {
+		return err
+	}
 	manifest.ManifestVersion = "2.0"
 	manifest.Override = override
 	manifest.SetLegacyFilesystemFields(nil)
 	manifest.SetFilesystemDeclared(len(filesystem) > 0)
+	return nil
+}
+
+func migrateLegacyHostCommands(override *types.Override) error {
+	if len(override.AllowedHostCommands) == 0 {
+		return nil
+	}
+	for _, command := range override.AllowedHostCommands {
+		switch command {
+		case "notify-send":
+			override.Notification = true
+		case "xdg-open":
+			override.OpenURI = true
+		case "cpak-launch-app":
+			override.HostApplications = true
+		default:
+			return fmt.Errorf("host command %q has no typed provider", command)
+		}
+	}
+	override.AllowedHostCommands = nil
 	return nil
 }
 

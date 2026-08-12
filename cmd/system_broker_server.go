@@ -18,12 +18,16 @@ import (
 )
 
 type SystemBrokerServerCmd struct {
-	SocketPath       string `cli:"socket-path" help:"Path for the Unix domain socket"`
-	TokenFile        string `cli:"token-file" help:"File containing the broker token"`
-	Notify           bool   `cli:"notify" help:"Allow desktop notification requests"`
-	OpenURI          bool   `cli:"open-uri" help:"Allow external URI requests"`
-	HostApplications string `cli:"host-applications" help:"Host application catalog path"`
-	DesktopRuntime   string `cli:"desktop-runtime" help:"Host path for the nested desktop runtime"`
+	SocketPath             string   `cli:"socket-path" help:"Path for the Unix domain socket"`
+	TokenFile              string   `cli:"token-file" help:"File containing the broker token"`
+	Notify                 bool     `cli:"notify" help:"Allow desktop notification requests"`
+	OpenURI                bool     `cli:"open-uri" help:"Allow external URI requests"`
+	HostApplications       string   `cli:"host-applications" help:"Host application catalog path"`
+	DesktopRuntime         string   `cli:"desktop-runtime" help:"Host path for the nested desktop runtime"`
+	ContainerOwner         string   `cli:"container-owner" help:"Identity which owns managed host containers"`
+	ContainerCapability    []string `cli:"container-capability" help:"Allowed container provider capability"`
+	ContainerPathReadOnly  []string `cli:"container-path-read-only" help:"Read-only source path for managed host containers"`
+	ContainerPathReadWrite []string `cli:"container-path-read-write" help:"Read-write source path for managed host containers"`
 
 	cli.Base
 }
@@ -42,6 +46,20 @@ func (c *SystemBrokerServerCmd) Run() error {
 			return err
 		}
 	}
+	containerCapabilities := map[string]bool{}
+	for _, capability := range c.ContainerCapability {
+		if capability != "read" && capability != "manage-owned" && capability != "exec-owned" {
+			return fmt.Errorf("unsupported container capability: %s", capability)
+		}
+		containerCapabilities[capability] = true
+	}
+	containerPaths := make([]systembroker.ContainerPathGrant, 0, len(c.ContainerPathReadOnly)+len(c.ContainerPathReadWrite))
+	for _, path := range c.ContainerPathReadOnly {
+		containerPaths = append(containerPaths, systembroker.ContainerPathGrant{Path: path, ReadOnly: true})
+	}
+	for _, path := range c.ContainerPathReadWrite {
+		containerPaths = append(containerPaths, systembroker.ContainerPathGrant{Path: path})
+	}
 	return systembroker.Serve(ctx, systembroker.Options{
 		SocketPath:            c.SocketPath,
 		Token:                 token,
@@ -50,6 +68,9 @@ func (c *SystemBrokerServerCmd) Run() error {
 		AllowHostApplications: c.HostApplications != "",
 		Applications:          applications,
 		RuntimeDirectory:      c.DesktopRuntime,
+		ContainerOwner:        c.ContainerOwner,
+		ContainerCapabilities: containerCapabilities,
+		ContainerPaths:        containerPaths,
 	})
 }
 

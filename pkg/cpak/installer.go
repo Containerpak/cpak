@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -157,6 +158,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		InstallTimestamp:     time.Now(),
 		ParsedBinaries:       manifest.Binaries,
 		ParsedDesktopEntries: manifest.DesktopEntries,
+		ParsedSessions:       manifest.Sessions,
 		ParsedDependencies:   parsedManifestDependencies,
 		ParsedAddons:         manifest.Addons,
 		IdleTime:             manifest.IdleTime,
@@ -554,6 +556,12 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		_ = store.Close()
 		return fmt.Errorf("application %s not found for specified criteria: %w", origin, err)
 	}
+	installedVersions, err := store.GetApplicationsByOrigin(origin, "", "", "", "")
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	removedSessions, _ := sessionsRemovedByVersionSelection(installedVersions, branch, commit, release)
 	if err = store.Close(); err != nil {
 		return
 	}
@@ -584,6 +592,11 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	err = c.Stop(appToRemove.Origin, appToRemove.Version, appToRemove.Branch, appToRemove.Commit, appToRemove.Release)
 	if err != nil {
 		return fmt.Errorf("failed to stop containers for %s: %w", appToRemove.Name, err)
+	}
+	if len(removedSessions) > 0 {
+		if err = disableRegisteredSessions(systemauthority.DefaultRegistry(), origin, removedSessions, systemauthority.Remove); err != nil {
+			return fmt.Errorf("disable login sessions for %s: %w", appToRemove.Name, err)
+		}
 	}
 
 	store, err = NewStore(c.Options.StorePath)
@@ -628,6 +641,32 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		return
 	}
 	return
+}
+
+func sessionsRemovedByVersionSelection(apps []types.Application, branch, commit, release string) ([]types.Session, int) {
+	selected := []types.Session{}
+	remainingSessions := map[string]bool{}
+	remaining := 0
+	for _, app := range apps {
+		matches := branch != "" && app.Branch == branch ||
+			commit != "" && app.Commit == commit ||
+			release != "" && app.Release == release
+		if !matches {
+			remaining++
+			for _, session := range app.ParsedSessions {
+				remainingSessions[session.ID] = true
+			}
+			continue
+		}
+		selected = append(selected, app.ParsedSessions...)
+	}
+	sessions := make([]types.Session, 0, len(selected))
+	for _, session := range selected {
+		if !remainingSessions[session.ID] {
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions, remaining
 }
 
 func (c *Cpak) dependencyUsers(cpakID string) ([]types.Application, error) {

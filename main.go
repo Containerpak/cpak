@@ -44,10 +44,11 @@ type CLI struct {
 	Validate           cmd.ValidateCmd           `cmd:"validate" help:"Validate a cpak manifest"`
 	Doctor             cmd.DoctorCmd             `cmd:"doctor" help:"Check host support for the cpak runtime"`
 	MigrateManifest    cmd.MigrateManifestCmd    `cmd:"migrate-manifest" help:"Migrate a manifest to version 2"`
-	HostExecServer     cmd.HostExecServerCmd     `cmd:"hostexec-server" help:"Start the hostexec server"`
-	HostExecClient     cmd.HostExecClientCmd     `cmd:"hostexec-client" help:"Start the hostexec client"`
 	SystemBrokerServer cmd.SystemBrokerServerCmd `cmd:"system-broker-server" help:"Start the system integration broker"`
-	SystemBrokerClient cmd.SystemBrokerClientCmd `cmd:"system-broker-client" help:"Send a system integration request"`
+	HostAction         cmd.HostActionCmd         `cmd:"host-action" help:"Run a typed host action"`
+	System             cmd.SystemCmd             `cmd:"system" help:"Manage privileged system integration"`
+	SystemAuthority    cmd.SystemAuthorityCmd    `cmd:"system-authority" help:"Start the privileged system authority"`
+	Session            cmd.SessionCmd            `cmd:"session" help:"Manage desktop and kiosk login sessions"`
 
 	cli.Base
 }

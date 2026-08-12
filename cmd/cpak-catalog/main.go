@@ -174,7 +174,14 @@ func loadPackageManifest(ctx context.Context, client *http.Client, githubAPI, or
 	if err != nil {
 		return nil, err
 	}
-	return cpak.DecodeManifest(encoded)
+	manifest, err := cpak.DecodeManifest(encoded)
+	if err != nil {
+		return nil, err
+	}
+	if err := (&cpak.Cpak{}).ValidateManifest(manifest); err != nil {
+		return nil, err
+	}
+	return manifest, nil
 }
 
 func summarizePermissions(override types.Override) []bootstrap.Permission {
@@ -220,6 +227,8 @@ func summarizePermissions(override types.Override) []bootstrap.Permission {
 			{override.DeviceFuse, "FUSE"},
 			{override.DeviceTun, "TUN/TAP"},
 			{override.DeviceUsb, "USB"},
+			{override.DeviceInput, "input devices"},
+			{override.DeviceTTY, "controlling terminal"},
 		}
 		for _, device := range deviceFlags {
 			if device.enabled {
@@ -250,10 +259,10 @@ func summarizePermissions(override types.Override) []bootstrap.Permission {
 	add(override.Process, "Host processes", "shared process namespace")
 	add(override.UserNamespaces, "Nested sandboxes", "user namespaces")
 	add(override.AsRoot, "Root", "runs as root inside the cpak")
-	if len(override.AllowedHostCommands) > 0 {
+	for _, action := range override.HostActions {
 		permissions = append(permissions, bootstrap.Permission{
-			Name:   "Host commands",
-			Detail: truncate(strings.Join(override.AllowedHostCommands, ", "), 160),
+			Name:   "Host service",
+			Detail: truncate(action.Provider+": "+strings.Join(action.Capabilities, ", "), 160),
 		})
 	}
 	return permissions

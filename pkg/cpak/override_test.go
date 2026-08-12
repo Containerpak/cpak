@@ -39,6 +39,17 @@ func TestKvmUsesDevicePath(t *testing.T) {
 	}
 }
 
+func TestInputDevicesRequireTheirOwnPermission(t *testing.T) {
+	usbMounts, _ := GetOverrideMounts(types.Override{DeviceUsb: true})
+	if slicesContain(usbMounts, "/dev/input/") {
+		t.Fatal("USB permission also exposed input devices")
+	}
+	inputMounts, _ := GetOverrideMounts(types.Override{DeviceInput: true})
+	if !slicesContain(inputMounts, "/dev/input/") {
+		t.Fatal("input device permission did not expose input devices")
+	}
+}
+
 func TestAtSpiUsesSessionAddress(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	want := "/run/user/" + uid + "/at-spi/bus_9"
@@ -152,13 +163,18 @@ func TestBluetoothRequiresSharedNetwork(t *testing.T) {
 	}
 }
 
-func TestSystemBrokerOperationsAreExplicit(t *testing.T) {
-	operations := systemBrokerOperations(types.Override{Notification: true, OpenURI: true})
-	if !reflect.DeepEqual(operations, []string{"notify-send", "xdg-open"}) {
-		t.Fatalf("system broker operations: %v", operations)
+func TestSystemBrokerShimsAreExplicit(t *testing.T) {
+	override := types.Override{
+		Notification: true,
+		OpenURI:      true,
+		HostActions: []types.HostActionGrant{{
+			Provider:     types.HostActionProviderContainers,
+			Capabilities: []string{types.HostActionContainersRead},
+		}},
 	}
-	if commands := effectiveHostCommands(types.Override{Notification: true}); len(commands) != 0 {
-		t.Fatalf("notifications still expose host commands: %v", commands)
+	shims := systemBrokerShims(override)
+	if !reflect.DeepEqual(shims, []string{"notify-send", "xdg-open", "podman", "docker"}) {
+		t.Fatalf("system broker shims: %v", shims)
 	}
 }
 

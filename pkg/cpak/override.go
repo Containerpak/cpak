@@ -114,7 +114,14 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 		if o.DeviceUsb {
 			mounts = append(mounts, "/dev/bus/usb/")
 			mounts = append(mounts, "/dev/usb/")
+		}
+
+		if o.DeviceInput {
 			mounts = append(mounts, "/dev/input/")
+		}
+
+		if o.DeviceTTY {
+			mounts = append(mounts, "/dev/tty")
 		}
 	}
 
@@ -206,18 +213,21 @@ func waylandDisplay(uid string) string {
 	return display
 }
 
-func systemBrokerOperations(o types.Override) []string {
-	operations := []string{}
+func systemBrokerShims(o types.Override) []string {
+	shims := []string{}
 	if o.Notification {
-		operations = append(operations, "notify-send")
+		shims = append(shims, "notify-send")
 	}
 	if o.OpenURI {
-		operations = append(operations, "xdg-open")
+		shims = append(shims, "xdg-open")
 	}
 	if o.HostApplications {
-		operations = append(operations, "cpak-launch-app")
+		shims = append(shims, "cpak-launch-app")
 	}
-	return operations
+	if len(types.HostActionCapabilities(o.HostActions, types.HostActionProviderContainers)) > 0 {
+		shims = append(shims, "podman", "docker")
+	}
+	return shims
 }
 
 func atSpiSocketPaths(uid string) []string {
@@ -282,6 +292,12 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 	if err != nil {
 		return
 	}
+	if err = migrateLegacyHostCommands(&override); err != nil {
+		return types.Override{}, err
+	}
+	if err = types.ValidateHostActions(override.HostActions); err != nil {
+		return types.Override{}, err
+	}
 
 	return
 }
@@ -289,6 +305,12 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 // Save saves the override in the user's home directory.
 func SaveOverride(override types.Override, name, version string) (err error) {
 	if err = types.ValidateFilesystemPermissions(override.Filesystem); err != nil {
+		return err
+	}
+	if err = migrateLegacyHostCommands(&override); err != nil {
+		return err
+	}
+	if err = types.ValidateHostActions(override.HostActions); err != nil {
 		return err
 	}
 	homeDir, err := os.UserHomeDir()

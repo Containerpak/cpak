@@ -5,10 +5,9 @@
 
 set -e
 
-case "$(basename "$0")" in
-    notify-send) OPERATION=notify ;;
-    xdg-open) OPERATION=open-uri ;;
-    cpak-launch-app) OPERATION=launch-application ;;
+SHIM="$(basename "$0")"
+case "$SHIM" in
+    notify-send|xdg-open|cpak-launch-app|podman|docker) ;;
     *) echo "CPAK SYSTEM BROKER ERROR: unsupported shim." >&2; exit 1 ;;
 esac
 
@@ -22,4 +21,4 @@ if [ ! -S "$CPAK_SYSTEM_BROKER_SOCKET" ] || [ ! -r "$CPAK_SYSTEM_BROKER_TOKEN_FI
     exit 1
 fi
 
-exec /usr/local/bin/cpak system-broker-client --operation "$OPERATION" -- "$@"
+exec /usr/local/bin/cpak host-action --shim "$SHIM" -- "$@"

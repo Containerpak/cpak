@@ -19,14 +19,14 @@ func TestParseNotification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.appName != "Bottles" || request.summary != "Update ready" || request.body != "Soda can be updated." {
+	if request.AppName != "Bottles" || request.Summary != "Update ready" || request.Body != "Soda can be updated." {
 		t.Fatalf("notification: %+v", request)
 	}
-	if request.expireTimeout != 5000 || request.icon != "com.usebottles.bottles" {
+	if request.ExpireTimeout != 5000 || request.Icon != "com.usebottles.bottles" {
 		t.Fatalf("notification options: %+v", request)
 	}
-	if urgency, ok := request.hints["urgency"]; !ok || urgency.Value() != byte(2) {
-		t.Fatalf("notification urgency: %v", urgency)
+	if request.Urgency != "critical" {
+		t.Fatalf("notification urgency: %s", request.Urgency)
 	}
 }
 

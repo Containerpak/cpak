@@ -214,6 +214,9 @@ func (c *Cpak) preflightUpdate(app types.Application, deps updateDeps) (result t
 	}
 	result.PermissionChanges = app.ParsedOverride.Diff(manifest.Override)
 	result.PermissionAdditions = app.ParsedOverride.Additions(manifest.Override)
+	sessionChanges, sessionAdditions := sessionPermissionChanges(app.ParsedSessions, manifest.Sessions)
+	result.PermissionChanges = append(result.PermissionChanges, sessionChanges...)
+	result.PermissionAdditions = append(result.PermissionAdditions, sessionAdditions...)
 	return result
 }
 
@@ -268,6 +271,9 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 	}
 	result.PermissionChanges = app.ParsedOverride.Diff(manifest.Override)
 	result.PermissionAdditions = app.ParsedOverride.Additions(manifest.Override)
+	sessionChanges, sessionAdditions := sessionPermissionChanges(app.ParsedSessions, manifest.Sessions)
+	result.PermissionChanges = append(result.PermissionChanges, sessionChanges...)
+	result.PermissionAdditions = append(result.PermissionAdditions, sessionAdditions...)
 	for _, addition := range result.PermissionAdditions {
 		if !approvedAdditions[addition] {
 			result.Status = types.UpdateStatusPermissionDenied
@@ -313,6 +319,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		InstallTimestamp:     time.Now(),
 		ParsedBinaries:       manifest.Binaries,
 		ParsedDesktopEntries: manifest.DesktopEntries,
+		ParsedSessions:       manifest.Sessions,
 		ParsedDependencies:   dependencies,
 		ParsedAddons:         manifest.Addons,
 		IdleTime:             manifest.IdleTime,
@@ -374,6 +381,32 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 	result.Status = types.UpdateStatusUpdated
 	result.NewVersion = updated.Version
 	return result
+}
+
+func sessionPermissionChanges(current, updated []types.Session) (changes, additions []string) {
+	previous := make(map[string]types.Session, len(current))
+	for _, session := range current {
+		previous[session.ID] = session
+	}
+	for _, session := range updated {
+		old, found := previous[session.ID]
+		if !found {
+			changes = append(changes, "session:"+session.ID)
+			additions = append(additions, "session:"+session.ID)
+			continue
+		}
+		for _, permission := range old.Override.Diff(session.Override) {
+			changes = append(changes, "session:"+session.ID+":"+permission)
+		}
+		for _, permission := range old.Override.Additions(session.Override) {
+			additions = append(additions, "session:"+session.ID+":"+permission)
+		}
+		delete(previous, session.ID)
+	}
+	for id := range previous {
+		changes = append(changes, "session:"+id)
+	}
+	return changes, additions
 }
 
 // restoreExports rolls the exports back to the application which was not
@@ -471,6 +504,9 @@ func sameInstallation(app types.Application, updated types.Application) bool {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedDesktopEntries, updated.ParsedDesktopEntries) {
+		return false
+	}
+	if !reflect.DeepEqual(app.ParsedSessions, updated.ParsedSessions) {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedAddons, updated.ParsedAddons) {

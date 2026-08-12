@@ -238,7 +238,7 @@ func (c *Cpak) Audit(repair bool) (err error) {
 
 			if !validContainer && repair {
 				if container.HostExecPid != 0 {
-					stopHostExecServer(container.HostExecPid)
+					stopLegacyHostExecServer(container.HostExecPid)
 				}
 				os.RemoveAll(container.StatePath)
 				os.RemoveAll(filepath.Dir(containerRootfs))

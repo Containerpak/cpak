@@ -30,7 +30,6 @@ import (
 )
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
-const hostExecShimPath = "/usr/local/bin/cpak-hostexec-shim"
 const systemBrokerShimPath = "/usr/local/bin/cpak-system-broker-shim"
 const desktopRuntimeTarget = "/run/cpak/desktop-runtime"
 
@@ -47,7 +46,6 @@ type SpawnCmd struct {
 	LayersDir      string   `cli:"layers-dir" help:"set the layers directory"`
 	Filesystem     []string `cli:"filesystem" help:"encoded filesystem permission"`
 	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
-	MountShims     []string `cli:"mount-shims,M" help:"set the mount shims"`
 	SystemShims    []string `cli:"system-shims" help:"set the system integration shims"`
 	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
 	DesktopRuntime string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
@@ -74,23 +72,9 @@ func (c *SpawnCmd) spawnVerbose(args ...any) {
 func (c *SpawnCmd) Run() error {
 	c.Logger.Info("Spawning a new cpak namespace...")
 
-	var hostExecSocketPath string
-	var allowedHostCmdsStr string
 	finalEnvVarsForContainer := []string{}
 	for _, envVar := range c.Env {
-		if strings.HasPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=") {
-			c.Logger.Info("Found hostexec socket path in env: %s", envVar)
-			hostExecSocketPath = strings.TrimPrefix(envVar, "CPAK_HOSTEXEC_SOCKET=")
-			finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
-		} else if strings.HasPrefix(envVar, "CPAK_ALLOWED_HOST_CMDS=") {
-			allowedHostCmdsStr = strings.TrimPrefix(envVar, "CPAK_ALLOWED_HOST_CMDS=")
-		} else {
-			finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
-		}
-	}
-	allowedHostCmds := []string{}
-	if allowedHostCmdsStr != "" {
-		allowedHostCmds = strings.Split(allowedHostCmdsStr, ":")
+		finalEnvVarsForContainer = append(finalEnvVarsForContainer, envVar)
 	}
 
 	c.spawnVerbose("Remounting as private")
@@ -125,7 +109,7 @@ func (c *SpawnCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, filesystem, hostExecSocketPath, c.MountHostRoot)
+	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, filesystem, c.MountHostRoot)
 	if err != nil {
 		return err
 	}
@@ -150,22 +134,6 @@ func (c *SpawnCmd) Run() error {
 		grants = append(grants, desktopRuntimeGrant)
 	}
 
-	// Append shims obtained by overrides, to the allowed commands
-	if len(c.MountShims) > 0 {
-		c.Logger.Info("Found mount shims in overrides: %v", c.MountShims)
-		allowedHostCmds = append(allowedHostCmds, c.MountShims...)
-	}
-
-	if len(allowedHostCmds) > 0 && hostExecSocketPath != "" {
-		c.spawnVerbose("Creating hostexec shim and symlinks")
-		err = c.createHostExecShimAndLinks(c.Rootfs, allowedHostCmds)
-		if err != nil {
-			return err
-		}
-		c.spawnVerbose("Hostexec shim script and symlinks created.")
-	} else {
-		c.spawnVerbose("Skipping hostexec shim creation (no allowed commands or socket path).")
-	}
 	if len(c.SystemShims) > 0 {
 		if err := c.createSystemBrokerShimAndLinks(c.Rootfs, c.SystemShims); err != nil {
 			return err
@@ -355,7 +323,7 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	return nil
 }
 
-func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, filesystem []types.FilesystemPermission, hostExecSocketPath string, mountHostRoot bool) ([]sandbox.PathGrant, error) {
+func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, filesystem []types.FilesystemPermission, mountHostRoot bool) ([]sandbox.PathGrant, error) {
 	grants := []sandbox.PathGrant{
 		{Path: "/tmp"},
 		{Path: "/dev"},
@@ -456,22 +424,6 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockSource, err)
 		}
 		grants = append(grants, sandbox.PathGrant{Path: cpakSockTarget})
-	}
-	if hostExecSocketPath != "" {
-		if _, statErr := os.Stat(hostExecSocketPath); statErr != nil {
-			return nil, fmt.Errorf("hostexec socket is unavailable: %w", statErr)
-		}
-		destination, needsMount, prepareErr := prepareRootfsBindTarget(rootFs, hostExecSocketPath, hostExecSocketPath)
-		if prepareErr != nil {
-			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", hostExecSocketPath, prepareErr)
-		}
-		if needsMount {
-			err = tools.MountBindPrepared(hostExecSocketPath, destination)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", hostExecSocketPath, err)
-		}
-		grants = append(grants, sandbox.PathGrant{Path: hostExecSocketPath})
 	}
 	return grants, nil
 }
@@ -983,65 +935,6 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	_, _ = io.Copy(io.Discard, connection)
 }
 
-func (c *SpawnCmd) createHostExecShimAndLinks(rootFs string, allowedCmds []string) error {
-	shimFilePath, err := prepareRootfsFile(rootFs, hostExecShimPath)
-	if err != nil {
-		return fmt.Errorf("prepare shim file %s: an error occurred while spawning the namespace: %s", hostExecShimPath, err)
-	}
-	shimDir := filepath.Dir(shimFilePath)
-
-	c.spawnVerbose("Creating hostexec shim directory: ", shimDir)
-	if err := os.MkdirAll(shimDir, 0755); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("create shim dir %s: an error occurred while spawning the namespace: %s", shimDir, err)
-	}
-
-	content, err := cpak.RenderShim(cpakInContainerPath)
-	if err != nil {
-		return fmt.Errorf("render shim template: an error occurred while spawning the namespace: %s", err)
-	}
-	if err := os.WriteFile(shimFilePath, content, 0755); err != nil {
-		return fmt.Errorf("write shim file %s: an error occurred while spawning the namespace: %s", shimFilePath, err)
-	}
-	if err := os.Chmod(shimFilePath, 0755); err != nil {
-		return fmt.Errorf("chmod shim file %s: an error occurred while spawning the namespace: %s", shimFilePath, err)
-	}
-
-	linkTargetDir, err := prepareRootfsDirectory(rootFs, "/usr/bin")
-	if err != nil {
-		return fmt.Errorf("prepare link target directory: an error occurred while spawning the namespace: %s", err)
-	}
-	c.spawnVerbose("Creating symlink directory: ", linkTargetDir)
-	if err := os.MkdirAll(linkTargetDir, 0755); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("create link target dir %s: an error occurred while spawning the namespace: %s", linkTargetDir, err)
-	}
-
-	for _, cmdName := range allowedCmds {
-		if cmdName == "" {
-			continue
-		}
-		if filepath.Base(cmdName) != cmdName || cmdName == "." || cmdName == ".." {
-			return fmt.Errorf("invalid hostexec command name: %s", cmdName)
-		}
-		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/bin", cmdName))
-		if prepareErr != nil {
-			return fmt.Errorf("prepare link %s: an error occurred while spawning the namespace: %s", cmdName, prepareErr)
-		}
-		relShimPath, err := filepath.Rel(linkTargetDir, shimFilePath)
-		if err != nil {
-			return fmt.Errorf("calculate relative path for shim from %s: an error occurred while spawning the namespace: %s", linkTargetDir, err)
-		}
-
-		c.spawnVerbose("Creating symlink: ", linkPath, " -> ", relShimPath)
-		_ = os.Remove(linkPath)
-		err = os.Symlink(relShimPath, linkPath)
-		if err != nil {
-			return fmt.Errorf("create symlink %s -> %s: an error occurred while spawning the namespace: %s", linkPath, relShimPath, err)
-		}
-	}
-
-	return nil
-}
-
 func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string) error {
 	shimFilePath, err := prepareRootfsFile(rootFs, systemBrokerShimPath)
 	if err != nil {
@@ -1058,7 +951,7 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 		return fmt.Errorf("chmod system broker shim: %w", err)
 	}
 	for _, name := range shims {
-		if name != "notify-send" && name != "xdg-open" && name != "cpak-launch-app" {
+		if name != "notify-send" && name != "xdg-open" && name != "cpak-launch-app" && name != "podman" && name != "docker" {
 			return fmt.Errorf("invalid system broker shim: %s", name)
 		}
 		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/local/bin", name))

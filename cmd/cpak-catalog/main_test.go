@@ -78,7 +78,7 @@ func TestLoadPackageManifest(t *testing.T) {
 		if request.Header.Get("Accept") != "application/vnd.github.raw+json" {
 			t.Fatalf("unexpected Accept header: %s", request.Header.Get("Accept"))
 		}
-		_, _ = writer.Write([]byte(`{"manifest_version":"2.0","override":{"network":true}}`))
+		_, _ = writer.Write([]byte(`{"manifest_version":"2.0","name":"Demo","description":"Demo application","image":"ghcr.io/containerpak/demo:main","binaries":["/usr/bin/demo"],"override":{"network":true}}`))
 	}))
 	defer server.Close()
 

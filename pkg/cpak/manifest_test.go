@@ -92,6 +92,39 @@ func TestMigrateManifestRejectsWritableHostRoot(t *testing.T) {
 	}
 }
 
+func TestMigrateManifestConvertsKnownHostCommandShims(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Override.AllowedHostCommands = []string{"notify-send", "xdg-open", "cpak-launch-app"}
+	if err := MigrateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.Override.Notification || !manifest.Override.OpenURI || !manifest.Override.HostApplications {
+		t.Fatalf("legacy shims were not converted: %+v", manifest.Override)
+	}
+	if len(manifest.Override.AllowedHostCommands) != 0 {
+		t.Fatalf("legacy shims remain after migration: %v", manifest.Override.AllowedHostCommands)
+	}
+}
+
+func TestValidateManifestRejectsUnknownLegacyHostCommand(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Override.AllowedHostCommands = []string{"sh"}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("unknown legacy host command was accepted")
+	}
+}
+
+func TestValidateManifestAcceptsTypedContainerActions(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Override.HostActions = []types.HostActionGrant{{
+		Provider:     types.HostActionProviderContainers,
+		Capabilities: []string{types.HostActionContainersRead, types.HostActionContainersManageOwned},
+	}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateManifestSupportsDigestReference(t *testing.T) {
 	c := &Cpak{}
 	manifest := &types.CpakManifest{
@@ -128,5 +161,62 @@ func TestValidateManifestRejectsUnknownDependencyMode(t *testing.T) {
 	manifest.Dependencies = []types.Dependency{{Origin: "github.com/example/component", Mode: "shared"}}
 	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
 		t.Fatal("accepted an unknown dependency mode")
+	}
+}
+
+func TestValidateManifestAcceptsLoginSession(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Sessions = []types.Session{{
+		ID:          "dev.sinty.singularity",
+		Name:        "Singularity",
+		Description: "Singularity Desktop Environment",
+		Kind:        "desktop",
+		Entrypoint:  manifest.Binaries[0],
+		Override:    types.Override{DeviceDri: true},
+	}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateManifestRejectsSessionCommandSurface(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Sessions = []types.Session{{
+		ID:         "dev.sinty.singularity",
+		Name:       "Singularity",
+		Kind:       "desktop",
+		Entrypoint: manifest.Binaries[0],
+		Override: types.Override{
+			AllowedHostCommands: []string{"sh"},
+		},
+	}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("accepted a host command in a login session")
+	}
+}
+
+func TestValidateManifestRejectsSessionEntrypointOutsideExports(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Sessions = []types.Session{{
+		ID:         "dev.sinty.singularity",
+		Name:       "Singularity",
+		Kind:       "desktop",
+		Entrypoint: "/bin/sh",
+	}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("accepted an unexported session entrypoint")
+	}
+}
+
+func TestValidateManifestRejectsSessionDesktopInjection(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Sessions = []types.Session{{
+		ID:         "dev.sinty.singularity",
+		Name:       "Singularity\nExec=/bin/sh",
+		Kind:       "desktop",
+		Entrypoint: manifest.Binaries[0],
+	}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("accepted a newline in a session name")
 	}
 }

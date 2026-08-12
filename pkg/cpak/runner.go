@@ -149,7 +149,11 @@ func (c *Cpak) runApplicationInstance(app types.Application, override types.Over
 		foundBinary = true
 	} else {
 		for _, b := range app.ParsedBinaries {
-			if filepath.Base(b) == actualBinaryName {
+			match := filepath.Base(b) == actualBinaryName
+			if strings.HasPrefix(binary, "/") {
+				match = b == binary
+			}
+			if match {
 				command = append(command, b) // Use the full path from manifest if available
 				command = append(command, extraArgs...)
 				foundBinary = true

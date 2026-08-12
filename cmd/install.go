@@ -68,6 +68,10 @@ func (c *InstallCmd) Run() error {
 	for _, entry := range manifest.DesktopEntries {
 		c.Logger.Info("  - (desktop entry) %s", entry)
 	}
+	for _, session := range manifest.Sessions {
+		c.Logger.Info("  - (%s session) %s", session.Kind, session.Name)
+		tools.PrintStructKeyVal(session.Override)
+	}
 	c.Logger.Info("")
 
 	c.Logger.Info("The following dependencies will be installed:")

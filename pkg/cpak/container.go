@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
+	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
@@ -160,33 +162,16 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		CreateTimestamp:   time.Now(),
 	}
 
-	container.HostExecSocketPath = filepath.Join(container.StatePath, "hostexec.sock")
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
 
-	hostCommands := effectiveHostCommands(override)
-	if len(hostCommands) > 0 {
-		container.HostExecPid, err = c.startHostExecServerProcess(container.HostExecSocketPath, hostCommands)
-		if err != nil {
-			logger.Println("Error starting hostexec server, cleaning up partially created container...")
-			os.Remove(container.HostExecSocketPath)
-			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
-			os.RemoveAll(container.StatePath)
-			return types.Container{}, fmt.Errorf("failed to start hostexec server: %w", err)
-		}
-		logger.Println("HostExec server started (PID:", container.HostExecPid, "Socket:", container.HostExecSocketPath, ")")
-	} else {
-		container.HostExecSocketPath = ""
-	}
-	if len(systemBrokerOperations(override)) > 0 {
+	if len(systemBrokerShims(override)) > 0 {
 		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime()
 		if err != nil {
-			stopHostExecServer(container.HostExecPid)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 			os.RemoveAll(container.StatePath)
 			return types.Container{}, err
 		}
 		if err = writeSystemBrokerToken(container.SystemBrokerTokenPath); err != nil {
-			stopHostExecServer(container.HostExecPid)
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 			os.RemoveAll(container.StatePath)
@@ -200,16 +185,14 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 				desktopRuntime, err = createDesktopRuntime(container.SystemBrokerSocketPath)
 			}
 			if err != nil {
-				stopHostExecServer(container.HostExecPid)
 				cleanupSystemBrokerRuntime(container)
 				os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 				os.RemoveAll(container.StatePath)
 				return types.Container{}, err
 			}
 		}
-		container.SystemBrokerPid, err = c.startSystemBrokerProcess(container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, filepath.Join(container.StatePath, "system-broker.log"), catalogPath, desktopRuntime, override)
+		container.SystemBrokerPid, err = c.startSystemBrokerProcess(container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, filepath.Join(container.StatePath, "system-broker.log"), catalogPath, desktopRuntime, app.CpakId, override)
 		if err != nil {
-			stopHostExecServer(container.HostExecPid)
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 			os.RemoveAll(container.StatePath)
@@ -222,9 +205,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 	err = store.NewContainer(container)
 	if err != nil {
-		stopHostExecServer(container.HostExecPid)
 		stopSystemBroker(container.SystemBrokerPid)
-		os.Remove(container.HostExecSocketPath)
 		cleanupSystemBrokerRuntime(container)
 		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 		os.RemoveAll(container.StatePath)
@@ -300,22 +281,6 @@ func containerPolicyHash(override types.Override, components, addons []types.App
 	return fmt.Sprintf("%x", hash[:]), nil
 }
 
-func effectiveHostCommands(override types.Override) []string {
-	_, shims := GetOverrideMounts(override)
-	commands := append([]string{}, override.AllowedHostCommands...)
-	commands = append(commands, shims...)
-	seen := make(map[string]bool, len(commands))
-	result := make([]string, 0, len(commands))
-	for _, command := range commands {
-		if command == "" || seen[command] {
-			continue
-		}
-		seen[command] = true
-		result = append(result, command)
-	}
-	return result
-}
-
 // StartContainer starts the container with the given config and image.
 // The config is used to set the environment the way the developer wants.
 // The container is started by calling our spawn function, which is the
@@ -336,7 +301,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
-	overrideMounts, overrideShims := GetOverrideMounts(override)
+	overrideMounts, _ := GetOverrideMounts(override)
 	filesystemArgs := []string{}
 	for _, permission := range override.Filesystem {
 		encoded, encodeErr := types.EncodeFilesystemPermission(permission)
@@ -387,10 +352,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--extra-links", link)
 	}
 
-	// Pass AllowedHostCommands and SocketPath via environment variables to spawn
-	if container.HostExecSocketPath != "" {
-		cmds = append(cmds, "--env", "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
-	}
 	if container.SystemBrokerSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
 		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_TOKEN_FILE="+systemBrokerTokenTarget)
@@ -404,12 +365,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 			cmds = append(cmds, "--env", "CPAK_DESKTOP_RUNTIME="+desktopRuntimeTarget)
 		}
 	}
-	// Join allowed commands into a single string (e.g., colon-separated) for the env var
-	allowedCmdsStr := strings.Join(effectiveHostCommands(override), ":")
-	if allowedCmdsStr != "" {
-		cmds = append(cmds, "--env", "CPAK_ALLOWED_HOST_CMDS="+allowedCmdsStr)
-	}
-
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
 	if override.HostApplications {
@@ -430,10 +385,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--mount-overrides", ovr)
 	}
 
-	for _, shim := range overrideShims {
-		cmds = append(cmds, "--mount-shims", shim)
-	}
-	for _, shim := range systemBrokerOperations(override) {
+	for _, shim := range systemBrokerShims(override) {
 		cmds = append(cmds, "--system-shims", shim)
 	}
 
@@ -679,7 +631,6 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 		}
 	}
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
-	envVars = append(envVars, "CPAK_HOSTEXEC_SOCKET="+container.HostExecSocketPath)
 	if container.SystemBrokerSocketPath != "" {
 		envVars = append(envVars, "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
 		envVars = append(envVars, "CPAK_SYSTEM_BROKER_TOKEN_FILE="+systemBrokerTokenTarget)
@@ -788,8 +739,7 @@ func containerProcessRunning(container types.Container) bool {
 
 // CleanupContainer removes the container with the given id.
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
-	// Stop hostexec server first
-	stopHostExecServer(container.HostExecPid)
+	stopLegacyHostExecServer(container.HostExecPid)
 	stopSystemBroker(container.SystemBrokerPid)
 	cleanupSystemBrokerRuntime(container)
 	cleanupCgroup(container.CpakId, container.CgroupPath)
@@ -865,101 +815,6 @@ func getNested() (parentAppCpakId string, nested bool) {
 	return strings.TrimSpace(string(content)), true
 }
 
-// startHostExecServerProcess starts the 'cpak hostexec-server' in the background.
-// It redirects server logs to a file within the container's state directory.
-func (c *Cpak) startHostExecServerProcess(socketPath string, allowedCmds []string) (pid int, err error) {
-	cpakBinary, err := getCpakBinary()
-	if err != nil {
-		return 0, fmt.Errorf("cannot find cpak binary for hostexec server: %w", err)
-	}
-
-	args := []string{
-		"hostexec-server",
-		"--socket-path", socketPath,
-	}
-	for _, cmdName := range allowedCmds {
-		if cmdName != "" {
-			args = append(args, "--allowed-cmd", cmdName)
-		}
-	}
-
-	// Log file setup (use container state dir for logs)
-	logDir := filepath.Dir(socketPath)
-	logFile := filepath.Join(logDir, "hostexec-server.log")
-
-	// Ensure log directory exists (it should, as statePath is created earlier)
-	if err := os.MkdirAll(logDir, 0700); err != nil && !os.IsExist(err) {
-		return 0, fmt.Errorf("failed to ensure log directory %s for hostexec server: %w", logDir, err)
-	}
-
-	logF, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open log file %s for hostexec server: %w", logFile, err)
-	}
-	defer logF.Close()
-
-	cmd := exec.Command(cpakBinary, args...)
-	cmd.Stdout = logF
-	cmd.Stderr = logF
-	// Detach the process completely
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
-
-	logger.Printf("Starting hostexec server: %s %v", cpakBinary, args)
-	err = cmd.Start()
-	if err != nil {
-		return 0, fmt.Errorf("failed to start hostexec server process: %w", err)
-	}
-
-	pid = cmd.Process.Pid
-	logger.Printf("Hostexec server process started with PID: %d, logging to %s", pid, logFile)
-
-	// Release the process handle so the parent (this function) can return.
-	err = cmd.Process.Release()
-	if err != nil {
-		logger.Printf("Warning: Failed to release hostexec server process %d: %v. Attempting to kill.", pid, err)
-		process, findErr := os.FindProcess(pid)
-		if findErr == nil {
-			_ = process.Kill()
-		}
-		return 0, fmt.Errorf("failed to release hostexec server process %d: %w", pid, err)
-	}
-	if err = waitForSocket(socketPath, socketWaitTimeout); err != nil {
-		stopHostExecServer(pid)
-		detail := ""
-		if content, readErr := os.ReadFile(logFile); readErr == nil {
-			detail = strings.TrimSpace(string(content))
-		}
-		if detail != "" {
-			return 0, fmt.Errorf("hostexec server did not become ready: %s: %w", detail, err)
-		}
-		return 0, fmt.Errorf("hostexec server did not become ready: %w", err)
-	}
-	return pid, nil
-}
-
-// stopHostExecServer sends SIGTERM to the hostexec server process.
-func stopHostExecServer(pid int) {
-	if pid == 0 {
-		return
-	}
-	process, err := os.FindProcess(pid)
-	if err == nil {
-		logger.Printf("Stopping hostexec server (PID: %d)...", pid)
-		err = process.Signal(syscall.SIGTERM)
-		if err != nil {
-			if !strings.Contains(err.Error(), "process already finished") && !strings.Contains(err.Error(), "no such process") {
-				logger.Printf("Failed to send SIGTERM to hostexec server %d: %v.", pid, err)
-			}
-		} else {
-			logger.Printf("Sent SIGTERM to hostexec server %d.", pid)
-		}
-	} else {
-		logger.Printf("Hostexec server process %d not found (already stopped?).", pid)
-	}
-}
-
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
 const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
 
@@ -1028,7 +883,7 @@ func writeSystemBrokerToken(path string) error {
 	return nil
 }
 
-func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath, catalogPath, desktopRuntime string, override types.Override) (int, error) {
+func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath, catalogPath, desktopRuntime, owner string, override types.Override) (int, error) {
 	cpakBinary, err := getCpakBinary()
 	if err != nil {
 		return 0, fmt.Errorf("cannot find cpak binary for system broker: %w", err)
@@ -1042,6 +897,29 @@ func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath, catalogP
 	}
 	if override.HostApplications {
 		args = append(args, "--host-applications", catalogPath, "--desktop-runtime", desktopRuntime)
+	}
+	capabilities := types.HostActionCapabilities(override.HostActions, types.HostActionProviderContainers)
+	capabilityNames := make([]string, 0, len(capabilities))
+	for capability := range capabilities {
+		capabilityNames = append(capabilityNames, capability)
+	}
+	sort.Strings(capabilityNames)
+	for _, capability := range capabilityNames {
+		args = append(args, "--container-capability", capability)
+	}
+	if len(capabilities) > 0 {
+		args = append(args, "--container-owner", owner)
+		paths, pathErr := systemBrokerContainerPaths(override.Filesystem)
+		if pathErr != nil {
+			return 0, pathErr
+		}
+		for _, path := range paths {
+			flag := "--container-path-read-write"
+			if path.ReadOnly {
+				flag = "--container-path-read-only"
+			}
+			args = append(args, flag, path.Path)
+		}
 	}
 	log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -1067,7 +945,33 @@ func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath, catalogP
 	return pid, nil
 }
 
+func systemBrokerContainerPaths(permissions []types.FilesystemPermission) ([]systembroker.ContainerPathGrant, error) {
+	paths := make([]systembroker.ContainerPathGrant, 0, len(permissions))
+	for _, permission := range permissions {
+		source, _, err := types.ResolveFilesystemPermission(permission)
+		if err != nil {
+			return nil, err
+		}
+		resolved, err := filepath.EvalSymlinks(source)
+		if err != nil {
+			return nil, fmt.Errorf("resolve container provider path: %w", err)
+		}
+		paths = append(paths, systembroker.ContainerPathGrant{Path: resolved, ReadOnly: permission.Access == "read-only"})
+	}
+	return paths, nil
+}
+
 func stopSystemBroker(pid int) {
+	if pid == 0 {
+		return
+	}
+	process, err := os.FindProcess(pid)
+	if err == nil {
+		_ = process.Signal(syscall.SIGTERM)
+	}
+}
+
+func stopLegacyHostExecServer(pid int) {
 	if pid == 0 {
 		return
 	}

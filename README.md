@@ -27,7 +27,7 @@ cpak doctor
 ```
 
 `cpak doctor` checks user namespaces, rootless OverlayFS, seccomp, Landlock,
-cgroup delegation, display, audio and the controlled host command bridge. It
+cgroup delegation, display, audio and the host action broker. It
 prints a JSON report with `cpak doctor --json`.
 
 To build from source:
@@ -189,18 +189,82 @@ combines immutable OCI layers with disposable runtime state.
 
 The runtime applies `no_new_privs`, seccomp and Landlock where the host kernel
 supports it. Filesystem paths, devices, sockets, networking, process sharing and
-host commands are controlled by the manifest and user overrides. `hrun` exposes
-only explicitly allowed host commands and validates the peer process before
-execution. Nested user namespaces remain blocked unless an application declares
-`userNamespaces`, which lets browser sandboxes create their inner boundary.
+host actions are controlled by the manifest and user overrides. Nested user
+namespaces remain blocked unless an application declares `userNamespaces`,
+which lets browser sandboxes create their inner boundary.
 
 Desktop notifications and external URIs use the system broker instead. It is
 enabled with the `notification` and `openURI` permissions and exposes only the
 matching shim. The application never receives the host D-Bus socket or command.
 
+The same broker can expose a typed container provider without granting a host
+shell:
+
+```json
+"hostActions": [
+  {
+    "provider": "containers",
+    "capabilities": ["read", "manage-owned", "exec-owned"]
+  }
+]
+```
+
+`podman` and `docker` shims parse supported CLI operations inside the cpak and
+send a closed request to the broker. Standard output, standard error, exit codes
+and cancellation are returned to the caller. Read access can inspect host
+containers. Mutation and execution are restricted to containers created by the
+requesting package and marked with its ownership label. A nested container can
+mount only paths already granted to the parent cpak, and a read-only grant cannot
+be promoted. Unsupported flags, host namespaces, devices and privileged mode are
+rejected before the container backend is started. There is no generic host
+command action.
+
 Resource limits use delegated cgroup v2 controllers when available. Hosts
 without a compatible cgroup manager can run applications without limits; a
 requested limit fails with a direct diagnostic instead of being ignored.
+
+## Desktop and kiosk sessions
+
+A package can offer a complete Wayland desktop or a focused kiosk as a login
+session while remaining usable as a normal application package:
+
+```json
+"sessions": [
+  {
+    "id": "dev.sinty.singularity",
+    "name": "Singularity Desktop",
+    "description": "Singularity Desktop session",
+    "kind": "desktop",
+    "entrypoint": "/usr/bin/singularity-session",
+    "override": {
+      "socketWayland": true,
+      "deviceDri": true,
+      "hostApplications": true,
+      "filesystem": [
+        {"path": "xdg-documents", "access": "read-write"},
+        {"path": "xdg-download", "access": "read-write"}
+      ]
+    }
+  }
+]
+```
+
+Install the small system authority once, then register a session from an
+installed package:
+
+```sh
+cpak system setup
+cpak session list github.com/singularityos-lab/singularity-desktop
+cpak session enable github.com/singularityos-lab/singularity-desktop dev.sinty.singularity
+```
+
+The system authority accepts only session registration and removal. Every
+change passes through Polkit, every field is validated, and the display manager
+entry calls a fixed cpak launcher with a registered identifier. Package paths or
+commands never enter the privileged request. The desktop uses the same cpak
+profile and user data as a windowed launch. Removing a package also removes the
+sessions which no remaining installed version provides. `cpak system remove`
+removes registered cpak sessions before uninstalling the authority.
 
 ## Store
 

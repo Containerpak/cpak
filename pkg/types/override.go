@@ -30,11 +30,14 @@ type Override struct {
 	DeviceFuse  bool `json:"deviceFuse" jsonschema:"description=Expose FUSE devices,default=false" flag:"deviceFuse,bool"`
 	DeviceTun   bool `json:"deviceTun" jsonschema:"description=Expose TUN/TAP,default=false" flag:"deviceTun,bool"`
 	DeviceUsb   bool `json:"deviceUsb" jsonschema:"description=Expose USB devices,default=false" flag:"deviceUsb,bool"`
+	DeviceInput bool `json:"deviceInput" jsonschema:"description=Expose input devices,default=false" flag:"deviceInput,bool"`
+	DeviceTTY   bool `json:"deviceTTY" jsonschema:"description=Expose the controlling terminal,default=false" flag:"deviceTTY,bool"`
 	DeviceAll   bool `json:"deviceAll" jsonschema:"description=Expose all /dev,default=false" flag:"deviceAll,bool"`
 
-	Notification     bool `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
-	OpenURI          bool `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
-	HostApplications bool `json:"hostApplications" jsonschema:"description=Expose and launch host desktop applications,default=false" flag:"hostApplications,bool"`
+	Notification     bool              `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
+	OpenURI          bool              `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
+	HostApplications bool              `json:"hostApplications" jsonschema:"description=Expose and launch host desktop applications,default=false" flag:"hostApplications,bool"`
+	HostActions      []HostActionGrant `json:"hostActions,omitempty" jsonschema:"description=Typed host service capabilities"`
 
 	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions"`
 
@@ -54,7 +57,7 @@ type Override struct {
 
 	AsRoot bool `json:"asRoot" jsonschema:"description=Run as root inside container,default=false" flag:"asRoot,bool"`
 
-	AllowedHostCommands []string `json:"allowedHostCommands,omitempty" jsonschema:"description=Host commands allowed via shim,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0" flag:"allowedHostCommands,strings"`
+	AllowedHostCommands []string `json:"allowedHostCommands,omitempty" jsonschema:"description=Legacy host command compatibility field,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0"`
 }
 
 func NewOverride() Override {
@@ -86,7 +89,7 @@ func NewOverride() Override {
 		CPUQuota:            0,
 		PidsMax:             0,
 		AsRoot:              false,
-		AllowedHostCommands: []string{},
+		AllowedHostCommands: nil,
 	}
 }
 

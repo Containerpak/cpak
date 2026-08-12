@@ -71,6 +71,9 @@ type Application struct {
 	// ParsedDesktopEntries is the list of exported desktop entries of the application.
 	ParsedDesktopEntries []string `json:"parsed_desktop_entries"`
 
+	// ParsedSessions is the list of login sessions exported by the application.
+	ParsedSessions []Session `json:"parsed_sessions"`
+
 	// ParsedDependencies is the list of cpak dependencies needed by the application
 	// to work properly.
 	ParsedDependencies []Dependency `json:"parsed_dependencies"`

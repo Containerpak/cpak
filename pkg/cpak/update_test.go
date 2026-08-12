@@ -339,6 +339,42 @@ func TestUpdateRejectsPermissionsAddedAfterPreflight(t *testing.T) {
 	}
 }
 
+func TestUpdateRejectsSessionPermissionsBeforeMutation(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:       testCpakId("branch", "main"),
+		Name:         "demo",
+		Version:      "main",
+		Branch:       "main",
+		Origin:       testOrigin,
+		ParsedLayers: []string{"oldlayer"},
+		Config:       "{}",
+	})
+
+	manifest := newTestManifest()
+	manifest.Sessions = []types.Session{{
+		ID:         "com.example.demo",
+		Name:       "Demo",
+		Kind:       "kiosk",
+		Entrypoint: manifest.Binaries[0],
+		Override:   types.Override{DeviceDri: true},
+	}}
+	stub := &updateStub{manifest: manifest, layers: []string{"newlayer"}, config: "{}"}
+	results, err := c.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Status != types.UpdateStatusPermissionDenied {
+		t.Fatalf("expected permission denial, got %q", results[0].Status)
+	}
+	if len(results[0].PermissionAdditions) != 1 || results[0].PermissionAdditions[0] != "session:com.example.demo" {
+		t.Fatalf("unexpected session permission additions: %v", results[0].PermissionAdditions)
+	}
+	if stub.pulled != 0 {
+		t.Fatal("update pulled layers before session permission approval")
+	}
+}
+
 func TestUpdateCommitInstallIsPinned(t *testing.T) {
 	cases := []struct {
 		name string

@@ -15,20 +15,17 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
-type notification struct {
-	appName       string
-	replacesID    uint32
-	icon          string
-	summary       string
-	body          string
-	hints         map[string]dbus.Variant
-	expireTimeout int32
-}
-
-func sendNotification(ctx context.Context, args []string) error {
-	request, err := parseNotification(args)
-	if err != nil {
-		return err
+func sendNotification(ctx context.Context, request NotificationRequest) error {
+	hints := map[string]dbus.Variant{}
+	if request.Urgency != "" {
+		urgency := map[string]byte{"low": 0, "normal": 1, "critical": 2}
+		hints["urgency"] = dbus.MakeVariant(urgency[request.Urgency])
+	}
+	if request.Category != "" {
+		hints["category"] = dbus.MakeVariant(request.Category)
+	}
+	if request.Transient {
+		hints["transient"] = dbus.MakeVariant(true)
 	}
 	connection, err := dbus.ConnectSessionBus()
 	if err != nil {
@@ -39,21 +36,21 @@ func sendNotification(ctx context.Context, args []string) error {
 		ctx,
 		"org.freedesktop.Notifications.Notify",
 		0,
-		request.appName,
-		request.replacesID,
-		request.icon,
-		request.summary,
-		request.body,
+		request.AppName,
+		request.ReplaceID,
+		request.Icon,
+		request.Summary,
+		request.Body,
 		[]string{},
-		request.hints,
-		request.expireTimeout,
+		hints,
+		request.ExpireTimeout,
 	)
 	var notificationID uint32
 	return call.Store(&notificationID)
 }
 
-func parseNotification(args []string) (notification, error) {
-	request := notification{appName: "cpak", hints: map[string]dbus.Variant{}, expireTimeout: -1}
+func parseNotification(args []string) (NotificationRequest, error) {
+	request := NotificationRequest{AppName: "cpak", ExpireTimeout: -1}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
@@ -66,80 +63,93 @@ func parseNotification(args []string) (notification, error) {
 		case "-u", "--urgency":
 			value, next, err := notificationOptionValue(args, index, inline, hasInline)
 			if err != nil {
-				return notification{}, err
+				return NotificationRequest{}, err
 			}
 			index = next
-			urgency := map[string]byte{"low": 0, "normal": 1, "critical": 2}
-			level, ok := urgency[value]
+			urgency := map[string]bool{"low": true, "normal": true, "critical": true}
+			_, ok := urgency[value]
 			if !ok {
-				return notification{}, errors.New("invalid notification urgency")
+				return NotificationRequest{}, errors.New("invalid notification urgency")
 			}
-			request.hints["urgency"] = dbus.MakeVariant(level)
+			request.Urgency = value
 		case "-t", "--expire-time":
 			value, next, err := notificationOptionValue(args, index, inline, hasInline)
 			if err != nil {
-				return notification{}, err
+				return NotificationRequest{}, err
 			}
 			index = next
 			expire, err := strconv.ParseInt(value, 10, 32)
 			if err != nil || expire < -1 {
-				return notification{}, errors.New("invalid notification expiry")
+				return NotificationRequest{}, errors.New("invalid notification expiry")
 			}
-			request.expireTimeout = int32(expire)
+			request.ExpireTimeout = int32(expire)
 		case "-a", "--app-name":
 			value, next, err := notificationOptionValue(args, index, inline, hasInline)
 			if err != nil {
-				return notification{}, err
+				return NotificationRequest{}, err
 			}
 			index = next
-			request.appName = value
+			request.AppName = value
 		case "-i", "--icon":
 			value, next, err := notificationOptionValue(args, index, inline, hasInline)
 			if err != nil {
-				return notification{}, err
+				return NotificationRequest{}, err
 			}
 			index = next
-			request.icon = value
+			request.Icon = value
 		case "-c", "--category":
 			value, next, err := notificationOptionValue(args, index, inline, hasInline)
 			if err != nil {
-				return notification{}, err
+				return NotificationRequest{}, err
 			}
 			index = next
-			request.hints["category"] = dbus.MakeVariant(value)
+			request.Category = value
 		case "-r", "--replace-id":
 			value, next, err := notificationOptionValue(args, index, inline, hasInline)
 			if err != nil {
-				return notification{}, err
+				return NotificationRequest{}, err
 			}
 			index = next
 			replacement, err := strconv.ParseUint(value, 10, 32)
 			if err != nil {
-				return notification{}, errors.New("invalid notification replacement ID")
+				return NotificationRequest{}, errors.New("invalid notification replacement ID")
 			}
-			request.replacesID = uint32(replacement)
+			request.ReplaceID = uint32(replacement)
 		case "--transient":
-			request.hints["transient"] = dbus.MakeVariant(true)
+			request.Transient = true
 		default:
 			if strings.HasPrefix(argument, "-") {
-				return notification{}, fmt.Errorf("unsupported notification option: %s", name)
+				return NotificationRequest{}, fmt.Errorf("unsupported notification option: %s", name)
 			}
 			positionals = append(positionals, argument)
 		}
 	}
 	if len(positionals) < 1 || len(positionals) > 2 {
-		return notification{}, errors.New("notification requires a summary and optional body")
+		return NotificationRequest{}, errors.New("notification requires a summary and optional body")
 	}
-	request.summary = positionals[0]
+	request.Summary = positionals[0]
 	if len(positionals) == 2 {
-		request.body = positionals[1]
+		request.Body = positionals[1]
 	}
-	for _, value := range []string{request.appName, request.icon, request.summary, request.body} {
-		if len(value) > 4096 || strings.ContainsRune(value, '\x00') {
-			return notification{}, errors.New("invalid notification request")
-		}
+	if err := validateNotification(request); err != nil {
+		return NotificationRequest{}, err
 	}
 	return request, nil
+}
+
+func validateNotification(request NotificationRequest) error {
+	if request.AppName == "" || request.Summary == "" || request.ExpireTimeout < -1 {
+		return errors.New("invalid notification request")
+	}
+	if request.Urgency != "" && request.Urgency != "low" && request.Urgency != "normal" && request.Urgency != "critical" {
+		return errors.New("invalid notification urgency")
+	}
+	for _, value := range []string{request.AppName, request.Icon, request.Summary, request.Body, request.Category} {
+		if len(value) > 4096 || strings.ContainsRune(value, '\x00') {
+			return errors.New("invalid notification request")
+		}
+	}
+	return nil
 }
 
 func notificationOptionValue(args []string, index int, inline string, hasInline bool) (string, int, error) {

@@ -79,6 +79,18 @@ func (c *OverrideCmd) Run() error {
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
 		return nil
 	}
+	if c.Key == "hostActions" {
+		actions, err := types.DecodeHostActionsJSON([]byte(c.Value))
+		if err != nil {
+			return err
+		}
+		over.HostActions = actions
+		if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+			return err
+		}
+		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
+		return nil
+	}
 
 	// Initialize the flag binder
 	b, err := binder.NewBinder(&over, os.TempDir(), true)
@@ -87,7 +99,7 @@ func (c *OverrideCmd) Run() error {
 	}
 
 	argsList := []string{c.Value}
-	if c.Key == "fsExtra" || c.Key == "env" || c.Key == "allowedHostCommands" {
+	if c.Key == "fsExtra" || c.Key == "env" {
 		argsList = strings.Split(c.Value, ":")
 	}
 

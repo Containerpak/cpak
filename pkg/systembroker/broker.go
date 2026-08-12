@@ -6,6 +6,7 @@
 package systembroker
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -27,24 +28,8 @@ import (
 )
 
 const (
-	ProtocolVersion            = 1
-	OperationNotify            = "notify"
-	OperationOpenURI           = "open-uri"
-	OperationLaunchApplication = "launch-application"
-	maxRequestSize             = 16 << 10
+	maxRequestSize = 16 << 10
 )
-
-type Request struct {
-	Version     int               `json:"version"`
-	Token       string            `json:"token"`
-	Operation   string            `json:"operation"`
-	Args        []string          `json:"args"`
-	Environment map[string]string `json:"environment,omitempty"`
-}
-
-type Response struct {
-	Error string `json:"error,omitempty"`
-}
 
 type Options struct {
 	SocketPath            string
@@ -57,8 +42,12 @@ type Options struct {
 	RuntimeDirectory      string
 	CommandTimeout        time.Duration
 	AuthorizePeer         func(*net.UnixConn) error
-	Notify                func(context.Context, []string) error
+	ContainerOwner        string
+	ContainerCapabilities map[string]bool
+	ContainerPaths        []ContainerPathGrant
+	Notify                func(context.Context, NotificationRequest) error
 	LaunchApplication     func(context.Context, string, []string, []string) error
+	Containers            func(context.Context, string, map[string]bool, []ContainerPathGrant, ContainerRequest, io.Writer, io.Writer) (int, error)
 }
 
 func (o Options) validate() error {
@@ -68,7 +57,7 @@ func (o Options) validate() error {
 	if len(o.Token) < 32 {
 		return errors.New("system broker token is too short")
 	}
-	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications {
+	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 {
 		return errors.New("system broker has no enabled operations")
 	}
 	if o.AllowHostApplications {
@@ -77,6 +66,22 @@ func (o Options) validate() error {
 		}
 		if o.Applications == nil {
 			return errors.New("system broker application catalog is required")
+		}
+	}
+	if len(o.ContainerCapabilities) > 0 && o.ContainerOwner == "" {
+		return errors.New("system broker container owner is required")
+	}
+	if len(o.ContainerOwner) > 512 || strings.ContainsAny(o.ContainerOwner, "\x00\r\n") {
+		return errors.New("system broker container owner is invalid")
+	}
+	for capability := range o.ContainerCapabilities {
+		if capability != "read" && capability != "manage-owned" && capability != "exec-owned" {
+			return fmt.Errorf("unsupported container capability: %s", capability)
+		}
+	}
+	for _, path := range o.ContainerPaths {
+		if !filepath.IsAbs(path.Path) || filepath.Clean(path.Path) != path.Path {
+			return errors.New("system broker container path is invalid")
 		}
 	}
 	return nil
@@ -103,11 +108,11 @@ func (o Options) authorize(connection *net.UnixConn) error {
 	return authorizePeer(connection)
 }
 
-func (o Options) notify(ctx context.Context, args []string) error {
+func (o Options) notify(ctx context.Context, request NotificationRequest) error {
 	if o.Notify != nil {
-		return o.Notify(ctx, args)
+		return o.Notify(ctx, request)
 	}
-	return sendNotification(ctx, args)
+	return sendNotification(ctx, request)
 }
 
 func Serve(ctx context.Context, options Options) error {
@@ -161,54 +166,36 @@ func Serve(ctx context.Context, options Options) error {
 	}
 }
 
-func Call(socketPath, token, operation string, args []string) error {
-	return CallWithEnvironment(socketPath, token, operation, args, nil)
-}
-
-func CallWithEnvironment(socketPath, token, operation string, args []string, environment map[string]string) error {
-	if socketPath == "" {
-		return errors.New("system broker socket path is required")
-	}
-	if len(token) < 32 {
-		return errors.New("system broker token is too short")
-	}
-	connection, err := net.DialTimeout("unix", socketPath, 3*time.Second)
-	if err != nil {
-		return fmt.Errorf("connect to system broker: %w", err)
-	}
-	defer connection.Close()
-	if err := connection.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
-		return fmt.Errorf("set system broker deadline: %w", err)
-	}
-	if err := json.NewEncoder(connection).Encode(Request{Version: ProtocolVersion, Token: token, Operation: operation, Args: args, Environment: environment}); err != nil {
-		return fmt.Errorf("write system broker request: %w", err)
-	}
-	response := Response{}
-	if err := json.NewDecoder(io.LimitReader(connection, maxRequestSize)).Decode(&response); err != nil {
-		return fmt.Errorf("read system broker response: %w", err)
-	}
-	if response.Error != "" {
-		return errors.New(response.Error)
-	}
-	return nil
-}
-
 func handle(connection *net.UnixConn, options Options) {
-	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
-	response := Response{}
+	_ = connection.SetReadDeadline(time.Now().Add(15 * time.Second))
+	writer := newFrameWriter(connection)
 	if err := options.authorize(connection); err != nil {
-		response.Error = "system broker denied the caller"
-	} else {
-		request := Request{}
-		if err := json.NewDecoder(io.LimitReader(connection, maxRequestSize)).Decode(&request); err != nil {
-			response.Error = "invalid system broker request"
-		} else if err := authorizeRequest(request, options.Token); err != nil {
-			response.Error = "system broker denied the request"
-		} else if err := execute(request, options); err != nil {
-			response.Error = err.Error()
-		}
+		writer.fail("system broker denied the caller")
+		return
 	}
-	_ = json.NewEncoder(connection).Encode(response)
+	request := Request{}
+	if err := json.NewDecoder(io.LimitReader(connection, maxRequestSize)).Decode(&request); err != nil {
+		writer.fail("invalid system broker request")
+		return
+	}
+	if err := authorizeRequest(request, options.Token); err != nil {
+		writer.fail("system broker denied the request")
+		return
+	}
+	_ = connection.SetReadDeadline(time.Time{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		var buffer [1]byte
+		_, _ = connection.Read(buffer[:])
+		cancel()
+	}()
+	code, err := execute(ctx, request, options, writer)
+	if err != nil {
+		writer.fail(err.Error())
+		return
+	}
+	writer.exit(code)
 }
 
 func authorizeRequest(request Request, token string) error {
@@ -218,105 +205,187 @@ func authorizeRequest(request Request, token string) error {
 	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(token)) != 1 {
 		return errors.New("invalid system broker token")
 	}
-	if request.Operation != OperationNotify && request.Operation != OperationOpenURI && request.Operation != OperationLaunchApplication {
+	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionContainers {
 		return errors.New("unsupported system broker operation")
 	}
 	return nil
 }
 
-func execute(request Request, options Options) error {
-	ctx, cancel := context.WithTimeout(context.Background(), options.commandTimeout())
-	defer cancel()
-	switch request.Operation {
-	case OperationNotify:
+func execute(ctx context.Context, request Request, options Options, writer *frameWriter) (int, error) {
+	switch request.Action {
+	case ActionNotify:
 		if !options.AllowNotify {
-			return errors.New("desktop notifications are not permitted")
+			return 0, errors.New("desktop notifications are not permitted")
 		}
-		if err := validateNotificationArgs(request.Args); err != nil {
-			return err
+		notification := NotificationRequest{}
+		if err := decodePayload(request.Payload, &notification); err != nil {
+			return 0, err
 		}
-		if err := options.notify(ctx, request.Args); err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return errors.New("system integration backend timed out: notification service")
+		if err := validateNotification(notification); err != nil {
+			return 0, err
+		}
+		commandCtx, cancel := context.WithTimeout(ctx, options.commandTimeout())
+		defer cancel()
+		if err := options.notify(commandCtx, notification); err != nil {
+			if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+				return 0, errors.New("system integration backend timed out: notification service")
 			}
-			return fmt.Errorf("system integration backend failed: notification service: %w", err)
+			return 0, fmt.Errorf("system integration backend failed: notification service: %w", err)
 		}
-		return nil
-	case OperationOpenURI:
+		return 0, nil
+	case ActionOpenURI:
 		if !options.AllowOpenURI {
-			return errors.New("opening URIs is not permitted")
+			return 0, errors.New("opening URIs is not permitted")
 		}
-		if err := validateURIArgs(request.Args); err != nil {
-			return err
+		openURI := OpenURIRequest{}
+		if err := decodePayload(request.Payload, &openURI); err != nil {
+			return 0, err
+		}
+		if err := validateOpenURI(openURI); err != nil {
+			return 0, err
 		}
 		path, err := exec.LookPath(options.openURICommand())
 		if err != nil {
-			return fmt.Errorf("system integration backend is unavailable: %s", options.openURICommand())
+			return 0, fmt.Errorf("system integration backend is unavailable: %s", options.openURICommand())
 		}
-		command := exec.Command(path, request.Args...)
+		command := exec.Command(path, openURI.URI)
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := command.Start(); err != nil {
-			return fmt.Errorf("system integration backend failed: %s", options.openURICommand())
+			return 0, fmt.Errorf("system integration backend failed: %s", options.openURICommand())
 		}
 		if err := command.Process.Release(); err != nil {
-			return fmt.Errorf("release system integration backend: %s", options.openURICommand())
+			return 0, fmt.Errorf("release system integration backend: %s", options.openURICommand())
 		}
-		return nil
-	case OperationLaunchApplication:
+		return 0, nil
+	case ActionLaunchApplication:
 		if !options.AllowHostApplications {
-			return errors.New("host applications are not permitted")
+			return 0, errors.New("host applications are not permitted")
 		}
-		desktopEntry, args, err := validateApplicationRequest(request.Args, options.Applications)
+		launch := LaunchApplicationRequest{}
+		if err := decodePayload(request.Payload, &launch); err != nil {
+			return 0, err
+		}
+		desktopEntry, args, err := validateApplicationRequest(launch, options.Applications)
 		if err != nil {
-			return err
+			return 0, err
 		}
-		environment, err := applicationEnvironment(request.Environment, options.RuntimeDirectory)
+		environment, err := applicationEnvironment(launch.Environment, options.RuntimeDirectory)
 		if err != nil {
-			return err
+			return 0, err
 		}
+		commandCtx, cancel := context.WithTimeout(ctx, options.commandTimeout())
+		defer cancel()
 		if options.LaunchApplication != nil {
-			return options.LaunchApplication(ctx, desktopEntry, args, environment)
+			return 0, options.LaunchApplication(commandCtx, desktopEntry, args, environment)
 		}
 		path, err := exec.LookPath("gio")
 		if err != nil {
-			return errors.New("host application backend is unavailable: gio")
+			return 0, errors.New("host application backend is unavailable: gio")
 		}
 		command := exec.Command(path, append([]string{"launch", desktopEntry}, args...)...)
 		command.Env = mergeEnvironment(os.Environ(), environment)
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := command.Start(); err != nil {
-			return errors.New("host application backend failed: gio")
+			return 0, errors.New("host application backend failed: gio")
 		}
 		if err := command.Process.Release(); err != nil {
-			return errors.New("release host application backend: gio")
+			return 0, errors.New("release host application backend: gio")
 		}
-		return nil
+		return 0, nil
+	case ActionContainers:
+		if len(options.ContainerCapabilities) == 0 {
+			return 0, errors.New("host container actions are not permitted")
+		}
+		container := ContainerRequest{}
+		if err := decodePayload(request.Payload, &container); err != nil {
+			return 0, err
+		}
+		if options.Containers != nil {
+			return options.Containers(ctx, options.ContainerOwner, options.ContainerCapabilities, options.ContainerPaths, container, writer.stdout(), writer.stderr())
+		}
+		return executeContainer(ctx, options.ContainerOwner, options.ContainerCapabilities, options.ContainerPaths, container, writer.stdout(), writer.stderr())
 	}
-	return errors.New("unsupported system broker operation")
+	return 0, errors.New("unsupported system broker operation")
+}
+
+type frameWriter struct {
+	encoder *json.Encoder
+	mu      sync.Mutex
+}
+
+type streamWriter struct {
+	frames *frameWriter
+	typeID string
+}
+
+func newFrameWriter(output io.Writer) *frameWriter {
+	return &frameWriter{encoder: json.NewEncoder(output)}
+}
+
+func (w *frameWriter) write(frame Frame) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.encoder.Encode(frame)
+}
+
+func (w *frameWriter) fail(message string) {
+	_ = w.write(Frame{Type: FrameError, Error: message})
+}
+
+func (w *frameWriter) exit(code int) {
+	_ = w.write(Frame{Type: FrameExit, ExitCode: code})
+}
+
+func (w *frameWriter) stdout() io.Writer {
+	return streamWriter{frames: w, typeID: FrameStdout}
+}
+
+func (w *frameWriter) stderr() io.Writer {
+	return streamWriter{frames: w, typeID: FrameStderr}
+}
+
+func (w streamWriter) Write(data []byte) (int, error) {
+	copy := append([]byte{}, data...)
+	if err := w.frames.write(Frame{Type: w.typeID, Data: copy}); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func decodePayload(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return errors.New("invalid system broker payload")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("invalid system broker payload")
+	}
+	return nil
 }
 
 var displayPattern = regexp.MustCompile(`^:[0-9]+(?:\.[0-9]+)?$`)
 var waylandDisplayPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-func validateApplicationRequest(args []string, applications map[string]string) (string, []string, error) {
-	if len(args) == 0 || len(args) > 33 || len(args[0]) != 64 {
+func validateApplicationRequest(request LaunchApplicationRequest, applications map[string]string) (string, []string, error) {
+	if len(request.URIs) > 32 || len(request.ApplicationToken) != 64 {
 		return "", nil, errors.New("invalid host application request")
 	}
-	for _, character := range args[0] {
+	for _, character := range request.ApplicationToken {
 		if !strings.ContainsRune("0123456789abcdef", character) {
 			return "", nil, errors.New("invalid host application request")
 		}
 	}
-	desktopEntry := applications[args[0]]
+	desktopEntry := applications[request.ApplicationToken]
 	if desktopEntry == "" || !filepath.IsAbs(desktopEntry) || filepath.Ext(desktopEntry) != ".desktop" {
 		return "", nil, errors.New("host application is not in the catalog")
 	}
-	for _, arg := range args[1:] {
+	for _, arg := range request.URIs {
 		if err := validateApplicationURI(arg); err != nil {
 			return "", nil, errors.New("invalid host application request")
 		}
 	}
-	return desktopEntry, args[1:], nil
+	return desktopEntry, request.URIs, nil
 }
 
 func validateApplicationURI(value string) error {
@@ -387,7 +456,8 @@ func LoadApplicationCatalog(path string) (map[string]string, error) {
 		return nil, errors.New("application catalog contains multiple JSON values")
 	}
 	for token, desktopEntry := range catalog {
-		if _, _, err := validateApplicationRequest([]string{token}, map[string]string{token: desktopEntry}); err != nil {
+		request := LaunchApplicationRequest{ApplicationToken: token}
+		if _, _, err := validateApplicationRequest(request, map[string]string{token: desktopEntry}); err != nil {
 			return nil, err
 		}
 	}
@@ -427,23 +497,11 @@ func mergeEnvironment(base, overrides []string) []string {
 	return append(result, overrides...)
 }
 
-func validateNotificationArgs(args []string) error {
-	if len(args) == 0 || len(args) > 24 {
-		return errors.New("invalid notification request")
-	}
-	for _, arg := range args {
-		if len(arg) > 4096 || strings.ContainsRune(arg, '\x00') {
-			return errors.New("invalid notification request")
-		}
-	}
-	return nil
-}
-
-func validateURIArgs(args []string) error {
-	if len(args) != 1 || len(args[0]) > 4096 || strings.ContainsRune(args[0], '\x00') {
+func validateOpenURI(request OpenURIRequest) error {
+	if len(request.URI) > 4096 || strings.ContainsRune(request.URI, '\x00') {
 		return errors.New("invalid URI request")
 	}
-	parsed, err := url.ParseRequestURI(args[0])
+	parsed, err := url.ParseRequestURI(request.URI)
 	if err != nil || parsed.Scheme == "" {
 		return errors.New("invalid URI request")
 	}

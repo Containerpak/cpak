@@ -13,16 +13,16 @@ import (
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
-type SystemBrokerClientCmd struct {
+type HostActionCmd struct {
 	SocketPath string   `cli:"socket-path" help:"Path for the Unix domain socket"`
 	TokenFile  string   `cli:"token-file" help:"File containing the broker token"`
-	Operation  string   `cli:"operation" help:"System integration operation"`
-	Args       []string `arg:"args" help:"Operation arguments"`
+	Shim       string   `cli:"shim" help:"Compatibility shim name"`
+	Args       []string `arg:"args" help:"Shim arguments"`
 
 	cli.Base
 }
 
-func (c *SystemBrokerClientCmd) Run() error {
+func (c *HostActionCmd) Run() error {
 	socketPath := c.SocketPath
 	if socketPath == "" {
 		socketPath = os.Getenv("CPAK_SYSTEM_BROKER_SOCKET")
@@ -39,15 +39,15 @@ func (c *SystemBrokerClientCmd) Run() error {
 		return err
 	}
 	environment := map[string]string{}
-	if c.Operation == systembroker.OperationLaunchApplication {
-		for _, name := range []string{"WAYLAND_DISPLAY", "DISPLAY", "XDG_ACTIVATION_TOKEN"} {
-			if value := os.Getenv(name); value != "" {
-				environment[name] = value
-			}
+	for _, name := range []string{"WAYLAND_DISPLAY", "DISPLAY", "XDG_ACTIVATION_TOKEN"} {
+		if value := os.Getenv(name); value != "" {
+			environment[name] = value
 		}
 	}
-	if err := systembroker.CallWithEnvironment(socketPath, token, c.Operation, c.Args, environment); err != nil {
-		return fmt.Errorf("system broker request failed: %w", err)
+	ctx, stop := signalContext()
+	defer stop()
+	if err := systembroker.InvokeShim(ctx, socketPath, token, c.Shim, c.Args, environment, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("host action failed: %w", err)
 	}
 	return nil
 }

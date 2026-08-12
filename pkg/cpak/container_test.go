@@ -164,10 +164,7 @@ func TestContainerEnvironmentKeepsImageAndOverrideValues(t *testing.T) {
 			Env: []string{"OVERRIDE_VALUE=1"},
 		},
 	}
-	container := types.Container{
-		CpakId:             "container-id",
-		HostExecSocketPath: "/tmp/hostexec.sock",
-	}
+	container := types.Container{CpakId: "container-id"}
 
 	env, err := containerEnvironment(app, container)
 	if err != nil {
@@ -178,7 +175,6 @@ func TestContainerEnvironmentKeepsImageAndOverrideValues(t *testing.T) {
 		"IMAGE_VALUE=1",
 		"OVERRIDE_VALUE=1",
 		"CPAK_CONTAINER_ID=container-id",
-		"CPAK_HOSTEXEC_SOCKET=/tmp/hostexec.sock",
 	} {
 		if !slicesContain(env, value) {
 			t.Fatalf("missing %q in %v", value, env)
@@ -215,18 +211,6 @@ func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 	}
 	if firstHash == secondHash {
 		t.Fatal("different permission sets produced the same policy hash")
-	}
-}
-
-func TestEffectiveHostCommandsAreExplicitAndDeduplicated(t *testing.T) {
-	commands := effectiveHostCommands(types.Override{
-		AllowedHostCommands: []string{"xdg-open", "xdg-open"},
-	})
-	if got := strings.Join(commands, ","); got != "xdg-open" {
-		t.Fatalf("unexpected host commands: %s", got)
-	}
-	if commands := effectiveHostCommands(types.Override{}); len(commands) != 0 {
-		t.Fatalf("empty policy exposed host commands: %v", commands)
 	}
 }
 

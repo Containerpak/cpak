@@ -33,10 +33,10 @@ type Container struct {
 	// actual workdir for the layer mounts.
 	StatePath string `json:"state_path"`
 
-	// HostExecPid is the PID of the 'cpak hostexec-server' process running on the host for this container.
+	// HostExecPid is retained to stop hostexec processes created by older cpak versions.
 	HostExecPid int `json:"host_exec_pid"`
 
-	// HostExecSocketPath is the path to the Unix domain socket used by the hostexec server/client.
+	// HostExecSocketPath is retained for stored containers created by older cpak versions.
 	HostExecSocketPath string `json:"host_exec_socket_path"`
 
 	// SystemBrokerPid is the PID of the policy-gated system integration broker.

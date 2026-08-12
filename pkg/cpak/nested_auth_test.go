@@ -34,10 +34,13 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 				{Path: "/shared", Access: "read-write"},
 				{Path: "/child-only", Access: "read-write"},
 			},
-			MemoryMaxMB:         1024,
-			PidsMax:             50,
-			Env:                 []string{"SHARED=1", "CHILD=1"},
-			AllowedHostCommands: []string{"xdg-open", "child-tool"},
+			MemoryMaxMB: 1024,
+			PidsMax:     50,
+			Env:         []string{"SHARED=1", "CHILD=1"},
+			HostActions: []types.HostActionGrant{{
+				Provider:     types.HostActionProviderContainers,
+				Capabilities: []string{types.HostActionContainersRead, types.HostActionContainersExecOwned},
+			}},
 		},
 	}
 	parent := types.Application{
@@ -60,11 +63,14 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 				{Path: "/shared", Access: "read-write"},
 				{Path: "/parent-only", Access: "read-write"},
 			},
-			MemoryMaxMB:         512,
-			CPUQuota:            50,
-			PidsMax:             100,
-			Env:                 []string{"SHARED=1", "PARENT=1"},
-			AllowedHostCommands: []string{"xdg-open", "parent-tool"},
+			MemoryMaxMB: 512,
+			CPUQuota:    50,
+			PidsMax:     100,
+			Env:         []string{"SHARED=1", "PARENT=1"},
+			HostActions: []types.HostActionGrant{{
+				Provider:     types.HostActionProviderContainers,
+				Capabilities: []string{types.HostActionContainersRead, types.HostActionContainersManageOwned},
+			}},
 		},
 	}
 	store, err := NewStore(storePath)
@@ -178,8 +184,9 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 	if len(authorized.override.Env) != 1 || authorized.override.Env[0] != "SHARED=1" {
 		t.Fatalf("environment intersection: %v", authorized.override.Env)
 	}
-	if len(authorized.override.AllowedHostCommands) != 1 || authorized.override.AllowedHostCommands[0] != "xdg-open" {
-		t.Fatalf("host command intersection: %v", authorized.override.AllowedHostCommands)
+	capabilities := types.HostActionCapabilities(authorized.override.HostActions, types.HostActionProviderContainers)
+	if len(capabilities) != 1 || !capabilities[types.HostActionContainersRead] {
+		t.Fatalf("host action intersection: %v", authorized.override.HostActions)
 	}
 }
 

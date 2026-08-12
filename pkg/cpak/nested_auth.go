@@ -129,10 +129,13 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		DeviceFuse:          parent.DeviceFuse && child.DeviceFuse,
 		DeviceTun:           parent.DeviceTun && child.DeviceTun,
 		DeviceUsb:           parent.DeviceUsb && child.DeviceUsb,
+		DeviceInput:         parent.DeviceInput && child.DeviceInput,
+		DeviceTTY:           parent.DeviceTTY && child.DeviceTTY,
 		DeviceAll:           parent.DeviceAll && child.DeviceAll,
 		Notification:        parent.Notification && child.Notification,
 		OpenURI:             parent.OpenURI && child.OpenURI,
 		HostApplications:    parent.HostApplications && child.HostApplications,
+		HostActions:         types.IntersectHostActions(parent.HostActions, child.HostActions),
 		Filesystem:          intersectFilesystem(parent.Filesystem, child.Filesystem),
 		FsHost:              parent.FsHost && child.FsHost,
 		FsHostEtc:           parent.FsHostEtc && child.FsHostEtc,
@@ -146,7 +149,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		CPUQuota:            minimumLimit(parent.CPUQuota, child.CPUQuota),
 		PidsMax:             minimumLimit(parent.PidsMax, child.PidsMax),
 		AsRoot:              parent.AsRoot && child.AsRoot,
-		AllowedHostCommands: intersectStrings(parent.AllowedHostCommands, child.AllowedHostCommands),
+		AllowedHostCommands: nil,
 	}
 }
 
