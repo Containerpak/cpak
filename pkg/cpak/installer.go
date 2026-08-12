@@ -56,10 +56,13 @@ func (c *Cpak) InstallWithOptions(origin, branch, release, commit string, option
 		return fmt.Errorf("more than one version parameter specified")
 	}
 
-	// if all version parameters are empty, we default to the main branch
-	// assuming it is the default branch of the repository
+	// If no selector is supplied, follow the default branch declared by the
+	// repository host.
 	if versionParamsCount == 0 {
-		branch = "main"
+		branch, err = c.GetDefaultBranch(origin)
+		if err != nil {
+			return err
+		}
 	}
 
 	var manifest *types.CpakManifest

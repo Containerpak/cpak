@@ -23,6 +23,10 @@ import (
 // offer a way to safely determine its latest release.
 var ErrLatestReleaseUnsupported = errors.New("latest release lookup is not supported for this host")
 
+// ErrDefaultBranchUnsupported is returned when the repository host does not
+// expose its default branch through a supported API.
+var ErrDefaultBranchUnsupported = errors.New("default branch lookup is not supported for this host")
+
 type RepoProvider struct {
 	Origin string
 	GitDir string
@@ -113,6 +117,47 @@ func (r *RepoProvider) GetLatestRelease() (release string, err error) {
 	}
 
 	return payload.TagName, nil
+}
+
+// GetDefaultBranch returns the default branch declared by the repository host.
+func (r *RepoProvider) GetDefaultBranch() (string, error) {
+	url, err := r.repositoryURL()
+	if err != nil {
+		return "", err
+	}
+	resp, err := r.client().Get(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to get repository: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to get repository: %s", resp.Status)
+	}
+	var payload struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("failed to decode repository: %w", err)
+	}
+	if payload.DefaultBranch == "" {
+		return "", fmt.Errorf("repository %s has no default branch", r.Origin)
+	}
+	return payload.DefaultBranch, nil
+}
+
+func (r *RepoProvider) repositoryURL() (string, error) {
+	parts := strings.Split(r.Origin, "/")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid git url: %s", r.Origin)
+	}
+	base := strings.TrimRight(r.APIBaseURL, "/")
+	if base == "" {
+		if !strings.EqualFold(parts[0], "github.com") {
+			return "", fmt.Errorf("%w: %s", ErrDefaultBranchUnsupported, parts[0])
+		}
+		base = "https://api.github.com"
+	}
+	return fmt.Sprintf("%s/repos/%s/%s", base, parts[1], parts[2]), nil
 }
 
 func (r *RepoProvider) latestReleaseURL() (url string, err error) {
@@ -261,4 +306,17 @@ func (c *Cpak) GetLatestRelease(origin string) (release string, err error) {
 		return "", fmt.Errorf("failed to create repo provider: %w", err)
 	}
 	return repoProvider.GetLatestRelease()
+}
+
+// GetDefaultBranch returns the default branch for an origin.
+func (c *Cpak) GetDefaultBranch(origin string) (string, error) {
+	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
+	if err != nil {
+		return "", err
+	}
+	branch, err := repoProvider.GetDefaultBranch()
+	if errors.Is(err, ErrDefaultBranchUnsupported) {
+		return "main", nil
+	}
+	return branch, err
 }

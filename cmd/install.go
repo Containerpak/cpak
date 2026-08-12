@@ -45,8 +45,11 @@ func (c *InstallCmd) Run() error {
 
 	branch := c.Branch
 	if versionParamsCount == 0 {
-		c.Logger.Info("No version specified, using main branch if available")
-		branch = "main"
+		branch, err = cp.GetDefaultBranch(remote)
+		if err != nil {
+			return err
+		}
+		c.Logger.Info("No version specified, using the default branch: %s", branch)
 	}
 
 	manifest, err := cp.FetchManifest(remote, branch, c.Release, c.Commit)

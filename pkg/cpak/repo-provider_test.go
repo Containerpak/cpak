@@ -47,6 +47,39 @@ func TestGetLatestReleaseFromGithubApi(t *testing.T) {
 	}
 }
 
+func TestGetDefaultBranchFromGithubApi(t *testing.T) {
+	var requested string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"default_branch":"master"}`))
+	}))
+	defer server.Close()
+
+	provider := newTestRepoProvider(t, "github.com/user/demo")
+	provider.APIBaseURL = server.URL
+
+	branch, err := provider.GetDefaultBranch()
+	if err != nil {
+		t.Fatalf("GetDefaultBranch returned an error: %v", err)
+	}
+	if branch != "master" {
+		t.Fatalf("expected master, got %q", branch)
+	}
+	if requested != "/repos/user/demo" {
+		t.Fatalf("unexpected request path: %s", requested)
+	}
+}
+
+func TestGetDefaultBranchUnsupportedHost(t *testing.T) {
+	provider := newTestRepoProvider(t, "example.com/user/demo")
+
+	_, err := provider.GetDefaultBranch()
+	if !errors.Is(err, ErrDefaultBranchUnsupported) {
+		t.Fatalf("expected ErrDefaultBranchUnsupported, got %v", err)
+	}
+}
+
 func TestGetLatestReleaseUnsupportedHost(t *testing.T) {
 	provider := newTestRepoProvider(t, "example.com/user/demo")
 
