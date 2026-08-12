@@ -72,6 +72,18 @@ func TestWaylandUsesActiveDisplay(t *testing.T) {
 	}
 }
 
+func TestWaylandMountsDisplayLock(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "wayland-3")
+	if err := os.WriteFile(socket+".lock", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts := waylandSocketMounts(socket)
+	if !slicesContain(mounts, socket+".lock") {
+		t.Fatalf("Wayland mounts %v do not contain the display lock", mounts)
+	}
+}
+
 func TestWaylandDisplayPreservesActiveName(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	t.Setenv("WAYLAND_DISPLAY", "wayland-4")

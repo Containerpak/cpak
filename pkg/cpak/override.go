@@ -29,7 +29,7 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	}
 
 	if o.SocketWayland {
-		mounts = append(mounts, waylandSocketPath(curUid))
+		mounts = append(mounts, waylandSocketMounts(waylandSocketPath(curUid))...)
 	}
 
 	if o.SocketX11 && o.SocketWayland {
@@ -177,6 +177,14 @@ func waylandSocketPath(uid string) string {
 		return display
 	}
 	return filepath.Join(runtimeDir, display)
+}
+
+func waylandSocketMounts(socket string) []string {
+	mounts := []string{socket}
+	if _, err := os.Stat(socket + ".lock"); err == nil {
+		mounts = append(mounts, socket+".lock")
+	}
+	return mounts
 }
 
 func waylandDisplay(uid string) string {
