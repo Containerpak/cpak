@@ -41,6 +41,35 @@ func TestSeccompAllowsNestedUserNamespacesWhenRequested(t *testing.T) {
 	runSandboxHelper(t, "seccomp-userns", "", "")
 }
 
+func TestSeccompMountSyscallsFollowNestedUserNamespaceOverride(t *testing.T) {
+	profiles, supported := seccompProfiles()
+	if !supported {
+		t.Skip("unsupported audit architecture")
+	}
+	for _, profile := range profiles {
+		blocked := seccompProfileFilter(profile, false)
+		allowed := seccompProfileFilter(profile, true)
+		for _, number := range profile.namespaceMount {
+			deny := bpfDeny(number, uint32(unix.EPERM))
+			if !containsFilterSequence(blocked, deny) {
+				t.Fatalf("namespace mount syscall %d is not blocked", number)
+			}
+			if containsFilterSequence(allowed, deny) {
+				t.Fatalf("namespace mount syscall %d remains blocked", number)
+			}
+		}
+	}
+}
+
+func containsFilterSequence(filter, sequence []unix.SockFilter) bool {
+	for index := 0; index+len(sequence) <= len(filter); index++ {
+		if slices.Equal(filter[index:index+len(sequence)], sequence) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSeccompFiltersEndWithAllow(t *testing.T) {
 	profiles, supported := seccompProfiles()
 	if !supported {
@@ -77,9 +106,14 @@ func TestLinuxI386SeccompProfileBlocksPrivilegedSyscalls(t *testing.T) {
 	if profile.architecture != unix.AUDIT_ARCH_I386 || profile.clone != 120 || profile.unshare != 310 || profile.clone3 != 435 {
 		t.Fatalf("i386 profile: %+v", profile)
 	}
-	for _, syscallNumber := range []uint32{21, 26, 88, 128, 217, 283, 336, 346, 357, 428, 442} {
+	for _, syscallNumber := range []uint32{26, 88, 128, 283, 336, 346, 357} {
 		if !slices.Contains(profile.blocked, syscallNumber) {
 			t.Fatalf("i386 privileged syscall %d is not blocked", syscallNumber)
+		}
+	}
+	for _, syscallNumber := range []uint32{21, 52, 217, 428, 442} {
+		if !slices.Contains(profile.namespaceMount, syscallNumber) {
+			t.Fatalf("i386 namespace mount syscall %d is not blocked", syscallNumber)
 		}
 	}
 }

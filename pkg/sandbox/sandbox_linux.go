@@ -207,11 +207,12 @@ func landlockReadAccess(version int) uint64 {
 }
 
 type seccompProfile struct {
-	architecture uint32
-	blocked      []uint32
-	unshare      uint32
-	clone3       uint32
-	clone        uint32
+	architecture   uint32
+	blocked        []uint32
+	namespaceMount []uint32
+	unshare        uint32
+	clone3         uint32
+	clone          uint32
 }
 
 func seccompFilter(profiles []seccompProfile, allowUserNamespaces bool) []unix.SockFilter {
@@ -243,6 +244,9 @@ func seccompProfileFilter(profile seccompProfile, allowUserNamespaces bool) []un
 	}
 
 	if !allowUserNamespaces {
+		for _, number := range profile.namespaceMount {
+			filter = append(filter, bpfDeny(number, uint32(unix.EPERM))...)
+		}
 		filter = append(filter, bpfDeny(profile.unshare, uint32(unix.EPERM))...)
 		filter = append(filter, bpfDeny(profile.clone3, uint32(unix.ENOSYS))...)
 		filter = append(filter,
@@ -282,6 +286,15 @@ func seccompProfiles() ([]seccompProfile, bool) {
 		uint32(unix.SYS_SETNS),
 		uint32(unix.SYS_BPF),
 		uint32(unix.SYS_PERF_EVENT_OPEN),
+		uint32(unix.SYS_KEXEC_LOAD),
+		uint32(unix.SYS_REBOOT),
+		uint32(unix.SYS_INIT_MODULE),
+		uint32(unix.SYS_FINIT_MODULE),
+		uint32(unix.SYS_DELETE_MODULE),
+		uint32(unix.SYS_SWAPON),
+		uint32(unix.SYS_SWAPOFF),
+	}
+	namespaceMount := []uint32{
 		uint32(unix.SYS_MOUNT),
 		uint32(unix.SYS_UMOUNT2),
 		uint32(unix.SYS_PIVOT_ROOT),
@@ -292,19 +305,13 @@ func seccompProfiles() ([]seccompProfile, bool) {
 		uint32(unix.SYS_FSMOUNT),
 		uint32(unix.SYS_FSPICK),
 		uint32(unix.SYS_MOUNT_SETATTR),
-		uint32(unix.SYS_KEXEC_LOAD),
-		uint32(unix.SYS_REBOOT),
-		uint32(unix.SYS_INIT_MODULE),
-		uint32(unix.SYS_FINIT_MODULE),
-		uint32(unix.SYS_DELETE_MODULE),
-		uint32(unix.SYS_SWAPON),
-		uint32(unix.SYS_SWAPOFF),
 	}
 	native := seccompProfile{
-		blocked: blocked,
-		unshare: uint32(unix.SYS_UNSHARE),
-		clone3:  uint32(unix.SYS_CLONE3),
-		clone:   uint32(unix.SYS_CLONE),
+		blocked:        blocked,
+		namespaceMount: namespaceMount,
+		unshare:        uint32(unix.SYS_UNSHARE),
+		clone3:         uint32(unix.SYS_CLONE3),
+		clone:          uint32(unix.SYS_CLONE),
 	}
 	switch runtime.GOARCH {
 	case "amd64":
@@ -326,11 +333,11 @@ func linuxI386SeccompProfile() seccompProfile {
 	return seccompProfile{
 		architecture: unix.AUDIT_ARCH_I386,
 		blocked: []uint32{
-			26, 346, 357, 336, 21, 52, 217, 428, 429, 430, 431,
-			432, 433, 442, 283, 88, 128, 350, 129, 87, 115,
+			26, 346, 357, 336, 283, 88, 128, 350, 129, 87, 115,
 		},
-		unshare: 310,
-		clone3:  435,
-		clone:   120,
+		namespaceMount: []uint32{21, 52, 217, 428, 429, 430, 431, 432, 433, 442},
+		unshare:        310,
+		clone3:         435,
+		clone:          120,
 	}
 }
