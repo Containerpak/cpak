@@ -760,16 +760,6 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grant
 			return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
 		}
 	}
-	version, err := sandbox.ApplyLandlock(grants)
-	if err != nil {
-		if errors.Is(err, sandbox.ErrUnavailable) {
-			c.Logger.Warning("Landlock is unavailable; continuing without filesystem restrictions")
-		} else {
-			return err
-		}
-	} else {
-		c.spawnVerbose("Landlock ABI: ", version)
-	}
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "CPAK_") {
 			c.spawnVerbose("CPAK env var found: ", env)
@@ -817,7 +807,7 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grant
 		go func() {
 			defer active.Add(-1)
 			defer func() { completed.Store(time.Now().UnixNano()) }()
-			c.handleRuntimeConnection(connection, envVars)
+			c.handleRuntimeConnection(connection, envVars, grants)
 		}()
 	}
 }
@@ -850,7 +840,7 @@ func (w runtimeOutputWriter) Write(payload []byte) (int, error) {
 	return len(payload), nil
 }
 
-func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string) {
+func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string, grants []sandbox.PathGrant) {
 	defer connection.Close()
 	kind, payload, err := runtimeproto.Read(connection)
 	writer := runtimeproto.NewWriter(connection)
@@ -869,6 +859,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	if c.UserNamespaces {
 		args = append(args, "--user-namespaces")
 	}
+	args = append(args, landlockArguments(grants)...)
 	args = append(args, "--")
 	args = append(args, request.Args...)
 	command := exec.Command(cpakInContainerPath, args...)
@@ -933,6 +924,18 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	default:
 	}
 	_, _ = io.Copy(io.Discard, connection)
+}
+
+func landlockArguments(grants []sandbox.PathGrant) []string {
+	args := make([]string, 0, len(grants)*2)
+	for _, grant := range grants {
+		flag := "--landlock-read-write"
+		if grant.ReadOnly {
+			flag = "--landlock-read-only"
+		}
+		args = append(args, flag, grant.Path)
+	}
+	return args
 }
 
 func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string) error {

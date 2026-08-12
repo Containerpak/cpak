@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -80,6 +81,20 @@ func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Fatalf("environment: got %v, want %v", env, want)
+	}
+}
+
+func TestLandlockArgumentsKeepAccessModes(t *testing.T) {
+	got := landlockArguments([]sandbox.PathGrant{
+		{Path: "/", ReadOnly: true},
+		{Path: "/tmp"},
+	})
+	want := []string{
+		"--landlock-read-only", "/",
+		"--landlock-read-write", "/tmp",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("landlock arguments: got %v, want %v", got, want)
 	}
 }
 

@@ -17,8 +17,10 @@ import (
 )
 
 type LaunchCmd struct {
-	UserNamespaces bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
-	ExtraArgs      []string `arg:"extra" help:"command and arguments"`
+	UserNamespaces    bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	LandlockReadOnly  []string `cli:"landlock-read-only" help:"grant read-only filesystem access"`
+	LandlockReadWrite []string `cli:"landlock-read-write" help:"grant read-write filesystem access"`
+	ExtraArgs         []string `arg:"extra" help:"command and arguments"`
 
 	cli.Base
 }
@@ -26,6 +28,23 @@ type LaunchCmd struct {
 func (c *LaunchCmd) Run() error {
 	if len(c.ExtraArgs) == 0 {
 		return fmt.Errorf("command is required")
+	}
+	grants := make([]sandbox.PathGrant, 0, len(c.LandlockReadOnly)+len(c.LandlockReadWrite))
+	for _, path := range c.LandlockReadOnly {
+		grants = append(grants, sandbox.PathGrant{Path: path, ReadOnly: true})
+	}
+	for _, path := range c.LandlockReadWrite {
+		grants = append(grants, sandbox.PathGrant{Path: path})
+	}
+	if len(grants) == 0 {
+		return fmt.Errorf("landlock grants are required")
+	}
+	if _, err := sandbox.ApplyLandlock(grants); err != nil {
+		if errors.Is(err, sandbox.ErrUnavailable) {
+			c.Logger.Warning("Landlock is unavailable; continuing without filesystem restrictions")
+		} else {
+			return err
+		}
 	}
 	if err := sandbox.ApplySeccomp(c.UserNamespaces); err != nil {
 		if errors.Is(err, sandbox.ErrUnavailable) {
