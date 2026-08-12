@@ -69,6 +69,41 @@ func PrepareRootfsTarget(rootfs, target string, kind RootfsTargetKind) (string, 
 	return filepath.Join(rootfs, filepath.FromSlash(strings.Join(parts, "/"))), nil
 }
 
+// PrepareRootfsReplacementFile creates a regular file below rootfs and replaces
+// a final symlink without following it.
+func PrepareRootfsReplacementFile(rootfs, target string) (string, error) {
+	parts, err := rootfsTargetParts(target)
+	if err != nil {
+		return "", err
+	}
+	rootfd, err := unix.Open(rootfs, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return "", fmt.Errorf("open rootfs: %w", err)
+	}
+	defer unix.Close(rootfd)
+	parentfd := rootfd
+	for _, part := range parts[:len(parts)-1] {
+		nextfd, openErr := openOrCreateDirectory(parentfd, part)
+		if openErr != nil {
+			if parentfd != rootfd {
+				_ = unix.Close(parentfd)
+			}
+			return "", openErr
+		}
+		if parentfd != rootfd {
+			_ = unix.Close(parentfd)
+		}
+		parentfd = nextfd
+	}
+	if parentfd != rootfd {
+		defer unix.Close(parentfd)
+	}
+	if err = openOrReplaceFile(parentfd, parts[len(parts)-1]); err != nil {
+		return "", err
+	}
+	return filepath.Join(rootfs, filepath.FromSlash(strings.Join(parts, "/"))), nil
+}
+
 func rootfsTargetParts(target string) ([]string, error) {
 	if target == "" || !filepath.IsAbs(target) {
 		return nil, fmt.Errorf("rootfs target must be an absolute path: %q", target)
@@ -126,4 +161,39 @@ func openOrCreateFile(parentfd int, name string) error {
 		return fmt.Errorf("rootfs file target %s has the wrong type", name)
 	}
 	return nil
+}
+
+func openOrReplaceFile(parentfd int, name string) error {
+	fd, err := unix.Openat(parentfd, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err == unix.ENOENT {
+		return createRootfsFile(parentfd, name)
+	}
+	if err != nil {
+		return fmt.Errorf("open rootfs file %s: %w", name, err)
+	}
+	var stat unix.Stat_t
+	if err = unix.Fstat(fd, &stat); err != nil {
+		_ = unix.Close(fd)
+		return fmt.Errorf("stat rootfs file %s: %w", name, err)
+	}
+	_ = unix.Close(fd)
+	switch stat.Mode & unix.S_IFMT {
+	case unix.S_IFREG:
+		return nil
+	case unix.S_IFLNK:
+		if err = unix.Unlinkat(parentfd, name, 0); err != nil {
+			return fmt.Errorf("replace rootfs symlink %s: %w", name, err)
+		}
+		return createRootfsFile(parentfd, name)
+	default:
+		return fmt.Errorf("rootfs file target %s has the wrong type", name)
+	}
+}
+
+func createRootfsFile(parentfd int, name string) error {
+	fd, err := unix.Openat(parentfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return fmt.Errorf("create rootfs file %s: %w", name, err)
+	}
+	return unix.Close(fd)
 }

@@ -134,3 +134,35 @@ func TestMountDevptsPreparedRejectsUnsafeDestination(t *testing.T) {
 		t.Fatal("accepted symlink devpts destination")
 	}
 }
+
+func TestPrepareRootfsReplacementFileReplacesFinalSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/usr/share/zoneinfo/Etc/UTC", filepath.Join(root, "etc", "localtime")); err != nil {
+		t.Fatal(err)
+	}
+	path, err := PrepareRootfsReplacementFile(root, "/etc/localtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("replacement is not a regular file: %v %v", info, err)
+	}
+}
+
+func TestPrepareRootfsReplacementFileRejectsParentSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareRootfsReplacementFile(root, "/etc/localtime"); err == nil {
+		t.Fatal("parent symlink was followed")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "localtime")); !os.IsNotExist(err) {
+		t.Fatalf("file escaped the rootfs: %v", err)
+	}
+}

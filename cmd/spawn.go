@@ -266,6 +266,10 @@ func prepareRootfsFile(rootFs, target string) (string, error) {
 	return tools.PrepareRootfsTarget(rootFs, target, tools.RootfsTargetFile)
 }
 
+func prepareRootfsConfigurationFile(rootFs, target string) (string, error) {
+	return tools.PrepareRootfsReplacementFile(rootFs, target)
+}
+
 func prepareRootfsMountTarget(rootFs, target, source string) (string, error) {
 	info, err := os.Stat(source)
 	if err != nil {
@@ -560,7 +564,7 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) (
 		if readErr != nil {
 			return nil, fmt.Errorf("read:%s: an error occurred while spawning the namespace: %s", conf, readErr)
 		}
-		destination, prepareErr := prepareRootfsFile(rootFs, conf)
+		destination, prepareErr := prepareRootfsConfigurationFile(rootFs, conf)
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare:%s: an error occurred while spawning the namespace: %s", conf, prepareErr)
 		}
