@@ -205,11 +205,11 @@ func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 	first := types.NewOverride()
 	second := first
 	second.Network = false
-	firstHash, err := containerPolicyHash(first)
+	firstHash, err := containerPolicyHash(first, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondHash, err := containerPolicyHash(second)
+	secondHash, err := containerPolicyHash(second, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

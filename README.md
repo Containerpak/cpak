@@ -138,8 +138,21 @@ cpak gen-schema --output schema/manifest-v2.json
 cpak migrate-manifest cpak.json
 ```
 
-Dependencies are installed with the application. Addons remain optional. The
-structured update result records every effective permission change.
+Dependencies are installed with the application. A dependency uses `nested`
+mode by default and runs as its own cpak through the parent service. Set its
+mode to `layer` when the parent needs the dependency files in the same rootfs:
+
+```json
+"dependencies": [
+  {"origin": "github.com/example/runtime", "mode": "layer"}
+]
+```
+
+Layer dependencies do not export their binaries or permissions. Their OCI
+layers are mounted below the parent image, so the parent owns the command,
+configuration and complete permission policy. Addons remain optional and are
+mounted above the parent image. The structured update result records every
+effective permission change.
 
 Set `image_ref` to `source` when CI publishes OCI tags for each Git branch,
 release and commit. cpak then selects the matching tag for the requested Git

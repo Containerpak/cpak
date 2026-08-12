@@ -112,6 +112,15 @@ type Dependency struct {
 	Branch  string `json:"branch,omitempty" jsonschema:"description=Dependency branch"`
 	Release string `json:"release,omitempty" jsonschema:"description=Dependency release"`
 	Commit  string `json:"commit,omitempty" jsonschema:"description=Dependency commit"`
+	Mode    string `json:"mode,omitempty" jsonschema:"enum=nested,enum=layer,description=Dependency integration mode"`
+}
+
+func (d Dependency) IsLayer() bool {
+	return d.Mode == "layer"
+}
+
+func (d Dependency) IsNested() bool {
+	return d.Mode == "" || d.Mode == "nested"
 }
 
 // UpdateStatus is the outcome of an update attempt on a single application.

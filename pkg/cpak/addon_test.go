@@ -147,15 +147,15 @@ func TestAddonUsersFindEnabledParents(t *testing.T) {
 
 func TestContainerPolicyHashChangesWithAddon(t *testing.T) {
 	override := types.NewOverride()
-	without, err := containerPolicyHash(override)
+	without, err := containerPolicyHash(override, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	with, err := containerPolicyHash(override, types.Application{
+	with, err := containerPolicyHash(override, nil, []types.Application{{
 		CpakId:       "sdk",
 		ImageDigest:  "sha256:one",
 		ParsedLayers: []string{"base", "sdk"},
-	})
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}

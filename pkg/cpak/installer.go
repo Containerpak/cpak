@@ -206,6 +206,9 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 		branch, release, commit := dependencySelectors(depManifest)
 		dependencyOptions := options
 		dependencyOptions.ResolveImageRef = true
+		if depManifest.IsLayer() {
+			dependencyOptions.CreateExports = false
+		}
 		var errInstallDep error
 		if locked, ok := lockedPackageFromManifestLock(options.ManifestLock, depOrigin, branch, release, commit); ok {
 			lockedManifest := *locked.Manifest
@@ -226,6 +229,7 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 			Branch:  branch,
 			Release: release,
 			Commit:  commit,
+			Mode:    depManifest.Mode,
 		})
 	}
 
@@ -246,6 +250,7 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 			Branch:  installedDepApp.Branch,
 			Release: installedDepApp.Release,
 			Commit:  installedDepApp.Commit,
+			Mode:    ref.Mode,
 		})
 	}
 
@@ -560,6 +565,17 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		}
 		return fmt.Errorf("application %s is enabled as an addon by %s", origin, strings.Join(origins, ", "))
 	}
+	users, err = c.dependencyUsers(appToRemove.CpakId)
+	if err != nil {
+		return err
+	}
+	if len(users) > 0 {
+		origins := make([]string, 0, len(users))
+		for _, user := range users {
+			origins = append(origins, user.Origin)
+		}
+		return fmt.Errorf("application %s is required by %s", origin, strings.Join(origins, ", "))
+	}
 
 	// Stop all containers associated with the application
 	err = c.Stop(appToRemove.Origin, appToRemove.Version, appToRemove.Branch, appToRemove.Commit, appToRemove.Release)
@@ -609,6 +625,29 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		return
 	}
 	return
+}
+
+func (c *Cpak) dependencyUsers(cpakID string) ([]types.Application, error) {
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+
+	apps, err := store.GetApplications()
+	if err != nil {
+		return nil, err
+	}
+	users := make([]types.Application, 0)
+	for _, app := range apps {
+		for _, dependency := range app.ParsedDependencies {
+			if dependency.Id == cpakID {
+				users = append(users, app)
+				break
+			}
+		}
+	}
+	return users, nil
 }
 
 func (c *Cpak) removeExports(app types.Application) error {

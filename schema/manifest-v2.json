@@ -24,6 +24,14 @@
         "commit": {
           "type": "string",
           "description": "Dependency commit"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "nested",
+            "layer"
+          ],
+          "description": "Dependency integration mode"
         }
       },
       "additionalProperties": false,

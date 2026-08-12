@@ -74,7 +74,11 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	if err != nil {
 		return types.Container{}, err
 	}
-	policyHash, err := containerPolicyHash(override, addons...)
+	components, err := c.resolveLayerDependencies(app)
+	if err != nil {
+		return types.Container{}, err
+	}
+	policyHash, err := containerPolicyHash(override, components, addons)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -217,7 +221,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 	store = nil
 
-	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, addons, config, override)
+	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, components, addons, config, override)
 	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
@@ -263,13 +267,15 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-func containerPolicyHash(override types.Override, addons ...types.Application) (string, error) {
+func containerPolicyHash(override types.Override, components, addons []types.Application) (string, error) {
 	policy := struct {
-		Override types.Override        `json:"override"`
-		Addons   []addonPolicyIdentity `json:"addons,omitempty"`
+		Override   types.Override        `json:"override"`
+		Components []addonPolicyIdentity `json:"components,omitempty"`
+		Addons     []addonPolicyIdentity `json:"addons,omitempty"`
 	}{
-		Override: override,
-		Addons:   addonPolicyIdentities(addons),
+		Override:   override,
+		Components: addonPolicyIdentities(components),
+		Addons:     addonPolicyIdentities(addons),
 	}
 	encoded, err := json.Marshal(policy)
 	if err != nil {
@@ -300,9 +306,9 @@ func effectiveHostCommands(override types.Override) []string {
 // The container is started by calling our spawn function, which is the
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
-func (c *Cpak) StartContainer(container types.Container, app types.Application, addons []types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
+func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *v1.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
 	layers := ""
-	for _, layer := range combinedLayers(app, addons) {
+	for _, layer := range composedLayers(app, components, addons) {
 		layers += layer + "|"
 	}
 
@@ -677,6 +683,9 @@ func (c *Cpak) dependencyLinks(app types.Application) ([]string, error) {
 	links := make([]string, 0)
 	names := make(map[string]string)
 	for _, dependency := range app.ParsedDependencies {
+		if !dependency.IsNested() {
+			continue
+		}
 		child, getErr := store.GetApplicationByCpakId(dependency.Id)
 		if getErr != nil {
 			return nil, fmt.Errorf("cannot load dependency %s: %w", dependency.Origin, getErr)

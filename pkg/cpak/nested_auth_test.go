@@ -103,6 +103,18 @@ func TestDependencyLinksExposeOnlyDeclaredExports(t *testing.T) {
 	}
 }
 
+func TestDependencyLinksSkipLayerDependencies(t *testing.T) {
+	cp, parent, _ := nestedAuthFixture(t)
+	parent.ParsedDependencies[0].Mode = "layer"
+	links, err := cp.dependencyLinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("layer dependency exports nested shims: %v", links)
+	}
+}
+
 func TestAuthorizeNestedRunRejectsUndeclaredChild(t *testing.T) {
 	cp, parent, _ := nestedAuthFixture(t)
 	_, err := cp.authorizeNestedRun(types.RequestParams{
@@ -110,6 +122,21 @@ func TestAuthorizeNestedRunRejectsUndeclaredChild(t *testing.T) {
 		ParentAppId: parent.CpakId,
 		Origin:      "github.com/example/not-declared",
 		Binary:      "tool",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a declared dependency") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAuthorizeNestedRunRejectsLayerDependency(t *testing.T) {
+	cp, parent, child := nestedAuthFixture(t)
+	parent.ParsedDependencies[0].Mode = "layer"
+	seedApplication(t, cp, parent)
+	_, err := cp.authorizeNestedRun(types.RequestParams{
+		Action:      "run",
+		ParentAppId: parent.CpakId,
+		Origin:      child.Origin,
+		Binary:      "child",
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a declared dependency") {
 		t.Fatalf("got %v", err)

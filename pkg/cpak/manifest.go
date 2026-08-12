@@ -54,6 +54,11 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if len(manifest.Binaries) == 0 {
 		return errors.New("binaries is mandatory and must be populated")
 	}
+	for _, dependency := range manifest.Dependencies {
+		if dependency.Mode != "" && dependency.Mode != "nested" && dependency.Mode != "layer" {
+			return fmt.Errorf("unsupported dependency mode for %s: %s", dependency.Origin, dependency.Mode)
+		}
+	}
 	for _, source := range manifest.RuntimeSources {
 		if err = ValidateRuntimeSource(source); err != nil {
 			return err

@@ -112,3 +112,21 @@ func TestValidateManifestRejectsUnknownVersion(t *testing.T) {
 		t.Fatal("expected unsupported version to fail")
 	}
 }
+
+func TestValidateManifestAcceptsDependencyModes(t *testing.T) {
+	for _, mode := range []string{"", "nested", "layer"} {
+		manifest := validManifestForTest()
+		manifest.Dependencies = []types.Dependency{{Origin: "github.com/example/component", Mode: mode}}
+		if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+	}
+}
+
+func TestValidateManifestRejectsUnknownDependencyMode(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Dependencies = []types.Dependency{{Origin: "github.com/example/component", Mode: "shared"}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("accepted an unknown dependency mode")
+	}
+}

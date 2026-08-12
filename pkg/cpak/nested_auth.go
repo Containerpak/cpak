@@ -65,6 +65,9 @@ func (c *Cpak) authorizeNestedRun(params types.RequestParams) (authorizedNestedR
 func declaredDependency(parent types.Application, params types.RequestParams) (types.Dependency, error) {
 	matches := make([]types.Dependency, 0, 1)
 	for _, dependency := range parent.ParsedDependencies {
+		if !dependency.IsNested() {
+			continue
+		}
 		if dependency.Origin != params.Origin {
 			continue
 		}
