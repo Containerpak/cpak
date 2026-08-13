@@ -6,6 +6,7 @@
 package cpak
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -179,7 +181,13 @@ func (c *Cpak) runApplicationInstance(app types.Application, override types.Over
 // prepareSocketListener makes sure the cpak service is listening before a
 // container is started, so that a nested run has somewhere to connect to.
 func (c *Cpak) prepareSocketListener() (err error) {
-	if socketIsLive(cpakSocketPath()) {
+	brokerPath, err := sharedSystemBrokerSocketPath()
+	if err != nil {
+		return err
+	}
+	serviceReady := socketIsLive(cpakSocketPath())
+	brokerReady := socketIsLive(brokerPath)
+	if serviceReady && brokerReady {
 		return
 	}
 
@@ -195,11 +203,16 @@ func (c *Cpak) prepareSocketListener() (err error) {
 		return fmt.Errorf("cannot start the cpak service: %w", err)
 	}
 	c.servicePID = cmd.Process.Pid
+	c.serviceSocketOwned = !serviceReady
+	c.brokerSocketOwned = !brokerReady
 	err = cmd.Process.Release()
 	if err != nil {
 		return fmt.Errorf("cannot detach the cpak service: %w", err)
 	}
-	return waitForSocket(cpakSocketPath(), socketWaitTimeout)
+	if err = waitForSocket(cpakSocketPath(), socketWaitTimeout); err != nil {
+		return err
+	}
+	return waitForSocket(brokerPath, socketWaitTimeout)
 }
 
 // StopOwnedService stops the service started by this Cpak instance.
@@ -214,18 +227,32 @@ func (c *Cpak) StopOwnedService() error {
 	if err = process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
-	path := cpakSocketPath()
+	paths := []string{}
+	if c.serviceSocketOwned {
+		paths = append(paths, cpakSocketPath())
+	}
+	if c.brokerSocketOwned {
+		brokerPath, pathErr := sharedSystemBrokerSocketPath()
+		if pathErr != nil {
+			return pathErr
+		}
+		paths = append(paths, brokerPath)
+	}
 	deadline := time.Now().Add(socketWaitTimeout)
-	for socketIsLive(path) && time.Now().Before(deadline) {
-		time.Sleep(socketWaitInterval)
-	}
-	if socketIsLive(path) {
-		return fmt.Errorf("cpak service did not stop: %s", path)
-	}
-	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, path := range paths {
+		for socketIsLive(path) && time.Now().Before(deadline) {
+			time.Sleep(socketWaitInterval)
+		}
+		if socketIsLive(path) {
+			return fmt.Errorf("cpak service did not stop: %s", path)
+		}
+		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	c.servicePID = 0
+	c.serviceSocketOwned = false
+	c.brokerSocketOwned = false
 	return nil
 }
 
@@ -273,12 +300,48 @@ func clearStaleSocket(path string) error {
 }
 
 func (c *Cpak) StartSocketListener() (err error) {
-	return c.serveSocket(cpakSocketPath())
+	brokerPath, err := sharedSystemBrokerSocketPath()
+	if err != nil {
+		return err
+	}
+	policyDirectory, err := systemBrokerPolicyDirectory()
+	if err != nil {
+		return err
+	}
+	serveNested := !socketIsLive(cpakSocketPath())
+	serveBroker := !socketIsLive(brokerPath)
+	if !serveNested && !serveBroker {
+		return nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	results := make(chan error, 2)
+	running := 0
+	if serveNested {
+		running++
+		go func() { results <- c.serveSocketContext(ctx, cpakSocketPath()) }()
+	}
+	if serveBroker {
+		running++
+		go func() { results <- systembroker.ServeCatalog(ctx, brokerPath, policyDirectory) }()
+	}
+	for running > 0 {
+		if serviceErr := <-results; serviceErr != nil {
+			stop()
+			return serviceErr
+		}
+		running--
+	}
+	return nil
 }
 
 // serveSocket serves nested run requests on socketPath. Starting a service
 // while another one is already listening is not an error, it is a no-op.
 func (c *Cpak) serveSocket(socketPath string) (err error) {
+	return c.serveSocketContext(context.Background(), socketPath)
+}
+
+func (c *Cpak) serveSocketContext(ctx context.Context, socketPath string) (err error) {
 	logger.Println("Preparing socket listener...")
 	err = clearStaleSocket(socketPath)
 	if errors.Is(err, errSocketInUse) {
@@ -293,7 +356,17 @@ func (c *Cpak) serveSocket(socketPath string) (err error) {
 	if err != nil {
 		return err
 	}
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = listener.Close()
+		case <-done:
+		}
+	}()
+	defer close(done)
 	defer listener.Close()
+	defer os.Remove(socketPath)
 
 	// the socket is a door into the host, only its owner may knock
 	err = os.Chmod(socketPath, 0600)
@@ -306,6 +379,9 @@ func (c *Cpak) serveSocket(socketPath string) (err error) {
 		var conn net.Conn
 		conn, err = listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) && ctx.Err() != nil {
+				return nil
+			}
 			if errors.Is(err, net.ErrClosed) {
 				return err
 			}

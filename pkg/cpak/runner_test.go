@@ -7,6 +7,7 @@ package cpak
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -244,6 +245,29 @@ func TestServeSocketRestrictsTheSocketToItsOwner(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0600 {
 		t.Fatalf("socket mode: got %o, want %o", perm, 0600)
+	}
+}
+
+func TestServeSocketStopsWithItsContext(t *testing.T) {
+	path := tempSocketPath(t)
+	cpak := &Cpak{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- cpak.serveSocketContext(ctx, path) }()
+	if err := waitForSocket(path, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("socket listener did not stop")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("socket remains after shutdown: %v", err)
 	}
 }
 

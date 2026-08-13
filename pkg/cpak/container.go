@@ -15,9 +15,7 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -166,7 +164,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
 
 	if len(systemBrokerShims(override)) > 0 {
-		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime()
+		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime(container.StatePath)
 		if err != nil {
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 			os.RemoveAll(container.StatePath)
@@ -178,12 +176,11 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 			os.RemoveAll(container.StatePath)
 			return types.Container{}, err
 		}
-		catalogPath := ""
 		desktopRuntime := ""
 		if override.HostApplications {
-			_, catalogPath, err = prepareHostApplicationCatalog(container.StatePath)
+			_, _, err = prepareHostApplicationCatalog(container.StatePath)
 			if err == nil {
-				desktopRuntime, err = createDesktopRuntime(container.SystemBrokerSocketPath)
+				desktopRuntime, err = createDesktopRuntime(container.StatePath)
 			}
 			if err != nil {
 				cleanupSystemBrokerRuntime(container)
@@ -192,12 +189,12 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 				return types.Container{}, err
 			}
 		}
-		container.SystemBrokerPid, err = c.startSystemBrokerProcess(container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, filepath.Join(container.StatePath, "system-broker.log"), catalogPath, desktopRuntime, app.CpakId, override)
+		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, override, container.StatePath)
 		if err != nil {
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 			os.RemoveAll(container.StatePath)
-			return types.Container{}, fmt.Errorf("failed to start system broker: %w", err)
+			return types.Container{}, fmt.Errorf("failed to register system broker policy: %w", err)
 		}
 	} else {
 		container.SystemBrokerSocketPath = ""
@@ -264,7 +261,7 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 3
+const containerRuntimePolicyVersion = 4
 
 const openURIMimeApps = `[Default Applications]
 x-scheme-handler/http=cpak-open-uri.desktop;
@@ -388,7 +385,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		if override.HostApplications {
 			catalogRoot, _ := hostApplicationCatalogPaths(container.StatePath)
 			cmds = append(cmds, "--extra-links", catalogRoot+":"+hostApplicationsTarget)
-			cmds = append(cmds, "--desktop-runtime", desktopRuntimePath(container.SystemBrokerSocketPath))
+			cmds = append(cmds, "--desktop-runtime", desktopRuntimePath(container.StatePath))
 			cmds = append(cmds, "--env", "CPAK_HOST_APPLICATIONS="+filepath.Join(hostApplicationsTarget, "share"))
 			cmds = append(cmds, "--env", "CPAK_DESKTOP_RUNTIME="+desktopRuntimeTarget)
 		}
@@ -1014,20 +1011,60 @@ func getNested() (parentAppCpakId string, nested bool) {
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
 const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
 
-func createSystemBrokerRuntime() (string, string, error) {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if !privateRuntimeDirectory(base) {
-		base = os.TempDir()
-	}
-	directory, err := os.MkdirTemp(base, "cpak-broker-")
+func createSystemBrokerRuntime(statePath string) (string, string, error) {
+	socketPath, err := sharedSystemBrokerSocketPath()
 	if err != nil {
-		return "", "", fmt.Errorf("create system broker runtime: %w", err)
+		return "", "", err
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
-		_ = os.Remove(directory)
-		return "", "", fmt.Errorf("restrict system broker runtime: %w", err)
+	if err = securePrivateDirectory(statePath); err != nil {
+		return "", "", fmt.Errorf("prepare system broker state: %w", err)
 	}
-	return filepath.Join(directory, "broker.sock"), filepath.Join(directory, "token"), nil
+	return socketPath, filepath.Join(statePath, "system-broker.token"), nil
+}
+
+func sharedSystemBrokerSocketPath() (string, error) {
+	directory, err := sharedSystemBrokerRuntimeDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, "system-broker.sock"), nil
+}
+
+func sharedSystemBrokerRuntimeDirectory() (string, error) {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	directory := ""
+	if privateRuntimeDirectory(base) {
+		directory = filepath.Join(base, "cpak")
+	} else {
+		directory = filepath.Join(os.TempDir(), fmt.Sprintf("cpak-%d", os.Getuid()))
+	}
+	if err := securePrivateDirectory(directory); err != nil {
+		return "", fmt.Errorf("prepare system broker runtime: %w", err)
+	}
+	return directory, nil
+}
+
+func securePrivateDirectory(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return errors.New("private directory path must be absolute")
+	}
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != uint32(os.Getuid()) {
+		return errors.New("private directory is not owned by the current user")
+	}
+	if info.Mode().Perm() != 0700 {
+		if err = os.Chmod(path, 0700); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func privateRuntimeDirectory(path string) bool {
@@ -1043,18 +1080,24 @@ func privateRuntimeDirectory(path string) bool {
 }
 
 func cleanupSystemBrokerRuntime(container types.Container) {
-	if container.SystemBrokerSocketPath != "" {
-		_ = os.RemoveAll(filepath.Dir(container.SystemBrokerSocketPath))
+	if container.SystemBrokerPolicyPath != "" {
+		_ = os.Remove(container.SystemBrokerPolicyPath)
+	}
+	if container.SystemBrokerTokenPath != "" {
+		_ = os.Remove(container.SystemBrokerTokenPath)
+	}
+	if directory := filepath.Dir(container.SystemBrokerSocketPath); strings.HasPrefix(filepath.Base(directory), "cpak-broker-") {
+		_ = os.RemoveAll(directory)
 	}
 }
 
-func desktopRuntimePath(socketPath string) string {
-	return filepath.Join(filepath.Dir(socketPath), "desktop")
+func desktopRuntimePath(statePath string) string {
+	return filepath.Join(statePath, "desktop-runtime")
 }
 
-func createDesktopRuntime(socketPath string) (string, error) {
-	path := desktopRuntimePath(socketPath)
-	if err := os.Mkdir(path, 0700); err != nil {
+func createDesktopRuntime(statePath string) (string, error) {
+	path := desktopRuntimePath(statePath)
+	if err := securePrivateDirectory(path); err != nil {
 		return "", fmt.Errorf("create desktop runtime: %w", err)
 	}
 	return path, nil
@@ -1079,66 +1122,57 @@ func writeSystemBrokerToken(path string) error {
 	return nil
 }
 
-func (c *Cpak) startSystemBrokerProcess(socketPath, tokenPath, logPath, catalogPath, desktopRuntime, owner string, override types.Override) (int, error) {
-	cpakBinary, err := getCpakBinary()
+func systemBrokerPolicyDirectory() (string, error) {
+	runtimeDirectory, err := sharedSystemBrokerRuntimeDirectory()
 	if err != nil {
-		return 0, fmt.Errorf("cannot find cpak binary for system broker: %w", err)
+		return "", err
 	}
-	args := []string{"system-broker-server", "--socket-path", socketPath, "--token-file", tokenPath}
-	if override.Notification {
-		args = append(args, "--notify")
+	directory := filepath.Join(runtimeDirectory, "policies")
+	if err = securePrivateDirectory(directory); err != nil {
+		return "", fmt.Errorf("prepare system broker policy directory: %w", err)
 	}
-	if override.OpenURI {
-		args = append(args, "--open-uri")
+	return directory, nil
+}
+
+func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner string, override types.Override, statePath string) (string, error) {
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return "", fmt.Errorf("read system broker token: %w", err)
 	}
+	applications := map[string]string(nil)
 	if override.HostApplications {
-		args = append(args, "--host-applications", catalogPath, "--desktop-runtime", desktopRuntime)
+		_, catalogPath := hostApplicationCatalogPaths(statePath)
+		applications, err = systembroker.LoadApplicationCatalog(catalogPath)
+		if err != nil {
+			return "", err
+		}
 	}
 	capabilities := types.HostActionCapabilities(override.HostActions, types.HostActionProviderContainers)
-	capabilityNames := make([]string, 0, len(capabilities))
-	for capability := range capabilities {
-		capabilityNames = append(capabilityNames, capability)
-	}
-	sort.Strings(capabilityNames)
-	for _, capability := range capabilityNames {
-		args = append(args, "--container-capability", capability)
-	}
+	paths := []systembroker.ContainerPathGrant(nil)
 	if len(capabilities) > 0 {
-		args = append(args, "--container-owner", owner)
-		paths, pathErr := systemBrokerContainerPaths(override.Filesystem)
-		if pathErr != nil {
-			return 0, pathErr
-		}
-		for _, path := range paths {
-			flag := "--container-path-read-write"
-			if path.ReadOnly {
-				flag = "--container-path-read-only"
-			}
-			args = append(args, flag, path.Path)
+		paths, err = systemBrokerContainerPaths(override.Filesystem)
+		if err != nil {
+			return "", err
 		}
 	}
-	log, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	policy := systembroker.Policy{
+		AllowNotify:           override.Notification,
+		AllowOpenURI:          override.OpenURI,
+		AllowHostApplications: override.HostApplications,
+		Applications:          applications,
+		RuntimeDirectory:      desktopRuntime,
+		ContainerOwner:        owner,
+		ContainerCapabilities: capabilities,
+		ContainerPaths:        paths,
+	}
+	directory, err := systemBrokerPolicyDirectory()
 	if err != nil {
-		return 0, fmt.Errorf("open system broker log: %w", err)
+		return "", err
 	}
-	defer log.Close()
-	command := exec.Command(cpakBinary, args...)
-	command.Stdout = log
-	command.Stderr = log
-	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := command.Start(); err != nil {
-		return 0, fmt.Errorf("start system broker: %w", err)
+	if err = systembroker.WritePolicy(directory, string(token), policy); err != nil {
+		return "", err
 	}
-	pid := command.Process.Pid
-	if err := command.Process.Release(); err != nil {
-		stopSystemBroker(pid)
-		return 0, fmt.Errorf("release system broker process: %w", err)
-	}
-	if err := waitForSocket(socketPath, socketWaitTimeout); err != nil {
-		stopSystemBroker(pid)
-		return 0, fmt.Errorf("system broker did not become ready: %w", err)
-	}
-	return pid, nil
+	return systembroker.PolicyPath(directory, string(token))
 }
 
 func systemBrokerContainerPaths(permissions []types.FilesystemPermission) ([]systembroker.ContainerPathGrant, error) {

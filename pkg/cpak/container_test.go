@@ -393,17 +393,18 @@ func TestInheritHostCursorAddsHostValues(t *testing.T) {
 
 func TestSystemBrokerRuntimeUsesPrivateDirectory(t *testing.T) {
 	runtimeDirectory := t.TempDir()
+	stateDirectory := t.TempDir()
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
-	socketPath, tokenPath, err := createSystemBrokerRuntime()
+	socketPath, tokenPath, err := createSystemBrokerRuntime(stateDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	container := types.Container{SystemBrokerSocketPath: socketPath, SystemBrokerTokenPath: tokenPath}
 	t.Cleanup(func() { cleanupSystemBrokerRuntime(container) })
-	if filepath.Dir(socketPath) != filepath.Dir(tokenPath) || filepath.Dir(filepath.Dir(socketPath)) != runtimeDirectory {
+	if filepath.Dir(socketPath) != filepath.Join(runtimeDirectory, "cpak") || filepath.Dir(tokenPath) != stateDirectory {
 		t.Fatalf("system broker paths escaped the runtime directory: %s %s", socketPath, tokenPath)
 	}
 	info, err := os.Stat(filepath.Dir(socketPath))
@@ -412,6 +413,50 @@ func TestSystemBrokerRuntimeUsesPrivateDirectory(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0700 {
 		t.Fatalf("system broker runtime permissions: %o", info.Mode().Perm())
+	}
+}
+
+func TestSystemBrokerRuntimeUsesOneSharedSocket(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	firstSocket, firstToken, err := createSystemBrokerRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSocket, secondToken, err := createSystemBrokerRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstSocket != secondSocket {
+		t.Fatalf("broker sockets differ: %s %s", firstSocket, secondSocket)
+	}
+	if firstToken == secondToken {
+		t.Fatalf("container tokens share a path: %s", firstToken)
+	}
+}
+
+func TestSystemBrokerPoliciesStayOutsideThePersistentStore(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	directory, err := systemBrokerPolicyDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directory != filepath.Join(runtimeDirectory, "cpak", "policies") {
+		t.Fatalf("policy directory: %s", directory)
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Fatalf("policy directory permissions: %o", info.Mode().Perm())
 	}
 }
 

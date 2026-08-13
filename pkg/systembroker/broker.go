@@ -119,63 +119,36 @@ func Serve(ctx context.Context, options Options) error {
 	if err := options.validate(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(options.SocketPath), 0700); err != nil {
-		return fmt.Errorf("create system broker directory: %w", err)
-	}
-	if err := removeSocket(options.SocketPath); err != nil {
-		return err
-	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: options.SocketPath, Net: "unix"})
-	if err != nil {
-		return fmt.Errorf("listen for system broker: %w", err)
-	}
-	defer func() {
-		_ = listener.Close()
-		_ = os.Remove(options.SocketPath)
-	}()
-	if err := os.Chmod(options.SocketPath, 0600); err != nil {
-		return fmt.Errorf("restrict system broker socket: %w", err)
-	}
-
-	var connections sync.WaitGroup
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = listener.Close()
-		case <-done:
-		}
-	}()
-	defer close(done)
-
-	for {
-		connection, acceptErr := listener.AcceptUnix()
-		if acceptErr != nil {
-			if ctx.Err() != nil || errors.Is(acceptErr, net.ErrClosed) {
-				connections.Wait()
-				return nil
-			}
-			return fmt.Errorf("accept system broker request: %w", acceptErr)
-		}
-		connections.Add(1)
-		go func() {
-			defer connections.Done()
-			defer connection.Close()
-			handle(connection, options)
-		}()
-	}
+	return serve(ctx, options.SocketPath, options.authorize, func(Request) (Options, error) {
+		return options, nil
+	})
 }
 
 func handle(connection *net.UnixConn, options Options) {
+	handleResolved(connection, options.authorize, func(Request) (Options, error) {
+		return options, nil
+	})
+}
+
+func handleResolved(connection *net.UnixConn, authorize func(*net.UnixConn) error, resolve func(Request) (Options, error)) {
 	_ = connection.SetReadDeadline(time.Now().Add(15 * time.Second))
 	writer := newFrameWriter(connection)
-	if err := options.authorize(connection); err != nil {
+	if err := authorize(connection); err != nil {
 		writer.fail("system broker denied the caller")
 		return
 	}
 	request := Request{}
 	if err := json.NewDecoder(io.LimitReader(connection, maxRequestSize)).Decode(&request); err != nil {
 		writer.fail("invalid system broker request")
+		return
+	}
+	options, err := resolve(request)
+	if err != nil {
+		writer.fail("system broker denied the request")
+		return
+	}
+	if err = options.validate(); err != nil {
+		writer.fail("system broker denied the request")
 		return
 	}
 	if err := authorizeRequest(request, options.Token); err != nil {

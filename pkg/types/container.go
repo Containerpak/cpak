@@ -48,6 +48,9 @@ type Container struct {
 	// SystemBrokerTokenPath is a private capability file mounted read-only into the container.
 	SystemBrokerTokenPath string `json:"system_broker_token_path"`
 
+	// SystemBrokerPolicyPath is the policy registered for this container.
+	SystemBrokerPolicyPath string `json:"system_broker_policy_path"`
+
 	// ExecSocketPath is the host path used to submit commands to the container init.
 	ExecSocketPath string `json:"exec_socket_path"`
 
