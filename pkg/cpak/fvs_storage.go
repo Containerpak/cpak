@@ -102,30 +102,7 @@ func (c *Cpak) storedLayerAvailable(digest string) (bool, error) {
 	return info.IsDir(), nil
 }
 
-func (c *Cpak) migrateLegacyLayers() error {
-	directory := c.GetInStoreDir("layers")
-	entries, err := os.ReadDir(directory)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.Contains(entry.Name(), ".partial") {
-			continue
-		}
-		if _, err := c.ensureFVSLayer(entry.Name()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (c *Cpak) fvsContentIndex() (map[string]fvsrepo.FileEntry, error) {
-	if err := c.migrateLegacyLayers(); err != nil {
-		return nil, err
-	}
 	index := make(map[string]fvsrepo.FileEntry)
 	entries, err := os.ReadDir(c.fvsLayersPath())
 	if os.IsNotExist(err) {
@@ -240,6 +217,16 @@ func (c *Cpak) ensureFVSLayerProgress(digest string, progress func(int64)) (bool
 	}
 	if !info.IsDir() {
 		return false, fmt.Errorf("legacy layer %s is not a directory", digest)
+	}
+	size, err := legacyLayerSize(legacy)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(c.fvsRoot(), 0o755); err != nil {
+		return false, err
+	}
+	if err := ensureMigrationSpace(c.fvsRoot(), size); err != nil {
+		return false, fmt.Errorf("migrate layer %s: %w", digest, err)
 	}
 	if err := c.migrateLegacyLayer(digest, legacy, progress); err != nil {
 		return false, err

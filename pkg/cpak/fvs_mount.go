@@ -101,6 +101,21 @@ func (c *Cpak) withFVSMount(layers []string, run func(string) error) error {
 }
 
 func (c *Cpak) WithApplicationFilesystem(app types.Application, run func(string) error) error {
+	if _, err := findStorageService(); errors.Is(err, errStorageServiceMissing) {
+		for _, layer := range app.ParsedLayers {
+			path := c.GetInStoreDir("layers", layer)
+			info, statErr := os.Stat(path)
+			if statErr != nil || !info.IsDir() {
+				return errStorageServiceMissing
+			}
+			if err := run(path); err != nil {
+				return err
+			}
+		}
+		return nil
+	} else if err != nil {
+		return err
+	}
 	return c.withFVSMount(app.ParsedLayers, run)
 }
 

@@ -13,6 +13,7 @@ import (
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"golang.org/x/sys/unix"
 )
 
 func seedFVSLayerFile(t *testing.T, cp *Cpak, digest, name string, content []byte) {
@@ -186,6 +187,41 @@ func TestEnsureMigrationSpaceRejectsOversizedLayer(t *testing.T) {
 	}
 }
 
+func TestEnsureFVSLayerChecksSpaceBeforeMigration(t *testing.T) {
+	cp := newTestCpak(t)
+	digest := "oversized"
+	legacy := cp.GetInStoreDir("layers", digest)
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(filepath.Join(legacy, "payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stats unix.Statfs_t
+	if err := unix.Statfs(legacy, &stats); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	available := int64(stats.Bavail) * int64(stats.Bsize)
+	if err := file.Truncate(available - storageMigrationReserve + 1); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if available, err := cp.ensureFVSLayer(digest); err == nil || available {
+		t.Fatalf("available = %v, err = %v", available, err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("legacy layer changed after rejected migration: %v", err)
+	}
+	if _, err := os.Stat(cp.fvsLayerPath(digest)); !os.IsNotExist(err) {
+		t.Fatalf("FVS layer was published after rejected migration: %v", err)
+	}
+}
+
 func TestEnsureFVSLayerResumesAfterMetadataPublish(t *testing.T) {
 	cp := newTestCpak(t)
 	digest := "published"
@@ -247,6 +283,31 @@ func TestAuditDoesNotMigrateLegacyLayers(t *testing.T) {
 	}
 }
 
+func TestLayerLookupDoesNotMigrateLegacyLayers(t *testing.T) {
+	cp := newTestCpak(t)
+	digest := "legacy-lookup"
+	legacy := cp.GetInStoreDir("layers", digest)
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "value"), []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	available, err := cp.layerAvailable(digest)
+	if err != nil || !available {
+		t.Fatalf("available = %v, err = %v", available, err)
+	}
+	if _, err := cp.fvsContentIndex(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("lookup changed the legacy layer: %v", err)
+	}
+	if _, err := os.Stat(cp.fvsLayerPath(digest)); !os.IsNotExist(err) {
+		t.Fatalf("lookup migrated the legacy layer: %v", err)
+	}
+}
+
 func TestRemoveApplicationLayersDoesNotAuditTheStore(t *testing.T) {
 	cp := newTestCpak(t)
 	removed := types.Application{ParsedLayers: []string{"unique", "shared"}}
@@ -296,5 +357,37 @@ func TestPrepareLayerMountFallsBackWithoutTheStorageService(t *testing.T) {
 	}
 	if _, err := os.Stat(cp.GetInStoreDir("layers", layer)); err != nil {
 		t.Fatalf("legacy layer changed during fallback: %v", err)
+	}
+}
+
+func TestWithApplicationFilesystemFallsBackToLegacyLayers(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CPAK_STORAGE_BINARY", "")
+	t.Setenv("CPAK_FVS2D_BINARY", "")
+	cp := newTestCpak(t)
+	layers := []string{"base", "top"}
+	for _, layer := range layers {
+		path := cp.GetInStoreDir("layers", layer)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "value"), []byte(layer), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var visited []string
+	err := cp.WithApplicationFilesystem(types.Application{ParsedLayers: layers}, func(path string) error {
+		content, err := os.ReadFile(filepath.Join(path, "value"))
+		if err != nil {
+			return err
+		}
+		visited = append(visited, string(content))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(visited) != 2 || visited[0] != "base" || visited[1] != "top" {
+		t.Fatalf("visited = %v", visited)
 	}
 }

@@ -83,31 +83,26 @@ func (c *Cpak) unpackImageLayers(digest string, client *oci.Client, ref oci.Refe
 }
 
 func (c *Cpak) layerAvailable(digest string) (bool, error) {
-	return c.ensureFVSLayer(digest)
+	return c.storedLayerAvailable(digest)
 }
 
 func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
-	if err := c.migrateLegacyLayers(); err != nil {
-		return nil, err
-	}
-	layersDir := c.fvsLayersPath()
-
-	_, err = os.Stat(layersDir)
-	if err != nil {
-		return nil, err
-	}
-
-	files, err := os.ReadDir(layersDir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			layers = append(layers, filepath.Join(layersDir, file.Name()))
+	seen := make(map[string]bool)
+	for _, directory := range []string{c.fvsLayersPath(), c.GetInStoreDir("layers")} {
+		files, readErr := os.ReadDir(directory)
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		for _, file := range files {
+			if file.IsDir() && !seen[file.Name()] && !strings.Contains(file.Name(), ".partial") {
+				seen[file.Name()] = true
+				layers = append(layers, filepath.Join(directory, file.Name()))
+			}
 		}
 	}
-
 	return layers, nil
 }
 
