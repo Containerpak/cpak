@@ -58,7 +58,7 @@ require (
 	github.com/klauspost/compress v1.19.1
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/mirkobrombin/dabadee/v2 v2.0.0
+	github.com/mirkobrombin/dabadee/v2 v2.0.1
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

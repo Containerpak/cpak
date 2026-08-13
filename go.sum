@@ -74,8 +74,8 @@ github.com/mattn/go-runewidth v0.0.16 h1:E5ScNMtiwvlvB5paMFdw9p4kSQzbXFikJ5SQO6T
 github.com/mattn/go-runewidth v0.0.16/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
 github.com/matttproud/golang_protobuf_extensions v1.0.4 h1:mmDVorXM7PCGKw94cs5zkfA9PSy5pEvNWRP0ET0TIVo=
 github.com/matttproud/golang_protobuf_extensions v1.0.4/go.mod h1:BSXmuO+STAnVfrANrmjBb36TMTDstsz7MSK+HVaYKv4=
-github.com/mirkobrombin/dabadee/v2 v2.0.0 h1:+hZA8vsWIuNDMtVOg1lL44yYDEgFBu6fKQMTNnu5i8k=
-github.com/mirkobrombin/dabadee/v2 v2.0.0/go.mod h1:IiLyOOlKpGp7z306fTEydSK/WouFFtoq/cPBOb6UXWk=
+github.com/mirkobrombin/dabadee/v2 v2.0.1 h1:BZAWElb5Zk+LawqmSMASMWQhIQX5FiFfx1uhn3kB7h0=
+github.com/mirkobrombin/dabadee/v2 v2.0.1/go.mod h1:IiLyOOlKpGp7z306fTEydSK/WouFFtoq/cPBOb6UXWk=
 github.com/mirkobrombin/go-cli-builder/v3 v3.0.2 h1:ZmKXMRmMkguBdvmIVc8itVkLCmAAZnv0OfzPY7lksI4=
 github.com/mirkobrombin/go-cli-builder/v3 v3.0.2/go.mod h1:s+7oN/tmololI2kOcrQcNGdAlMqEDlzDcqkeRQ1RNTk=
 github.com/mirkobrombin/go-foundation/v2 v2.3.2 h1:aIWAg6s82hhMZlRMjKIex7yPxtsU4qlAkJvO5/A412Q=
