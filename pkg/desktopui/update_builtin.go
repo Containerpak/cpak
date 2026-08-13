@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/exp/shiny/driver"
 	"golang.org/x/exp/shiny/screen"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goregular"
@@ -246,10 +247,16 @@ func renderUpdateIcon(encoded []byte, size int) image.Image {
 		return target
 	}
 	bounds := icon.Bounds()
-	left := (size - bounds.Dx()) / 2
-	top := (size - bounds.Dy()) / 2
-	destination := image.Rect(left, top, left+bounds.Dx(), top+bounds.Dy())
-	draw.Draw(target, destination, icon, bounds.Min, draw.Over)
+	width, height := bounds.Dx(), bounds.Dy()
+	if width > size || height > size {
+		scale := min(float64(size)/float64(width), float64(size)/float64(height))
+		width = max(1, int(float64(width)*scale))
+		height = max(1, int(float64(height)*scale))
+	}
+	left := (size - width) / 2
+	top := (size - height) / 2
+	destination := image.Rect(left, top, left+width, top+height)
+	xdraw.CatmullRom.Scale(target, destination, icon, bounds, draw.Over, nil)
 	return target
 }
 

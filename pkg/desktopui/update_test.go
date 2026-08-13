@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"strings"
 	"testing"
@@ -41,5 +42,21 @@ func TestRenderUpdateIconCentersPNG(t *testing.T) {
 	}
 	if got := color.RGBAModel.Convert(icon.At(0, 0)).(color.RGBA); got.A != 0 {
 		t.Fatalf("rendered icon is not centered: %#v", got)
+	}
+}
+
+func TestRenderUpdateIconScalesOversizedPNG(t *testing.T) {
+	source := image.NewRGBA(image.Rect(0, 0, 20, 40))
+	draw.Draw(source, source.Bounds(), image.NewUniform(color.RGBA{R: 0x38, G: 0x72, B: 0xf4, A: 0xff}), image.Point{}, draw.Src)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, source); err != nil {
+		t.Fatal(err)
+	}
+	icon := renderUpdateIcon(encoded.Bytes(), 10)
+	if got := color.RGBAModel.Convert(icon.At(5, 0)).(color.RGBA); got.B != 0xf4 {
+		t.Fatalf("scaled icon has the wrong color: %#v", got)
+	}
+	if got := color.RGBAModel.Convert(icon.At(1, 5)).(color.RGBA); got.A != 0 {
+		t.Fatalf("scaled icon is not centered: %#v", got)
 	}
 }
