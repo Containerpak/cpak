@@ -376,12 +376,16 @@ func (c *Cpak) writeDesktopExport(entries map[string]fvsViewEntry, app types.App
 	}
 
 	lines := strings.Split(content, "\n")
+	launcher, err := desktopLauncherPath()
+	if err != nil {
+		return err
+	}
 	for index, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "Exec="):
-			lines[index] = rewriteDesktopExec(app.Origin, strings.TrimPrefix(line, "Exec="))
+			lines[index] = rewriteDesktopExec(launcher, app.Origin, strings.TrimPrefix(line, "Exec="))
 		case strings.HasPrefix(line, "TryExec="):
-			lines[index] = "TryExec=cpak"
+			lines[index] = "TryExec=" + launcher
 		case strings.HasPrefix(line, "Icon=") && iconName != "":
 			lines[index] = "Icon=" + iconName
 		}
@@ -503,12 +507,16 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	}
 
 	lines := strings.Split(content, "\n")
+	launcher, err := desktopLauncherPath()
+	if err != nil {
+		return err
+	}
 	for i, line := range lines {
 		if strings.HasPrefix(line, "Exec=") {
-			lines[i] = rewriteDesktopExec(app.Origin, strings.TrimPrefix(line, "Exec="))
+			lines[i] = rewriteDesktopExec(launcher, app.Origin, strings.TrimPrefix(line, "Exec="))
 		}
 		if strings.HasPrefix(line, "TryExec=") {
-			lines[i] = "TryExec=cpak"
+			lines[i] = "TryExec=" + launcher
 		}
 		if strings.HasPrefix(line, "Icon=") && iconName != "" {
 			lines[i] = "Icon=" + iconName
@@ -605,7 +613,7 @@ func removeDesktopAlias(app types.Application, name string) error {
 	return os.Remove(path)
 }
 
-func rewriteDesktopExec(origin, command string) string {
+func rewriteDesktopExec(launcher, origin, command string) string {
 	command = strings.TrimSpace(command)
 	end := len(command)
 	quoted := false
@@ -634,7 +642,7 @@ func rewriteDesktopExec(origin, command string) string {
 	} else {
 		binary = "@" + binary
 	}
-	rewritten := "Exec=cpak run " + origin + " " + binary
+	rewritten := "Exec=" + desktopExecArgument(launcher) + " run " + origin + " " + binary
 	if arguments := strings.TrimSpace(command[end:]); arguments != "" {
 		rewritten += " -- " + arguments
 	}

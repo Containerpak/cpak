@@ -115,10 +115,14 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "Exec=cpak run github.com/containerpak/example @/usr/bin/example -- --test %U") {
+	launcher, err := desktopLauncherPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Exec="+desktopExecArgument(launcher)+" run github.com/containerpak/example @/usr/bin/example -- --test %U") {
 		t.Fatalf("desktop entry does not launch through cpak: %q", content)
 	}
-	if !strings.Contains(string(content), "TryExec=cpak") {
+	if !strings.Contains(string(content), "TryExec="+launcher) {
 		t.Fatalf("desktop entry checks guest binary availability: %q", content)
 	}
 	alias := originalDesktopEntryExportPath(entry)
@@ -209,8 +213,8 @@ func TestRemoveDesktopAliasChecksPackageIdentity(t *testing.T) {
 }
 
 func TestRewriteDesktopExecPreservesQuotedBinary(t *testing.T) {
-	got := rewriteDesktopExec("github.com/containerpak/example", `"/opt/Example App/example" --new-window %U`)
-	want := `Exec=cpak run github.com/containerpak/example "@/opt/Example App/example" -- --new-window %U`
+	got := rewriteDesktopExec("/home/user/.local/bin/cpak", "github.com/containerpak/example", `"/opt/Example App/example" --new-window %U`)
+	want := `Exec=/home/user/.local/bin/cpak run github.com/containerpak/example "@/opt/Example App/example" -- --new-window %U`
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
