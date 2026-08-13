@@ -78,7 +78,7 @@ func main() {
 		fail(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	client := &http.Client{Timeout: 15 * time.Second}
 	result, err := buildCatalog(ctx, client, *indexURL, defaultGitHubAPI, *release, digests, privateKey)
@@ -325,9 +325,26 @@ func fetchText(ctx context.Context, client *http.Client, url string, limit int64
 }
 
 func fetch(ctx context.Context, client *http.Client, url string, limit int64) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		encoded, retry, err := fetchOnce(ctx, client, url, limit)
+		if err == nil || !retry {
+			return encoded, err
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 250 * time.Millisecond):
+		}
+	}
+	return nil, lastErr
+}
+
+func fetchOnce(ctx context.Context, client *http.Client, url string, limit int64) ([]byte, bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" && request.URL.Host == "api.github.com" {
 		request.Header.Set("Authorization", "Bearer "+token)
@@ -337,20 +354,21 @@ func fetch(ctx context.Context, client *http.Client, url string, limit int64) ([
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s returned %s", url, response.Status)
+		retry := response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
+		return nil, retry, fmt.Errorf("%s returned %s", url, response.Status)
 	}
 	encoded, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	if int64(len(encoded)) > limit {
-		return nil, fmt.Errorf("%s exceeds %d bytes", url, limit)
+		return nil, false, fmt.Errorf("%s exceeds %d bytes", url, limit)
 	}
-	return encoded, nil
+	return encoded, false, nil
 }
 
 func truncate(value string, length int) string {

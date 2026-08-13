@@ -90,6 +90,27 @@ func TestLoadPackageManifest(t *testing.T) {
 	}
 }
 
+func TestFetchRetriesTemporaryFailures(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(writer, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = writer.Write([]byte("ready"))
+	}))
+	defer server.Close()
+
+	result, err := fetch(context.Background(), server.Client(), server.URL, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != "ready" || attempts != 3 {
+		t.Fatalf("unexpected result %q after %d attempts", result, attempts)
+	}
+}
+
 func TestSummarizePermissions(t *testing.T) {
 	override := types.Override{
 		SocketX11:        true,
