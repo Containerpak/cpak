@@ -74,10 +74,8 @@ github.com/mattn/go-runewidth v0.0.16 h1:E5ScNMtiwvlvB5paMFdw9p4kSQzbXFikJ5SQO6T
 github.com/mattn/go-runewidth v0.0.16/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
 github.com/matttproud/golang_protobuf_extensions v1.0.4 h1:mmDVorXM7PCGKw94cs5zkfA9PSy5pEvNWRP0ET0TIVo=
 github.com/matttproud/golang_protobuf_extensions v1.0.4/go.mod h1:BSXmuO+STAnVfrANrmjBb36TMTDstsz7MSK+HVaYKv4=
-github.com/minio/highwayhash v1.0.2 h1:Aak5U0nElisjDCfPSG79Tgzkn2gl66NxOMspRrKnA/g=
-github.com/minio/highwayhash v1.0.2/go.mod h1:BQskDq+xkJ12lmlUUi7U0M5Swg3EWR+dLTk+kldvVxY=
-github.com/mirkobrombin/dabadee v1.0.0 h1:64b6U/dAaMyMMjb6D6B+ZN8Wc52fJokXmyKJwcT8zAU=
-github.com/mirkobrombin/dabadee v1.0.0/go.mod h1:vc6n8YWFRJ9LcRFxdDGQ9MjdYZv7s6+R8tlvTZplJrs=
+github.com/mirkobrombin/dabadee/v2 v2.0.0 h1:+hZA8vsWIuNDMtVOg1lL44yYDEgFBu6fKQMTNnu5i8k=
+github.com/mirkobrombin/dabadee/v2 v2.0.0/go.mod h1:IiLyOOlKpGp7z306fTEydSK/WouFFtoq/cPBOb6UXWk=
 github.com/mirkobrombin/go-cli-builder/v3 v3.0.2 h1:ZmKXMRmMkguBdvmIVc8itVkLCmAAZnv0OfzPY7lksI4=
 github.com/mirkobrombin/go-cli-builder/v3 v3.0.2/go.mod h1:s+7oN/tmololI2kOcrQcNGdAlMqEDlzDcqkeRQ1RNTk=
 github.com/mirkobrombin/go-foundation/v2 v2.3.2 h1:aIWAg6s82hhMZlRMjKIex7yPxtsU4qlAkJvO5/A412Q=
@@ -157,7 +155,6 @@ golang.org/x/mobile v0.0.0-20260811163000-1769bbc171f0/go.mod h1:YX+n47s+53POxN3
 golang.org/x/net v0.57.0 h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=
 golang.org/x/net v0.57.0/go.mod h1:KpXc8iv+r3XplLAG/f7Jsf9RPszJzdR0f58q9vGOuEU=
 golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
-golang.org/x/sys v0.0.0-20190130150945-aca44879d564/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20190916202348-b4ddaad3f8a3/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.0.0-20221010170243-090e33056c14/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=

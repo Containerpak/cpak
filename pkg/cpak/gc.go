@@ -8,6 +8,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 type GarbageItem struct {
@@ -16,10 +17,13 @@ type GarbageItem struct {
 }
 
 type GarbageReport struct {
-	Applied bool          `json:"applied"`
-	Layers  []GarbageItem `json:"layers"`
-	Cache   []GarbageItem `json:"cache"`
-	Bytes   int64         `json:"bytes"`
+	Applied     bool          `json:"applied"`
+	Layers      []GarbageItem `json:"layers"`
+	Cache       []GarbageItem `json:"cache"`
+	Objects     int           `json:"objects"`
+	Chunks      int           `json:"chunks"`
+	ObjectBytes int64         `json:"object_bytes"`
+	Bytes       int64         `json:"bytes"`
 }
 
 func (c *Cpak) CollectGarbage(apply bool) (GarbageReport, error) {
@@ -73,9 +77,34 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 	if err != nil {
 		return report, err
 	}
+	dedupStore, err := store.Open(c.daBaDeeStoreOptions())
+	if err != nil {
+		return report, err
+	}
+	var dedupResult store.GCResult
+	if apply {
+		dedupResult, err = dedupStore.GC(c.Ctx)
+	} else {
+		released := make([]string, 0, len(report.Layers))
+		for _, item := range report.Layers {
+			released = append(released, item.Path)
+		}
+		dedupResult, err = dedupStore.PlanGC(c.Ctx, released)
+	}
+	closeErr := dedupStore.Close()
+	if err != nil {
+		return report, err
+	}
+	if closeErr != nil {
+		return report, closeErr
+	}
+	report.Objects = dedupResult.Objects
+	report.Chunks = dedupResult.Chunks
+	report.ObjectBytes = dedupResult.Bytes
 	for _, item := range append(append([]GarbageItem{}, report.Layers...), report.Cache...) {
 		report.Bytes += item.Bytes
 	}
+	report.Bytes += report.ObjectBytes
 	return report, nil
 }
 

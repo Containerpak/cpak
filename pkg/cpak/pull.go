@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/registryauth"
 	"github.com/mirkobrombin/cpak/pkg/tools"
+	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -140,16 +140,12 @@ func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
 // }
 
 func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.Descriptor, digest string) (err error) {
-	if _, err = c.GetInCacheDirMkdir(); err != nil {
-		return err
+	if supported, partialErr := c.downloadChunkedLayer(client, ref, layer, digest); supported {
+		if partialErr == nil {
+			return nil
+		}
+		logger.Printf("Partial layer pull unavailable for %s, downloading the complete layer: %v", digest[:min(12, len(digest))], partialErr)
 	}
-	layerFile, err := os.CreateTemp(c.Options.CachePath, digest+".partial-")
-	if err != nil {
-		return err
-	}
-	layerInCacheDir := layerFile.Name()
-	defer layerFile.Close()
-	defer os.Remove(layerInCacheDir)
 	layerContent, err := client.Blob(c.Ctx, ref, layer)
 	if err != nil {
 		return
@@ -177,30 +173,6 @@ func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.De
 		progressbar.OptionFullWidth(),
 	)
 	hash := sha256.New()
-	writer := io.MultiWriter(layerFile, hash, bar)
-
-	written, copyErr := io.Copy(writer, io.LimitReader(layerContent, layer.Size))
-	err = copyErr
-	if err != nil {
-		return
-	}
-	if written != layer.Size {
-		return fmt.Errorf("layer size mismatch for %s: expected %d, received %d", digest, layer.Size, written)
-	}
-	extra, copyErr := io.Copy(io.Discard, io.LimitReader(layerContent, 1))
-	if copyErr != nil {
-		return copyErr
-	}
-	if extra != 0 {
-		return fmt.Errorf("layer size mismatch for %s: expected %d, received more than %d", digest, layer.Size, layer.Size)
-	}
-	if err = layerFile.Close(); err != nil {
-		return
-	}
-	if fmt.Sprintf("%x", hash.Sum(nil)) != digest {
-		return fmt.Errorf("layer digest mismatch for %s", digest)
-	}
-
 	layersDir, err := c.GetInStoreDirMkdir("layers")
 	if err != nil {
 		return
@@ -215,32 +187,42 @@ func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.De
 		}
 	}()
 
-	err = tools.TarUnpack(layerInCacheDir, layerInStoreDir)
+	dedupStore, err := store.Open(c.daBaDeeStoreOptions())
 	if err != nil {
 		return
 	}
+	closed := false
+	defer func() {
+		if !closed {
+			_, _ = dedupStore.GC(c.Ctx)
+			_ = dedupStore.Close()
+		}
+	}()
 
-	// dabadee deduplication is performed on a new namespace to avoid
-	// permission issues
-	cpakBinary, err := getCpakBinary()
-	if err != nil {
-		return
+	limited := &io.LimitedReader{R: layerContent, N: layer.Size}
+	stream := io.TeeReader(limited, io.MultiWriter(hash, bar))
+	extractErr := unpackLayer(c.Ctx, stream, layer.MediaType, layerInStoreDir, dedupStore)
+	received := layer.Size - limited.N
+	if limited.N != 0 {
+		return fmt.Errorf("layer size mismatch for %s: expected %d, received %d", digest, layer.Size, received)
 	}
-
-	cmds := []string{}
-	cmds = append(cmds, "dedup")
-	if isVerbose {
-		cmds = append(cmds, "--verbose")
+	extra, copyErr := io.Copy(io.Discard, io.LimitReader(layerContent, 1))
+	if copyErr != nil {
+		return copyErr
 	}
-	cmds = append(cmds, "--path", layerInStoreDir)
-	cmd := exec.Command(cpakBinary, cmds...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err = cmd.Run()
-	if err != nil {
-		return
+	if extra != 0 {
+		return fmt.Errorf("layer size mismatch for %s: expected %d, received more than %d", digest, layer.Size, layer.Size)
 	}
+	if fmt.Sprintf("%x", hash.Sum(nil)) != digest {
+		return fmt.Errorf("layer digest mismatch for %s", digest)
+	}
+	if extractErr != nil {
+		return extractErr
+	}
+	if err = dedupStore.Close(); err != nil {
+		return err
+	}
+	closed = true
 
 	if err = c.publishLayer(layerInStoreDir, digest); err != nil {
 		return

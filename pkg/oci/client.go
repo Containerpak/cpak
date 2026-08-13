@@ -63,10 +63,11 @@ type cachedToken struct {
 
 // Descriptor identifies content in an OCI registry.
 type Descriptor struct {
-	MediaType string   `json:"mediaType"`
-	Digest    string   `json:"digest"`
-	Size      int64    `json:"size"`
-	Platform  Platform `json:"platform,omitempty"`
+	MediaType   string            `json:"mediaType"`
+	Digest      string            `json:"digest"`
+	Size        int64             `json:"size"`
+	Platform    Platform          `json:"platform,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // Platform identifies the system supported by an image manifest.
@@ -173,7 +174,7 @@ func (c *Client) Blob(ctx context.Context, ref Reference, descriptor Descriptor)
 		return nil, err
 	}
 	if redirectStatus(response.StatusCode) {
-		redirected, redirectErr := c.followBlobRedirect(ctx, ref, response)
+		redirected, redirectErr := c.followBlobRedirect(ctx, ref, response, "")
 		response.Body.Close()
 		if redirectErr != nil {
 			return nil, redirectErr
@@ -187,7 +188,40 @@ func (c *Client) Blob(ctx context.Context, ref Reference, descriptor Descriptor)
 	return response.Body, nil
 }
 
-func (c *Client) followBlobRedirect(ctx context.Context, ref Reference, response *http.Response) (*http.Response, error) {
+func (c *Client) BlobRange(ctx context.Context, ref Reference, descriptor Descriptor, offset, length int64) (io.ReadCloser, error) {
+	if !validDescriptor(descriptor) || offset < 0 || length <= 0 || offset > descriptor.Size-length {
+		return nil, fmt.Errorf("oci: invalid blob range")
+	}
+	rangeValue := fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
+	response, err := c.requestWithHeaders(ctx, ref, http.MethodGet, "/v2/"+ref.Repository+"/blobs/"+descriptor.Digest, "", map[string]string{"Range": rangeValue})
+	if err != nil {
+		return nil, err
+	}
+	if redirectStatus(response.StatusCode) {
+		redirected, redirectErr := c.followBlobRedirect(ctx, ref, response, rangeValue)
+		response.Body.Close()
+		if redirectErr != nil {
+			return nil, redirectErr
+		}
+		response = redirected
+	}
+	if response.StatusCode != http.StatusPartialContent {
+		defer response.Body.Close()
+		return nil, responseError("read blob range", response)
+	}
+	expected := fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, descriptor.Size)
+	if response.Header.Get("Content-Range") != expected || response.ContentLength != -1 && response.ContentLength != length {
+		response.Body.Close()
+		return nil, fmt.Errorf("oci: invalid blob range response")
+	}
+	return response.Body, nil
+}
+
+func (c *Client) followBlobRedirect(ctx context.Context, ref Reference, response *http.Response, rangeValues ...string) (*http.Response, error) {
+	rangeValue := ""
+	if len(rangeValues) > 0 {
+		rangeValue = rangeValues[0]
+	}
 	target, err := response.Location()
 	if err != nil {
 		return nil, fmt.Errorf("oci: invalid blob redirect: %w", err)
@@ -200,6 +234,9 @@ func (c *Client) followBlobRedirect(ctx context.Context, ref Reference, response
 		return nil, err
 	}
 	request.Header.Set("User-Agent", "cpak")
+	if rangeValue != "" {
+		request.Header.Set("Range", rangeValue)
+	}
 	client := *c.client()
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		if len(via) >= 3 {
@@ -296,9 +333,16 @@ func (c *Client) readBlob(ctx context.Context, ref Reference, descriptor Descrip
 }
 
 func (c *Client) request(ctx context.Context, ref Reference, method, path, accept string) (*http.Response, error) {
+	return c.requestWithHeaders(ctx, ref, method, path, accept, nil)
+}
+
+func (c *Client) requestWithHeaders(ctx context.Context, ref Reference, method, path, accept string, headers map[string]string) (*http.Response, error) {
 	request, err := c.newRequest(ctx, ref, method, path, accept)
 	if err != nil {
 		return nil, err
+	}
+	for name, value := range headers {
+		request.Header.Set(name, value)
 	}
 	response, err := c.registryClient(ref).Do(request)
 	if err != nil {
@@ -325,6 +369,9 @@ func (c *Client) request(ctx context.Context, ref Reference, method, path, accep
 		return nil, err
 	}
 	retry.Header.Set("Authorization", authorization)
+	for name, value := range headers {
+		retry.Header.Set(name, value)
+	}
 	return c.registryClient(ref).Do(retry)
 }
 

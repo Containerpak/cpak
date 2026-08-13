@@ -8,7 +8,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/jezek/xgb v1.1.1
-	github.com/mirkobrombin/dabadee v1.0.0
 	github.com/mirkobrombin/go-cli-builder/v3 v3.0.2
 	github.com/mirkobrombin/go-foundation/v2 v2.3.2
 	github.com/mirkobrombin/go-slipstream v1.1.0
@@ -56,10 +55,10 @@ require (
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20231223183121-56fa3ac82ce7 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.19.1
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/minio/highwayhash v1.0.2 // indirect
+	github.com/mirkobrombin/dabadee/v2 v2.0.0
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

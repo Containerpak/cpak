@@ -6,13 +6,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/dabadee/pkg/dabadee"
-	"github.com/mirkobrombin/dabadee/pkg/hash"
-	"github.com/mirkobrombin/dabadee/pkg/processor"
-	"github.com/mirkobrombin/dabadee/pkg/storage"
+	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -41,20 +39,17 @@ func (c *DedupCmd) Run() error {
 		return err
 	}
 
-	s, err := storage.NewStorage(cp.Options.DaBaDeeStoreOptions)
+	s, err := store.Open(cp.Options.DaBaDeeStoreOptions)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	result, err := s.DeduplicateTree(context.Background(), c.Path)
 	if err != nil {
 		return err
 	}
 
-	h := hash.NewSHA256Generator()
-	p := processor.NewDedupProcessor(c.Path, "", s, h, 2)
-
-	d := dabadee.NewDaBaDee(p, c.Verbose)
-	err = d.Run()
-	if err != nil {
-		return err
-	}
-
-	c.Logger.Success("Deduplication completed successfully")
+	c.Logger.Success("Deduplicated %d files", result.Files)
 	return nil
 }

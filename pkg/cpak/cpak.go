@@ -10,11 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
-	"github.com/mirkobrombin/dabadee/pkg/storage"
+	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/mirkobrombin/go-foundation/v2/core/configuration"
 	configenv "github.com/mirkobrombin/go-foundation/v2/core/configuration/source/env"
 	configfile "github.com/mirkobrombin/go-foundation/v2/core/configuration/source/file"
@@ -22,9 +21,11 @@ import (
 )
 
 type Cpak struct {
-	Options    types.CpakOptions
-	Ctx        context.Context
-	servicePID int
+	Options            types.CpakOptions
+	Ctx                context.Context
+	servicePID         int
+	serviceSocketOwned bool
+	brokerSocketOwned  bool
 }
 
 // NewCpak creates a new cpak instance.
@@ -57,9 +58,9 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 		ManifestsPath: filepath.Join(installationPath, "manifests"),
 		ExportsPath:   filepath.Join(installationPath, "exports"),
 		StorePath:     filepath.Join(installationPath, "store"),
-		DaBaDeeStoreOptions: storage.StorageOptions{
-			Root:         filepath.Join(installationPath, "dabadee"),
-			WithMetadata: true,
+		DaBaDeeStoreOptions: store.Options{
+			Root:             filepath.Join(installationPath, "dabadee"),
+			PreserveMetadata: true,
 		},
 		CachePath:        filepath.Join(installationPath, "cache"),
 		RegistryAuthPath: filepath.Join(homedir, ".config", "cpak", "registry-auth.json"),
@@ -112,42 +113,30 @@ func cleanupLegacyRuntimeTools(binPath string) {
 	}
 }
 
-func bindDaBaDeeOptions(config *configuration.Configuration, options *storage.StorageOptions) {
+func bindDaBaDeeOptions(config *configuration.Configuration, options *store.Options) {
 	if value, ok := config.GetString("dabadee_store:root"); ok {
 		options.Root = value
 	} else if value, ok := config.GetString("dabadee_store_root"); ok {
 		options.Root = value
 	}
 	if value, ok := config.GetBool("dabadee_store:withmetadata"); ok {
-		options.WithMetadata = value
+		options.PreserveMetadata = value
 	} else if value, ok := config.GetBool("dabadee_store_with_metadata"); ok {
-		options.WithMetadata = value
+		options.PreserveMetadata = value
 	}
-	if value, ok := config.Get("dabadee_store:paths"); ok {
-		options.Paths = stringSlice(value)
-	} else if value, ok := config.GetString("dabadee_store_paths"); ok {
-		options.Paths = stringSlice(value)
+	if value, ok := config.GetBool("dabadee_store:preservemetadata"); ok {
+		options.PreserveMetadata = value
+	} else if value, ok := config.GetBool("dabadee_store_preserve_metadata"); ok {
+		options.PreserveMetadata = value
 	}
 }
 
-func stringSlice(value any) []string {
-	switch values := value.(type) {
-	case []any:
-		result := make([]string, 0, len(values))
-		for _, item := range values {
-			result = append(result, fmt.Sprint(item))
-		}
-		return result
-	case []string:
-		return values
-	case string:
-		if values == "" {
-			return nil
-		}
-		return strings.Split(values, ",")
-	default:
-		return nil
+func (c *Cpak) daBaDeeStoreOptions() store.Options {
+	options := c.Options.DaBaDeeStoreOptions
+	if options.Root == "" {
+		options.Root = filepath.Join(filepath.Dir(c.Options.StorePath), "dabadee")
 	}
+	return options
 }
 
 func createCpakDirs(options *types.CpakOptions) error {

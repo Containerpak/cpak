@@ -221,6 +221,74 @@ func TestBlobRejectsPrivateRedirectFromPublicRegistry(t *testing.T) {
 	}
 }
 
+func TestBlobRangeRequiresExactPartialResponse(t *testing.T) {
+	content := []byte("0123456789")
+	descriptor := Descriptor{Digest: digestBytes(content), Size: int64(len(content))}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Range") != "bytes=2-5" {
+			t.Fatalf("range: %q", request.Header.Get("Range"))
+		}
+		writer.Header().Set("Content-Range", "bytes 2-5/10")
+		writer.Header().Set("Content-Length", "4")
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(content[2:6])
+	}))
+	defer server.Close()
+	ref, _ := ParseReference(strings.TrimPrefix(server.URL, "http://") + "/example/app")
+	reader, err := (&Client{HTTP: server.Client()}).BlobRange(context.Background(), ref, descriptor, 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "2345" {
+		t.Fatalf("content: %q", got)
+	}
+}
+
+func TestBlobRangeRejectsFullResponse(t *testing.T) {
+	content := []byte("0123456789")
+	descriptor := Descriptor{Digest: digestBytes(content), Size: int64(len(content))}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write(content)
+	}))
+	defer server.Close()
+	ref, _ := ParseReference(strings.TrimPrefix(server.URL, "http://") + "/example/app")
+	if _, err := (&Client{HTTP: server.Client()}).BlobRange(context.Background(), ref, descriptor, 2, 4); err == nil {
+		t.Fatal("full response was accepted for a range request")
+	}
+}
+
+func TestBlobRangePreservesRangeAcrossRedirect(t *testing.T) {
+	content := []byte("0123456789")
+	descriptor := Descriptor{Digest: digestBytes(content), Size: int64(len(content))}
+	var received string
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		received = request.Header.Get("Range")
+		writer.Header().Set("Content-Range", "bytes 2-5/10")
+		writer.Header().Set("Content-Length", "4")
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(content[2:6])
+	}))
+	defer target.Close()
+	registry := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, target.URL+"/layer", http.StatusTemporaryRedirect)
+	}))
+	defer registry.Close()
+	ref, _ := ParseReference(strings.TrimPrefix(registry.URL, "http://") + "/example/app")
+	reader, err := (&Client{}).BlobRange(context.Background(), ref, descriptor, 2, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.Close()
+	if received != "bytes=2-5" {
+		t.Fatalf("redirected range: %q", received)
+	}
+}
+
 func sourceURL(request *http.Request) string {
 	return "http://" + request.Host
 }

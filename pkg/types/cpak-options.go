@@ -6,7 +6,7 @@
 package types
 
 import (
-	"github.com/mirkobrombin/dabadee/pkg/storage"
+	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 // CpakOptions is the struct that represents the options for the Cpak struct.
@@ -32,15 +32,15 @@ type CpakOptions struct {
 
 	// CachePath is the path to the directory where the cache will be stored.
 	//
-	// Note: cache is intended to be used by the cpak pull function to store
-	// the downloaded images and unpacked layers.
+	// Note: cache stores manifests and verified runtime sources. OCI layers
+	// stream directly into the content store.
 	CachePath string `json:"cache_path" conf:"cache_path"`
 
 	// RegistryAuthPath stores public registry credential bindings.
 	RegistryAuthPath string `json:"registry_auth_path" conf:"registry_auth_path"`
 
 	// DaBaDeeStoreopts is the configuration for the DaBaDee store.
-	DaBaDeeStoreOptions storage.StorageOptions `json:"dabadee_store"`
+	DaBaDeeStoreOptions store.Options `json:"dabadee_store"`
 
 	// Following paths are not meant to be set by the user, they are set
 	// by cpak during its initialization.

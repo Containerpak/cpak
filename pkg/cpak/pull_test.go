@@ -117,6 +117,47 @@ func TestDownloadLayerRejectsContentBeyondDeclaredSize(t *testing.T) {
 	}
 }
 
+func TestDownloadLayerStreamsWithoutCompressedCache(t *testing.T) {
+	content := testLayer(t, mediaOCILayerGzip, []testLayerEntry{
+		{name: "usr/share/value", typeflag: 0, mode: 0644, content: []byte("streamed")},
+	})
+	hash := sha256.Sum256(content)
+	digest := fmt.Sprintf("%x", hash[:])
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write(content)
+	}))
+	defer server.Close()
+
+	cp := newTestCpak(t)
+	cp.Options.CachePath = t.TempDir()
+	ref, err := oci.ParseReference(strings.TrimPrefix(server.URL, "http://") + "/example/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := oci.Descriptor{
+		Digest:    "sha256:" + digest,
+		Size:      int64(len(content)),
+		MediaType: mediaOCILayerGzip,
+	}
+	if err = cp.downloadLayer(&oci.Client{HTTP: server.Client()}, ref, descriptor, digest); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(cp.GetInStoreDir("layers", digest, "usr/share/value"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "streamed" {
+		t.Fatalf("content: %q", got)
+	}
+	entries, err := os.ReadDir(cp.Options.CachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("compressed cache was retained: %v", entries)
+	}
+}
+
 func TestPullUsesCredentialBoundToPackageOrigin(t *testing.T) {
 	origin := "github.com/example/private"
 	server, image := authenticatedRegistry(t, "user", "secret")

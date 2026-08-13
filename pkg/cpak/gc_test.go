@@ -1,11 +1,14 @@
 package cpak
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 func TestCollectGarbageKeepsReferencedLayers(t *testing.T) {
@@ -75,5 +78,52 @@ func TestCollectGarbageReportsBeforeApplying(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("apply kept %s: %v", path, err)
 		}
+	}
+}
+
+func TestCollectGarbageRemovesUnlinkedDaBaDeeObjects(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	layer := c.GetInStoreDir("layers", "orphan")
+	storage, err := store.Open(c.daBaDeeStoreOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.Import(context.Background(), filepath.Join(layer, "value"), strings.NewReader("unused"), store.ImportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := c.collectGarbageReport(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Objects != 1 || report.ObjectBytes != 6 {
+		t.Fatalf("object store report: %+v", report)
+	}
+	if _, err = os.Stat(filepath.Join(layer, "value")); err != nil {
+		t.Fatalf("dry run removed layer: %v", err)
+	}
+	report, err = c.collectGarbageReport(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Objects != 1 || report.ObjectBytes != 6 {
+		t.Fatalf("applied object store report: %+v", report)
+	}
+	storage, err = store.Open(c.daBaDeeStoreOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryRun, err := storage.CollectGarbage(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dryRun.Objects != 0 {
+		t.Fatalf("object remained after gc: %+v", dryRun)
+	}
+	if err = storage.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

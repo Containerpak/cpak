@@ -46,6 +46,9 @@ func (c *GCCmd) Run() error {
 	for _, item := range report.Cache {
 		rows = append(rows, []string{"cache", item.Path, strconv.FormatInt(item.Bytes, 10)})
 	}
+	if report.Objects > 0 || report.Chunks > 0 {
+		rows = append(rows, []string{"object-store", "DaBaDee", strconv.FormatInt(report.ObjectBytes, 10)})
+	}
 	if len(rows) == 0 {
 		c.Logger.Success("No unused data found.")
 		return nil
