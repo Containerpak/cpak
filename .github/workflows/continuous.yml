@@ -224,7 +224,7 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: nightly
-          target_commitish: v2
+          target_commitish: ${{ github.sha }}
           prerelease: true
           make_latest: false
           name: Nightly Build
@@ -235,8 +235,35 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: continuous
-          target_commitish: v2
+          target_commitish: ${{ github.sha }}
           prerelease: true
           make_latest: false
           name: Continuous Build
           files: dist/*
+
+      - name: Remove stale channel assets
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/v2'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          channel="${CHANNEL}"
+          if [[ -z "${channel}" ]]; then
+            if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+              channel="nightly"
+            else
+              channel="continuous"
+            fi
+          fi
+          while IFS=$'\t' read -r asset_id asset_name; do
+            keep=false
+            for path in dist/*; do
+              if [[ "$(basename "${path}")" == "${asset_name}" ]]; then
+                keep=true
+                break
+              fi
+            done
+            if [[ "${keep}" == false ]]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            fi
+          done < <(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${channel}" --jq '.assets[] | [.id, .name] | @tsv')
