@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/registryauth"
 	"github.com/mirkobrombin/cpak/pkg/tools"
-	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -83,18 +83,14 @@ func (c *Cpak) unpackImageLayers(digest string, client *oci.Client, ref oci.Refe
 }
 
 func (c *Cpak) layerAvailable(digest string) (bool, error) {
-	info, err := os.Stat(c.GetInStoreDir("layers", digest))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return info.IsDir(), nil
+	return c.ensureFVSLayer(digest)
 }
 
 func (c *Cpak) GetAvailableLayers() (layers []string, err error) {
-	layersDir := c.GetInStoreDir("layers")
+	if err := c.migrateLegacyLayers(); err != nil {
+		return nil, err
+	}
+	layersDir := c.fvsLayersPath()
 
 	_, err = os.Stat(layersDir)
 	if err != nil {
@@ -145,7 +141,7 @@ func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.De
 		}
 		logger.Printf("Partial layer pull unavailable for %s, downloading the complete layer: %v", digest[:min(12, len(digest))], partialErr)
 	}
-	layerContent, err := client.Blob(c.Ctx, ref, layer)
+	layerContent, err := client.ResumableBlob(c.Ctx, ref, layer)
 	if err != nil {
 		return
 	}
@@ -172,35 +168,24 @@ func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.De
 		progressbar.OptionFullWidth(),
 	)
 	hash := sha256.New()
-	layersDir, err := c.GetInStoreDirMkdir("layers")
+	layerInStoreDir, writer, err := c.beginFVSLayerSnapshot(digest, fvsrepo.SnapshotOptions{
+		Message:       "pull " + digest,
+		ComputeSHA256: true,
+	})
 	if err != nil {
 		return
 	}
-	layerInStoreDir, err := os.MkdirTemp(layersDir, digest+".partial-")
-	if err != nil {
-		return
-	}
+	committed := false
 	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(layerInStoreDir)
+		if !committed {
+			_ = writer.Abort()
 		}
-	}()
-
-	dedupStore, err := store.Open(c.daBaDeeStoreOptions())
-	if err != nil {
-		return
-	}
-	closed := false
-	defer func() {
-		if !closed {
-			_, _ = dedupStore.GC(c.Ctx)
-			_ = dedupStore.Close()
-		}
+		_ = os.RemoveAll(layerInStoreDir)
 	}()
 
 	limited := &io.LimitedReader{R: layerContent, N: layer.Size}
 	stream := io.TeeReader(limited, io.MultiWriter(hash, bar))
-	extractErr := unpackLayer(c.Ctx, stream, layer.MediaType, layerInStoreDir, dedupStore)
+	extractErr := unpackLayer(c.Ctx, stream, layer.MediaType, writer)
 	received := layer.Size - limited.N
 	if limited.N != 0 {
 		return fmt.Errorf("layer size mismatch for %s: expected %d, received %d", digest, layer.Size, received)
@@ -218,27 +203,13 @@ func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.De
 	if extractErr != nil {
 		return extractErr
 	}
-	if err = dedupStore.Close(); err != nil {
+	if _, err = writer.Commit(); err != nil {
 		return err
 	}
-	closed = true
-
-	if err = c.publishLayer(layerInStoreDir, digest); err != nil {
+	committed = true
+	if err = publishFVSLayer(layerInStoreDir, c.fvsLayerPath(digest)); err != nil {
 		return
 	}
 
 	return
-}
-
-func (c *Cpak) publishLayer(source, digest string) error {
-	target := c.GetInStoreDir("layers", digest)
-	if err := os.Rename(source, target); err == nil {
-		return nil
-	} else if available, checkErr := c.layerAvailable(digest); checkErr != nil {
-		return checkErr
-	} else if !available {
-		return err
-	}
-
-	return os.RemoveAll(source)
 }

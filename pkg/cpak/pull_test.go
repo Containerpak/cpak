@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 )
 
@@ -54,15 +55,18 @@ func TestUnpackImageLayersReturnsExistingLayers(t *testing.T) {
 
 func TestPublishLayerAcceptsExistingLayer(t *testing.T) {
 	c := newTestCpak(t)
-	target := c.GetInStoreDir("layers", "abc")
-	if err := os.MkdirAll(target, 0755); err != nil {
-		t.Fatal(err)
-	}
-	source, err := os.MkdirTemp(c.GetInStoreDir("layers"), "abc.partial-")
+	seedFVSLayerFile(t, c, "abc", "value", []byte("existing"))
+	source, writer, err := c.beginFVSLayerSnapshot("abc", fvsrepo.SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = c.publishLayer(source, "abc"); err != nil {
+	if err := writer.Add(fvsrepo.Entry{Path: "new", Kind: fvsrepo.EntryFile, Mode: 0o644, Size: 3}, strings.NewReader("new")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = publishFVSLayer(source, c.fvsLayerPath("abc")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(source); !os.IsNotExist(err) {
@@ -72,18 +76,18 @@ func TestPublishLayerAcceptsExistingLayer(t *testing.T) {
 
 func TestPublishLayerRejectsExistingFile(t *testing.T) {
 	c := newTestCpak(t)
-	target := c.GetInStoreDir("layers", "abc")
+	target := c.fvsLayerPath("abc")
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(target, []byte("invalid"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.MkdirTemp(c.GetInStoreDir("layers"), "abc.partial-")
+	source, err := os.MkdirTemp(c.fvsLayersPath(), "abc.partial-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = c.publishLayer(source, "abc"); err == nil {
+	if err = publishFVSLayer(source, target); err == nil {
 		t.Fatal("expected an existing file to reject the layer")
 	}
 }
@@ -142,10 +146,7 @@ func TestDownloadLayerStreamsWithoutCompressedCache(t *testing.T) {
 	if err = cp.downloadLayer(&oci.Client{HTTP: server.Client()}, ref, descriptor, digest); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(cp.GetInStoreDir("layers", digest, "usr/share/value"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := readFVSLayerFile(t, cp, digest, "usr/share/value")
 	if string(got) != "streamed" {
 		t.Fatalf("content: %q", got)
 	}
@@ -155,6 +156,54 @@ func TestDownloadLayerStreamsWithoutCompressedCache(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("compressed cache was retained: %v", entries)
+	}
+}
+
+func TestDownloadLayerResumesInterruptedBlob(t *testing.T) {
+	content := testLayer(t, mediaOCILayerGzip, []testLayerEntry{
+		{name: "usr/share/value", typeflag: 0, mode: 0644, content: []byte("resumed")},
+	})
+	hash := sha256.Sum256(content)
+	digest := fmt.Sprintf("%x", hash[:])
+	cut := len(content) / 2
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Header.Get("Range") == "" {
+			writer.Header().Set("Content-Length", fmt.Sprint(len(content)))
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write(content[:cut])
+			return
+		}
+		expected := fmt.Sprintf("bytes=%d-%d", cut, len(content)-1)
+		if request.Header.Get("Range") != expected {
+			t.Fatalf("range: %q", request.Header.Get("Range"))
+		}
+		writer.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", cut, len(content)-1, len(content)))
+		writer.Header().Set("Content-Length", fmt.Sprint(len(content)-cut))
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(content[cut:])
+	}))
+	defer server.Close()
+
+	cp := newTestCpak(t)
+	ref, err := oci.ParseReference(strings.TrimPrefix(server.URL, "http://") + "/example/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := oci.Descriptor{
+		Digest:    "sha256:" + digest,
+		Size:      int64(len(content)),
+		MediaType: mediaOCILayerGzip,
+	}
+	if err = cp.downloadLayer(&oci.Client{HTTP: server.Client()}, ref, descriptor, digest); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("blob requests: %d", requests)
+	}
+	if got := readFVSLayerFile(t, cp, digest, "usr/share/value"); string(got) != "resumed" {
+		t.Fatalf("content: %q", got)
 	}
 }
 

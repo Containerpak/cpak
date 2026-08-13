@@ -115,11 +115,14 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !c.containerLayerMountAlive(container) {
 			container.Pid, err = getPidFromEnvContainerId(container.CpakId)
 		}
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !c.containerLayerMountAlive(container) {
 			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
+			if containerProcessRunning(container) {
+				terminateContainerProcess(container)
+			}
 			if err = store.Close(); err != nil {
 				return
 			}
@@ -163,6 +166,18 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
+	container.FVSLayerMountId, container.FVSLayerMountPath, err = c.prepareLayerMount(container.StatePath, composedLayers(app, components, addons))
+	if err != nil {
+		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+		os.RemoveAll(container.StatePath)
+		return types.Container{}, err
+	}
+	mountOwned := true
+	defer func() {
+		if err != nil && mountOwned {
+			_ = c.releaseFVSMount(container.FVSLayerMountId)
+		}
+	}()
 
 	if len(systemBrokerShims(override)) > 0 {
 		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime(container.StatePath)
@@ -231,6 +246,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		return types.Container{}, err
 	}
 
+	mountOwned = false
 	logger.Println("Container prepared:", container.CpakId)
 	return
 }
@@ -317,7 +333,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		return
 	}
 
-	layersPath := c.GetInStoreDir("layers")
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
 	overrideMounts, _ := GetOverrideMounts(override)
 	filesystemArgs := []string{}
@@ -345,7 +360,8 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
-	cmds = append(cmds, "--layers-dir", layersPath)
+	cmds = append(cmds, "--layers-dir", c.GetInStoreDir("layers"))
+	cmds = append(cmds, "--lower-dir", container.FVSLayerMountPath)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
 	cmds = append(cmds, "--idle-time", strconv.Itoa(app.IdleTime))
@@ -524,20 +540,33 @@ func (c *Cpak) StopContainerInstance(app types.Application, instance string) (er
 	}
 
 	for _, container := range containers {
-		currentPid := container.Pid
-		if currentPid == 0 {
-			currentPid, _ = getPidFromEnvContainerId(container.CpakId)
-		}
-		if currentPid != 0 {
-			logger.Println("Stopping container process:", currentPid)
-			syscall.Kill(currentPid, syscall.SIGTERM)
-		}
+		terminateContainerProcess(container)
 		cleanupErr := c.CleanupContainer(container)
 		if cleanupErr != nil {
 			logger.Printf("Warning: error during container cleanup %s: %v", container.CpakId, cleanupErr)
 		}
 	}
 	return
+}
+
+func terminateContainerProcess(container types.Container) {
+	pid := container.Pid
+	if exact, err := getPidFromEnvContainerId(container.CpakId); err == nil {
+		pid = exact
+	}
+	if pid <= 0 || syscall.Kill(pid, 0) != nil {
+		return
+	}
+	logger.Println("Stopping container process:", pid)
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !containerProcessRunning(container) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
 // Stop is a convenient wrapper around the StopContainer function that
@@ -937,6 +966,10 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	stopSystemBroker(container.SystemBrokerPid)
 	cleanupSystemBrokerRuntime(container)
 	cleanupCgroup(container.CpakId, container.CgroupPath)
+	if releaseErr := c.cleanupFVSMount(container.FVSLayerMountId, container.FVSLayerMountPath); releaseErr != nil {
+		logger.Printf("Cannot release FVS mount %s: %v", container.FVSLayerMountId, releaseErr)
+	}
+	_ = os.Chmod(filepath.Join(container.StatePath, "work", "work"), 0o700)
 
 	// we don't care about the error here, we just want to make sure that
 	// the container filesystem is getting deleted

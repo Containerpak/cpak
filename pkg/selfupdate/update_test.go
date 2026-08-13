@@ -20,12 +20,17 @@ import (
 func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 	binary := []byte("new cpak")
 	digest := sha256.Sum256(binary)
+	companion := []byte("new fvs service")
+	companionDigest := sha256.Sum256(companion)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/cpak":
 			_, _ = writer.Write(binary)
+		case "/cpak-storaged":
+			_, _ = writer.Write(companion)
 		case "/SHA256SUMS":
 			_, _ = fmt.Fprintf(writer, "%x  cpak-linux-%s\n", digest[:], runtime.GOARCH)
+			_, _ = fmt.Fprintf(writer, "%x  cpak-storaged-linux-%s\n", companionDigest[:], runtime.GOARCH)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -36,13 +41,17 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	checker := Checker{Executable: target}
-	release := Release{BinaryURL: server.URL + "/cpak", ChecksumsURL: server.URL + "/SHA256SUMS"}
+	release := Release{BinaryURL: server.URL + "/cpak", StorageURL: server.URL + "/cpak-storaged", ChecksumsURL: server.URL + "/SHA256SUMS"}
 	if err := checker.Install(context.Background(), release); err != nil {
 		t.Fatal(err)
 	}
 	installed, err := os.ReadFile(target)
 	if err != nil || string(installed) != string(binary) {
 		t.Fatalf("unexpected installed binary: %q %v", installed, err)
+	}
+	installedCompanion, err := os.ReadFile(filepath.Join(filepath.Dir(target), "cpak-storaged"))
+	if err != nil || string(installedCompanion) != string(companion) {
+		t.Fatalf("unexpected installed FVS service: %q %v", installedCompanion, err)
 	}
 }
 
@@ -60,7 +69,7 @@ func TestCheckerRejectsInvalidChecksum(t *testing.T) {
 		t.Fatal(err)
 	}
 	checker := Checker{Executable: target}
-	err := checker.Install(context.Background(), Release{BinaryURL: server.URL, ChecksumsURL: server.URL + "/SHA256SUMS"})
+	err := checker.Install(context.Background(), Release{BinaryURL: server.URL, StorageURL: server.URL + "/cpak-storaged", ChecksumsURL: server.URL + "/SHA256SUMS"})
 	if err == nil {
 		t.Fatal("installed a binary with an invalid checksum")
 	}
@@ -77,7 +86,14 @@ func TestCheckerUsesCachedRelease(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"tag_name":"v2.1.0","body":"notes","published_at":"2026-08-12T00:00:00Z","assets":[]}`))
 	}))
 	defer server.Close()
-	checker := Checker{CurrentVersion: "v2.0.0", APIURL: server.URL, CachePath: filepath.Join(t.TempDir(), "cache.json")}
+	directory := t.TempDir()
+	target := filepath.Join(directory, "cpak")
+	for _, path := range []string{target, filepath.Join(directory, "cpak-storaged")} {
+		if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checker := Checker{CurrentVersion: "v2.0.0", APIURL: server.URL, CachePath: filepath.Join(directory, "cache.json"), Executable: target}
 	for range 2 {
 		release, available, err := checker.Check(context.Background(), 24*time.Hour)
 		if err != nil || !available || release.Version != "v2.1.0" {
@@ -86,6 +102,31 @@ func TestCheckerUsesCachedRelease(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("expected one release request, got %d", requests)
+	}
+}
+
+func TestCheckerRepairsMissingStorageServiceAtTheCurrentVersion(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "cpak")
+	if err := os.WriteFile(target, []byte("cpak"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(directory, "cache.json")
+	release := Release{Version: "v2.2.0", StorageURL: "https://example.com/cpak-storaged"}
+	if err := writeCache(cachePath, cache{CheckedAt: time.Now().UTC(), Release: release}); err != nil {
+		t.Fatal(err)
+	}
+	checker := Checker{CurrentVersion: "v2.2.0", Executable: target, CachePath: cachePath}
+	_, available, err := checker.Check(context.Background(), 24*time.Hour)
+	if err != nil || !available {
+		t.Fatalf("missing storage service was not repairable: available=%v err=%v", available, err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "cpak-storaged"), []byte("storage"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, available, err = checker.Check(context.Background(), 24*time.Hour)
+	if err != nil || available {
+		t.Fatalf("complete installation requested a repair: available=%v err=%v", available, err)
 	}
 }
 

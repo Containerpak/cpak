@@ -25,6 +25,7 @@ type Cpak struct {
 	servicePID         int
 	serviceSocketOwned bool
 	brokerSocketOwned  bool
+	storageMigration   StorageMigrationHandler
 }
 
 // NewCpak creates a new cpak instance.
@@ -94,7 +95,7 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 	}
 	bindDaBaDeeOptions(config, &options.DaBaDeeStoreOptions)
 
-	options.StoreLayersPath = filepath.Join(options.StorePath, "layers")
+	options.StoreLayersPath = filepath.Join(options.StorePath, "fvs", "layers")
 	options.StoreContainersPath = filepath.Join(options.StorePath, "containers")
 	options.StoreStatesPath = filepath.Join(options.StorePath, "states")
 	err = createCpakDirs(&options)
@@ -146,6 +147,7 @@ func createCpakDirs(options *types.CpakOptions) error {
 		options.StorePath,
 		options.CachePath,
 		options.StoreLayersPath,
+		filepath.Join(options.StorePath, "fvs", "blocks"),
 		options.StoreContainersPath,
 		options.StoreStatesPath,
 	}
@@ -185,9 +187,9 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	for _, app := range allDbApps {
 		logger.Printf("  Auditing app: %s (Origin: %s, Version: %s)", app.Name, app.Origin, app.Version)
 		for _, layerDigest := range app.ParsedLayers {
-			layerPath := c.GetInStoreDir("layers", layerDigest)
-			if _, statErr := os.Stat(layerPath); os.IsNotExist(statErr) {
-				reason := fmt.Sprintf("layer %s for app %s (CpakId: %s) not found at %s", layerDigest, app.Name, app.CpakId, layerPath)
+			available, layerErr := c.storedLayerAvailable(layerDigest)
+			if layerErr != nil || !available {
+				reason := fmt.Sprintf("layer %s for app %s (CpakId: %s) is unavailable", layerDigest, app.Name, app.CpakId)
 				logger.Printf("    [ERROR] %s", reason)
 				appsToPotentiallyRemove[app.CpakId] = reason
 			}

@@ -37,6 +37,7 @@ type Release struct {
 	Notes        string    `json:"notes"`
 	PublishedAt  time.Time `json:"published_at"`
 	BinaryURL    string    `json:"binary_url"`
+	StorageURL   string    `json:"storage_url"`
 	ChecksumsURL string    `json:"checksums_url"`
 }
 
@@ -59,13 +60,14 @@ type cache struct {
 // Check returns the latest release, using a recent cached response when possible.
 func (c Checker) Check(ctx context.Context, maxAge time.Duration) (Release, bool, error) {
 	state, _ := readCache(c.cachePath())
-	if state.Release.Version != "" && time.Since(state.CheckedAt) < maxAge {
-		return state.Release, newer(state.Release.Version, c.CurrentVersion), nil
+	storageMissing := c.storageServiceMissing()
+	if state.Release.Version != "" && time.Since(state.CheckedAt) < maxAge && (!storageMissing || state.Release.StorageURL != "") {
+		return state.Release, newer(state.Release.Version, c.CurrentVersion) || storageMissing, nil
 	}
 	release, err := c.fetch(ctx)
 	if err != nil {
 		if state.Release.Version != "" {
-			return state.Release, newer(state.Release.Version, c.CurrentVersion), nil
+			return state.Release, newer(state.Release.Version, c.CurrentVersion) || storageMissing && state.Release.StorageURL != "", nil
 		}
 		return Release{}, false, err
 	}
@@ -74,7 +76,23 @@ func (c Checker) Check(ctx context.Context, maxAge time.Duration) (Release, bool
 	if err = writeCache(c.cachePath(), state); err != nil {
 		return Release{}, false, err
 	}
-	return release, newer(release.Version, c.CurrentVersion), nil
+	return release, newer(release.Version, c.CurrentVersion) || storageMissing && release.StorageURL != "", nil
+}
+
+func (c Checker) storageServiceMissing() bool {
+	executable := c.Executable
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return true
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	info, err := os.Stat(filepath.Join(filepath.Dir(executable), "cpak-storaged"))
+	return err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0
 }
 
 // Install downloads, verifies and atomically replaces the current cpak binary.
@@ -82,7 +100,7 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	if c.Mode == "managed" {
 		return ErrManagedInstall
 	}
-	if release.BinaryURL == "" || release.ChecksumsURL == "" {
+	if release.BinaryURL == "" || release.StorageURL == "" || release.ChecksumsURL == "" {
 		return fmt.Errorf("selfupdate: release has no compatible binary")
 	}
 	executable := c.Executable
@@ -114,15 +132,38 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	if fmt.Sprintf("%x", digest[:]) != expected {
 		return fmt.Errorf("selfupdate: binary checksum mismatch")
 	}
-	directory := filepath.Dir(executable)
-	temporary, err := os.CreateTemp(directory, ".cpak-update-*")
+	companionAsset := "cpak-storaged-linux-" + runtime.GOARCH
+	companionExpected, err := checksumFor(checksums, companionAsset)
 	if err != nil {
-		return fmt.Errorf("selfupdate: create update file: %w", err)
+		return err
+	}
+	companion, err := c.download(ctx, release.StorageURL, maxBinary)
+	if err != nil {
+		return fmt.Errorf("selfupdate: download storage service: %w", err)
+	}
+	companionDigest := sha256.Sum256(companion)
+	if fmt.Sprintf("%x", companionDigest[:]) != companionExpected {
+		return fmt.Errorf("selfupdate: storage service checksum mismatch")
+	}
+	directory := filepath.Dir(executable)
+	if err = replaceExecutable(filepath.Join(directory, "cpak-storaged"), companion); err != nil {
+		return fmt.Errorf("selfupdate: replace storage service: %w", err)
+	}
+	if err = replaceExecutable(executable, binary); err != nil {
+		return fmt.Errorf("selfupdate: replace cpak: %w", err)
+	}
+	return nil
+}
+
+func replaceExecutable(target string, payload []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".cpak-update-*")
+	if err != nil {
+		return err
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err = temporary.Chmod(0755); err == nil {
-		_, err = temporary.Write(binary)
+		_, err = temporary.Write(payload)
 	}
 	if err == nil {
 		err = temporary.Sync()
@@ -131,12 +172,9 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 		err = closeErr
 	}
 	if err != nil {
-		return fmt.Errorf("selfupdate: write update: %w", err)
+		return err
 	}
-	if err = os.Rename(temporaryPath, executable); err != nil {
-		return fmt.Errorf("selfupdate: replace cpak: %w", err)
-	}
-	return nil
+	return os.Rename(temporaryPath, target)
 }
 
 // MarkNotified records that the desktop update prompt was shown.
@@ -188,10 +226,13 @@ func (c Checker) fetch(ctx context.Context) (Release, error) {
 	}
 	release := Release{Version: payload.TagName, Notes: payload.Body, PublishedAt: payload.PublishedAt}
 	wanted := "cpak-linux-" + runtime.GOARCH
+	companion := "cpak-storaged-linux-" + runtime.GOARCH
 	for _, asset := range payload.Assets {
 		switch asset.Name {
 		case wanted:
 			release.BinaryURL = asset.URL
+		case companion:
+			release.StorageURL = asset.URL
 		case "SHA256SUMS":
 			release.ChecksumsURL = asset.URL
 		}

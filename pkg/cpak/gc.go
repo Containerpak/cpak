@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
@@ -17,13 +18,17 @@ type GarbageItem struct {
 }
 
 type GarbageReport struct {
-	Applied     bool          `json:"applied"`
-	Layers      []GarbageItem `json:"layers"`
-	Cache       []GarbageItem `json:"cache"`
-	Objects     int           `json:"objects"`
-	Chunks      int           `json:"chunks"`
-	ObjectBytes int64         `json:"object_bytes"`
-	Bytes       int64         `json:"bytes"`
+	Applied       bool          `json:"applied"`
+	Layers        []GarbageItem `json:"layers"`
+	Cache         []GarbageItem `json:"cache"`
+	Objects       int           `json:"objects"`
+	Chunks        int           `json:"chunks"`
+	ObjectBytes   int64         `json:"object_bytes"`
+	FVSBlocks     int           `json:"fvs_blocks"`
+	LegacyObjects int           `json:"legacy_objects"`
+	LegacyChunks  int           `json:"legacy_chunks"`
+	LegacyBytes   int64         `json:"legacy_bytes"`
+	Bytes         int64         `json:"bytes"`
 }
 
 func (c *Cpak) CollectGarbage(apply bool) (GarbageReport, error) {
@@ -77,30 +82,47 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 	if err != nil {
 		return report, err
 	}
-	dedupStore, err := store.Open(c.daBaDeeStoreOptions())
+	repositories, err := c.fvsRepositories()
 	if err != nil {
 		return report, err
 	}
-	var dedupResult store.GCResult
-	if apply {
-		dedupResult, err = dedupStore.GC(c.Ctx)
-	} else {
-		released := make([]string, 0, len(report.Layers))
-		for _, item := range report.Layers {
-			released = append(released, item.Path)
+	result, err := fvsrepo.GCShared(c.Ctx, c.fvsBlocksPath(), repositories, fvsrepo.GCOptions{DryRun: !apply})
+	if err != nil {
+		return report, err
+	}
+	report.FVSBlocks = result.RemovedBlocks
+	report.Objects = result.RemovedBlocks
+	report.ObjectBytes = result.RemovedBytes
+	legacyOptions := c.daBaDeeStoreOptions()
+	if _, statErr := os.Stat(legacyOptions.Root); statErr == nil {
+		dedupStore, openErr := store.Open(legacyOptions)
+		if openErr != nil {
+			return report, openErr
 		}
-		dedupResult, err = dedupStore.PlanGC(c.Ctx, released)
+		var legacyResult store.GCResult
+		if apply {
+			legacyResult, err = dedupStore.GC(c.Ctx)
+		} else {
+			released := make([]string, 0, len(report.Layers))
+			for _, item := range report.Layers {
+				released = append(released, item.Path)
+			}
+			legacyResult, err = dedupStore.PlanGC(c.Ctx, released)
+		}
+		closeErr := dedupStore.Close()
+		if err != nil {
+			return report, err
+		}
+		if closeErr != nil {
+			return report, closeErr
+		}
+		report.Objects += legacyResult.Objects
+		report.Chunks += legacyResult.Chunks
+		report.ObjectBytes += legacyResult.Bytes
+		report.LegacyObjects = legacyResult.Objects
+		report.LegacyChunks = legacyResult.Chunks
+		report.LegacyBytes = legacyResult.Bytes
 	}
-	closeErr := dedupStore.Close()
-	if err != nil {
-		return report, err
-	}
-	if closeErr != nil {
-		return report, closeErr
-	}
-	report.Objects = dedupResult.Objects
-	report.Chunks = dedupResult.Chunks
-	report.ObjectBytes = dedupResult.Bytes
 	for _, item := range append(append([]GarbageItem{}, report.Layers...), report.Cache...) {
 		report.Bytes += item.Bytes
 	}
@@ -110,32 +132,32 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 
 func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, apply bool) ([]GarbageItem, error) {
 	items := []GarbageItem{}
-	layersDir := c.GetInStoreDir("layers")
-	entries, err := os.ReadDir(layersDir)
-	if os.IsNotExist(err) {
-		return items, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, layersDir := range []string{c.fvsLayersPath(), c.GetInStoreDir("layers")} {
+		entries, err := os.ReadDir(layersDir)
+		if os.IsNotExist(err) {
 			continue
 		}
-		if _, exists := referenced[entry.Name()]; exists {
-			continue
-		}
-		path := filepath.Join(layersDir, entry.Name())
-		item, err := garbageItem(path)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
-		if !apply {
-			continue
-		}
-		if err := os.RemoveAll(path); err != nil {
-			return nil, fmt.Errorf("remove orphaned layer %s: %w", path, err)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			if _, exists := referenced[entry.Name()]; exists {
+				continue
+			}
+			path := filepath.Join(layersDir, entry.Name())
+			item, err := garbageItem(path)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+			if apply {
+				if err := os.RemoveAll(path); err != nil {
+					return nil, fmt.Errorf("remove orphaned layer %s: %w", path, err)
+				}
+			}
 		}
 	}
 	return items, nil

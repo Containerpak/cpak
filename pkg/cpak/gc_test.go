@@ -31,6 +31,9 @@ func TestCollectGarbageKeepsReferencedLayers(t *testing.T) {
 	if _, err := os.Stat(c.GetInStoreDir("layers", "used")); err != nil {
 		t.Fatalf("referenced layer removed: %v", err)
 	}
+	if _, err := os.Stat(c.fvsLayerPath("used")); !os.IsNotExist(err) {
+		t.Fatalf("garbage collection migrated a referenced layer: %v", err)
+	}
 	for _, path := range []string{c.GetInStoreDir("layers", "orphan"), c.GetInStoreDir("layers", "stale.partial"), filepath.Join(c.Options.CachePath, "download.partial")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected garbage to be removed: %s", path)
@@ -99,7 +102,7 @@ func TestCollectGarbageRemovesUnlinkedDaBaDeeObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Objects != 1 || report.ObjectBytes != 6 {
+	if report.Objects != 1 || report.ObjectBytes != 6 || report.LegacyObjects != 1 || report.LegacyBytes != 6 {
 		t.Fatalf("object store report: %+v", report)
 	}
 	if _, err = os.Stat(filepath.Join(layer, "value")); err != nil {
@@ -109,7 +112,7 @@ func TestCollectGarbageRemovesUnlinkedDaBaDeeObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Objects != 1 || report.ObjectBytes != 6 {
+	if report.Objects != 1 || report.ObjectBytes != 6 || report.LegacyObjects != 1 || report.LegacyBytes != 6 {
 		t.Fatalf("applied object store report: %+v", report)
 	}
 	storage, err = store.Open(c.daBaDeeStoreOptions())
@@ -125,5 +128,36 @@ func TestCollectGarbageRemovesUnlinkedDaBaDeeObjects(t *testing.T) {
 	}
 	if err = storage.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCollectGarbageRemovesFVSBlocksAfterLastLayer(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	seedFVSLayerFile(t, c, "orphan", "value", []byte("unused"))
+
+	report, err := c.collectGarbageReport(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Layers) != 1 || report.FVSBlocks != 0 {
+		t.Fatalf("dry-run report = %+v", report)
+	}
+	report, err = c.collectGarbageReport(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.FVSBlocks == 0 || report.ObjectBytes == 0 {
+		t.Fatalf("applied report = %+v", report)
+	}
+	if _, err := os.Stat(c.fvsLayerPath("orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphan repository remained: %v", err)
+	}
+	entries, err := os.ReadDir(c.fvsBlocksPath())
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("block store still contains %d entries", len(entries))
 	}
 }

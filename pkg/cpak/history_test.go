@@ -103,6 +103,9 @@ func TestCollectGarbageKeepsRollbackLayers(t *testing.T) {
 		if _, err := os.Stat(c.GetInStoreDir("layers", layer)); err != nil {
 			t.Fatalf("referenced layer was removed: %s: %v", layer, err)
 		}
+		if _, err := os.Stat(c.fvsLayerPath(layer)); !os.IsNotExist(err) {
+			t.Fatalf("garbage collection migrated layer %s: %v", layer, err)
+		}
 	}
 	if _, err := os.Stat(c.GetInStoreDir("layers", "orphan")); !os.IsNotExist(err) {
 		t.Fatalf("orphan layer still exists: %v", err)

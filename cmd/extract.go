@@ -65,10 +65,7 @@ func (c *ExtractCmd) Run() error {
 	defer tw.Close()
 
 	excluded := []string{"dev", "home", "proc", "sys", "tmp", "run"}
-
-	for _, layer := range app.ParsedLayers {
-		layerDir := cp.GetInStoreDir("layers", layer)
-
+	err = cp.WithApplicationFilesystem(app, func(layerDir string) error {
 		var total int
 		_ = filepath.Walk(layerDir, func(path string, info os.FileInfo, walkErr error) error {
 			if walkErr != nil {
@@ -103,7 +100,7 @@ func (c *ExtractCmd) Run() error {
 			}),
 			progressbar.OptionSetWriter(os.Stderr),
 			progressbar.OptionFullWidth(),
-			progressbar.OptionSetDescription(fmt.Sprintf("Layer %s", layer[:12])),
+			progressbar.OptionSetDescription(app.Name),
 			progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
 		)
 
@@ -165,8 +162,12 @@ func (c *ExtractCmd) Run() error {
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("error archiving layer %s: %w", layer, err)
+			return fmt.Errorf("error archiving application: %w", err)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	c.Logger.Success("\nExtracted %s to %s", origin, output)

@@ -39,6 +39,31 @@ func TestCapsuleRoundTrip(t *testing.T) {
 	if string(capsule.Payload) != "cpak" {
 		t.Fatalf("payload mismatch: %q", capsule.Payload)
 	}
+	if len(capsule.Companion) != 0 {
+		t.Fatalf("unexpected companion: %q", capsule.Companion)
+	}
+}
+
+func TestCapsuleCarriesFVSCompanion(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := PackInstallerWithCompanion([]byte("installer"), []byte("cpak"), []byte("fvs2d"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	packed, err := SignCapsule(base, testMetadata(), privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsule, err := ReadCapsule(bytes.NewReader(packed), int64(len(packed)), publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(capsule.Payload) != "cpak" || string(capsule.Companion) != "fvs2d" {
+		t.Fatalf("capsule payloads: cpak %q, companion %q", capsule.Payload, capsule.Companion)
+	}
 }
 
 func TestMetadataRejectsInvalidPermissions(t *testing.T) {

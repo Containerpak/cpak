@@ -37,6 +37,26 @@ func TestInstallCpakIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestInstallCompanionUsesTheCpakBinDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	payload := []byte("fvs service")
+	changed, err := installStorageService(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("new companion was not installed")
+	}
+	got, err := os.ReadFile(filepath.Join(home, ".local", "bin", "cpak-storaged"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("companion payload: got %q, want %q", got, payload)
+	}
+}
+
 func TestGUIProgressLabelHidesCommandOutput(t *testing.T) {
 	tests := []struct {
 		message string

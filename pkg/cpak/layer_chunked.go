@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/klauspost/compress/zstd"
 	"github.com/mirkobrombin/cpak/pkg/oci"
-	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 const (
@@ -97,52 +97,51 @@ func (c *Cpak) downloadChunkedLayer(client *oci.Client, ref oci.Reference, layer
 		return true, err
 	}
 
-	layersDir, err := c.GetInStoreDirMkdir("layers")
+	destination, writer, err := c.beginFVSLayerSnapshot(digest, fvsrepo.SnapshotOptions{Message: "pull " + digest})
 	if err != nil {
 		return true, err
 	}
-	destination, err := os.MkdirTemp(layersDir, digest+".partial-")
+	known, err := c.fvsContentIndex()
 	if err != nil {
-		return true, err
-	}
-	dedupStore, err := store.Open(c.daBaDeeStoreOptions())
-	if err != nil {
-		os.RemoveAll(destination)
+		_ = writer.Abort()
+		_ = os.RemoveAll(destination)
 		return true, err
 	}
 	published := false
 	defer func() {
 		if !published {
+			_ = writer.Abort()
 			_ = os.RemoveAll(destination)
-			_, _ = dedupStore.GC(c.Ctx)
 		}
-		_ = dedupStore.Close()
 	}()
-	worthwhile, err := chunkedPullWorthwhile(c.Ctx, manifest, layer, dedupStore)
+	worthwhile, err := chunkedPullWorthwhile(c.Ctx, manifest, layer, known)
 	if err != nil {
 		return true, err
 	}
 	if !worthwhile {
 		return false, nil
 	}
-	if err = applyChunkedTOC(c.Ctx, client, ref, layer, manifest, destination, dedupStore); err != nil {
+	if err = applyChunkedTOC(c.Ctx, client, ref, layer, manifest, writer, known); err != nil {
 		return true, err
 	}
-	if err = dedupStore.Close(); err != nil {
+	if _, err = writer.Commit(); err != nil {
 		return true, err
 	}
-	if err = c.publishLayer(destination, digest); err != nil {
+	if err = publishFVSLayer(destination, c.fvsLayerPath(digest)); err != nil {
 		return true, err
 	}
 	published = true
 	return true, nil
 }
 
-func chunkedPullWorthwhile(ctx context.Context, manifest chunkedTOC, layer oci.Descriptor, storage *store.Store) (bool, error) {
+func chunkedPullWorthwhile(ctx context.Context, manifest chunkedTOC, layer oci.Descriptor, known map[string]fvsrepo.FileEntry) (bool, error) {
 	var compressedBytes int64
 	var reusableBytes int64
 	missingFiles := 0
 	for index := 0; index < len(manifest.Entries); index++ {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		entry := manifest.Entries[index]
 		if entry.Type == "chunk" {
 			return false, fmt.Errorf("unpack chunked layer: orphan chunk entry")
@@ -159,17 +158,12 @@ func chunkedPullWorthwhile(ctx context.Context, manifest chunkedTOC, layer oci.D
 		if err != nil {
 			return false, fmt.Errorf("unpack chunked layer: invalid file digest")
 		}
-		metadata := &store.Metadata{Mode: tarFileMode(entry.Mode), UID: os.Getuid(), GID: os.Getgid()}
-		known, err := storage.Contains(ctx, digest, entry.Size, store.ImportOptions{Metadata: metadata})
-		if err != nil {
-			return false, err
-		}
 		fileBytes := segments[len(segments)-1].EndOffset - segments[0].Offset
 		if fileBytes > layer.Size || compressedBytes > math.MaxInt64-fileBytes {
 			return false, fmt.Errorf("unpack chunked layer: invalid file ranges")
 		}
 		compressedBytes += fileBytes
-		if known {
+		if reusable, ok := known["sha256:"+digest]; ok && reusable.Size == entry.Size {
 			reusableBytes += fileBytes
 		} else {
 			missingFiles++
@@ -238,9 +232,7 @@ func decodeChunkedManifest(compressed []byte, expectedLength int64) (chunkedTOC,
 	return manifest, nil
 }
 
-func applyChunkedTOC(ctx context.Context, client *oci.Client, ref oci.Reference, layer oci.Descriptor, manifest chunkedTOC, root string, storage *store.Store) error {
-	directories := make([]layerDirectory, 0, 64)
-	hardlinks := make([]layerHardlink, 0, 16)
+func applyChunkedTOC(ctx context.Context, client *oci.Client, ref oci.Reference, layer oci.Descriptor, manifest chunkedTOC, writer *fvsrepo.SnapshotWriter, known map[string]fvsrepo.FileEntry) error {
 	for index := 0; index < len(manifest.Entries); index++ {
 		entry := manifest.Entries[index]
 		if err := ctx.Err(); err != nil {
@@ -249,20 +241,18 @@ func applyChunkedTOC(ctx context.Context, client *oci.Client, ref oci.Reference,
 		if entry.Type == "chunk" {
 			return fmt.Errorf("unpack chunked layer: orphan chunk entry")
 		}
-		path, err := layerPath(root, entry.Name)
+		name, err := layerEntryPath(entry.Name)
 		if err != nil {
 			return err
 		}
-		if path == "" {
+		if name == "" {
 			continue
 		}
-		mode := tarFileMode(entry.Mode)
+		snapshotEntry := fvsrepo.Entry{Path: name, Mode: uint32(entry.Mode & 0o7777)}
 		switch entry.Type {
 		case "dir":
-			if err = os.MkdirAll(path, 0755); err != nil {
-				return fmt.Errorf("unpack chunked layer: create directory: %w", err)
-			}
-			directories = append(directories, layerDirectory{path: path, mode: mode})
+			snapshotEntry.Kind = fvsrepo.EntryDir
+			err = writer.Add(snapshotEntry, nil)
 		case "reg":
 			var segments []chunkedEntry
 			if entry.Size > 0 {
@@ -274,35 +264,29 @@ func applyChunkedTOC(ctx context.Context, client *oci.Client, ref oci.Reference,
 				}
 				index = next - 1
 			}
-			if err = applyChunkedFile(ctx, client, ref, layer, entry, segments, path, mode, storage); err != nil {
+			if err = applyChunkedFile(ctx, client, ref, layer, entry, segments, snapshotEntry, writer, known); err != nil {
 				return err
 			}
 		case "symlink":
-			if err = replaceSymlink(path, entry.Linkname); err != nil {
-				return fmt.Errorf("unpack chunked layer: create symlink %s: %w", entry.Name, err)
-			}
+			snapshotEntry.Kind = fvsrepo.EntrySymlink
+			snapshotEntry.Link = entry.Linkname
+			err = writer.Add(snapshotEntry, nil)
 		case "hardlink":
-			target, targetErr := layerPath(root, entry.Linkname)
+			target, targetErr := layerEntryPath(entry.Linkname)
 			if targetErr != nil || target == "" {
 				return fmt.Errorf("unpack chunked layer: invalid hardlink target %q", entry.Linkname)
 			}
-			hardlinks = append(hardlinks, layerHardlink{path: path, target: target})
+			snapshotEntry.Kind = fvsrepo.EntryHardlink
+			snapshotEntry.Link = target
+			err = writer.Add(snapshotEntry, nil)
 		case "fifo":
-			if err = replaceFIFO(path, uint32(mode.Perm())); err != nil {
-				return fmt.Errorf("unpack chunked layer: create fifo %s: %w", entry.Name, err)
-			}
+			snapshotEntry.Kind = fvsrepo.EntryFIFO
+			err = writer.Add(snapshotEntry, nil)
 		default:
 			return fmt.Errorf("unpack chunked layer: unsupported entry type %q", entry.Type)
 		}
-	}
-	for _, link := range hardlinks {
-		if err := replaceHardlink(link.target, link.path); err != nil {
-			return fmt.Errorf("unpack chunked layer: create hardlink: %w", err)
-		}
-	}
-	for index := len(directories) - 1; index >= 0; index-- {
-		if err := os.Chmod(directories[index].path, directories[index].mode); err != nil {
-			return fmt.Errorf("unpack chunked layer: set directory mode: %w", err)
+		if err != nil {
+			return fmt.Errorf("unpack chunked layer: import %s: %w", entry.Name, err)
 		}
 	}
 	return nil
@@ -351,28 +335,24 @@ func chunkedFileSegments(entries []chunkedEntry, index int, layerSize int64) ([]
 	return segments, end, nil
 }
 
-func applyChunkedFile(ctx context.Context, client *oci.Client, ref oci.Reference, layer oci.Descriptor, entry chunkedEntry, segments []chunkedEntry, destination string, mode os.FileMode, storage *store.Store) error {
-	metadata := &store.Metadata{Mode: mode, UID: os.Getuid(), GID: os.Getgid()}
+func applyChunkedFile(ctx context.Context, client *oci.Client, ref oci.Reference, layer oci.Descriptor, entry chunkedEntry, segments []chunkedEntry, snapshotEntry fvsrepo.Entry, writer *fvsrepo.SnapshotWriter, known map[string]fvsrepo.FileEntry) error {
 	if entry.Size < 0 {
 		return fmt.Errorf("unpack chunked layer: invalid file size")
 	}
+	snapshotEntry.Kind = fvsrepo.EntryFile
+	snapshotEntry.Size = entry.Size
+	snapshotEntry.ContentDigest = entry.Digest
 	if entry.Size == 0 {
-		result, err := storage.Import(ctx, destination, strings.NewReader(""), store.ImportOptions{Metadata: metadata})
-		if err != nil {
-			return err
-		}
-		if entry.Digest != "" && entry.Digest != "sha256:"+result.ContentDigest {
-			return fmt.Errorf("unpack chunked layer: file digest mismatch")
-		}
-		return nil
+		return writer.Add(snapshotEntry, strings.NewReader(""))
 	}
 	digest, err := parseSHA256Digest(entry.Digest)
 	if err != nil {
 		return fmt.Errorf("unpack chunked layer: invalid file digest")
 	}
-	reused, err := storage.Reuse(ctx, destination, digest, entry.Size, store.ImportOptions{Metadata: metadata})
-	if err != nil || reused {
-		return err
+	if reusable, ok := known["sha256:"+digest]; ok && reusable.Size == entry.Size {
+		reusable.Path = snapshotEntry.Path
+		reusable.Mode = snapshotEntry.Mode
+		return writer.AddReference(reusable)
 	}
 	compressed, err := client.BlobRange(ctx, ref, layer, entry.Offset, entry.EndOffset-entry.Offset)
 	if err != nil {
@@ -381,14 +361,7 @@ func applyChunkedFile(ctx context.Context, client *oci.Client, ref oci.Reference
 	defer compressed.Close()
 	reader := &chunkedFileReader{source: compressed, segments: segments}
 	defer reader.Close()
-	result, err := storage.Import(ctx, destination, reader, store.ImportOptions{Metadata: metadata})
-	if err != nil {
-		return err
-	}
-	if result.Size != entry.Size || result.ContentDigest != digest {
-		return fmt.Errorf("unpack chunked layer: file digest mismatch")
-	}
-	return nil
+	return writer.Add(snapshotEntry, reader)
 }
 
 func (r *chunkedFileReader) Read(buffer []byte) (int, error) {

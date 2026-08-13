@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -44,8 +45,9 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 	}
 
 	digest := RuntimeLayerDigest(baseLayers, sources)
-	layerPath := c.GetInStoreDir("layers", digest)
-	if info, err := os.Stat(layerPath); err == nil && info.IsDir() {
+	if available, err := c.ensureFVSLayer(digest); err != nil {
+		return nil, err
+	} else if available {
 		return append(layers, digest), nil
 	}
 
@@ -74,6 +76,11 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 			return nil, err
 		}
 	}
+	mountID, lowerDir, err := c.prepareFVSMount(stateDir, baseLayers)
+	if err != nil {
+		return nil, err
+	}
+	defer c.releaseFVSMount(mountID)
 
 	cpakBinary, err := getCpakBinary()
 	if err != nil {
@@ -85,7 +92,7 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 		"--rootfs", rootfs,
 		"--state-dir", stateDir,
 		"--layers", strings.Join(baseLayers, "|") + "|",
-		"--layers-dir", c.GetInStoreDir("layers"),
+		"--lower-dir", lowerDir,
 	}
 	for i, artifact := range artifacts {
 		packagePath := fmt.Sprintf("/run/cpak/runtime/%d-%s", i, RuntimeSourceFileName(sources[i]))
@@ -106,10 +113,22 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 	}
 
 	upperDir := filepath.Join(stateDir, "up")
-	if err = os.Rename(upperDir, layerPath); err != nil {
-		if info, statErr := os.Stat(layerPath); statErr == nil && info.IsDir() {
-			return append(layers, digest), nil
-		}
+	temporary, writer, err := c.beginFVSLayerSnapshot(digest, fvsrepo.SnapshotOptions{
+		Message:       "runtime " + digest,
+		ComputeSHA256: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(temporary)
+	if err = writer.AddTree(upperDir); err != nil {
+		_ = writer.Abort()
+		return nil, err
+	}
+	if _, err = writer.Commit(); err != nil {
+		return nil, err
+	}
+	if err = publishFVSLayer(temporary, c.fvsLayerPath(digest)); err != nil {
 		return nil, err
 	}
 	return append(layers, digest), nil

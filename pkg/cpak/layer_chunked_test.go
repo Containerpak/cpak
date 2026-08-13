@@ -2,7 +2,6 @@ package cpak
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -10,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,7 +16,6 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/mirkobrombin/cpak/pkg/oci"
-	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 func TestDownloadChunkedLayerSkipsKnownFiles(t *testing.T) {
@@ -37,18 +34,7 @@ func TestDownloadChunkedLayerSkipsKnownFiles(t *testing.T) {
 	}
 
 	cp := newTestCpak(t)
-	storage, err := store.Open(cp.daBaDeeStoreOptions())
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata := &store.Metadata{Mode: 0644, UID: os.Getuid(), GID: os.Getgid()}
-	seed := filepath.Join(t.TempDir(), "known")
-	if _, err = storage.Import(context.Background(), seed, bytes.NewReader(known), store.ImportOptions{Metadata: metadata}); err != nil {
-		t.Fatal(err)
-	}
-	if err = storage.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedFVSLayerFile(t, cp, "seed", "usr/share/known", known)
 
 	digest := strings.TrimPrefix(descriptor.Digest, "sha256:")
 	supported, err := cp.downloadChunkedLayer(&oci.Client{HTTP: server.Client()}, ref, descriptor, digest)
@@ -56,10 +42,7 @@ func TestDownloadChunkedLayerSkipsKnownFiles(t *testing.T) {
 		t.Fatalf("chunked pull: supported=%v err=%v", supported, err)
 	}
 	for name, expected := range map[string][]byte{"known": known, "missing": missing} {
-		got, readErr := os.ReadFile(cp.GetInStoreDir("layers", digest, "usr/share", name))
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
+		got := readFVSLayerFile(t, cp, digest, "usr/share/"+name)
 		if !bytes.Equal(got, expected) {
 			t.Fatalf("%s: %q", name, got)
 		}
@@ -107,28 +90,14 @@ func TestDownloadChunkedLayerRestoresZeroChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp := newTestCpak(t)
-	storage, err := store.Open(cp.daBaDeeStoreOptions())
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata := &store.Metadata{Mode: 0644, UID: os.Getuid(), GID: os.Getgid()}
-	seed := filepath.Join(t.TempDir(), "known")
-	if _, err = storage.Import(context.Background(), seed, bytes.NewReader(known), store.ImportOptions{Metadata: metadata}); err != nil {
-		t.Fatal(err)
-	}
-	if err = storage.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedFVSLayerFile(t, cp, "seed", "usr/share/known", known)
 
 	digest := strings.TrimPrefix(descriptor.Digest, "sha256:")
 	supported, err := cp.downloadChunkedLayer(&oci.Client{HTTP: server.Client()}, ref, descriptor, digest)
 	if err != nil || !supported {
 		t.Fatalf("chunked pull: supported=%v err=%v", supported, err)
 	}
-	got, err := os.ReadFile(cp.GetInStoreDir("layers", digest, "usr/share/missing"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := readFVSLayerFile(t, cp, digest, "usr/share/missing")
 	if !bytes.Equal(got, missing) {
 		t.Fatalf("zero chunk content: %q", got)
 	}
@@ -163,10 +132,7 @@ func TestDownloadLayerFallsBackFromInvalidChunkedMetadata(t *testing.T) {
 	if err = cp.downloadLayer(&oci.Client{HTTP: server.Client()}, ref, descriptor, digest); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(cp.GetInStoreDir("layers", digest, "app/value"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := readFVSLayerFile(t, cp, digest, "app/value")
 	if string(got) != "fallback" || !containsString(requested, "") {
 		t.Fatalf("fallback result=%q requests=%v", got, requested)
 	}

@@ -6,14 +6,12 @@ import (
 	"compress/gzip"
 	"context"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/klauspost/compress/zstd"
-	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 type testLayerEntry struct {
@@ -25,111 +23,97 @@ type testLayerEntry struct {
 }
 
 func TestUnpackLayerStreamsGzipIntoStore(t *testing.T) {
-	root := t.TempDir()
-	storage, err := store.Open(store.Options{Root: filepath.Join(root, "objects"), PreserveMetadata: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer storage.Close()
-
 	content := []byte("shared layer content")
 	layer := testLayer(t, mediaOCILayerGzip, []testLayerEntry{
 		{name: "usr/share/first", typeflag: tar.TypeReg, mode: 0644, content: content},
 		{name: "usr/share/second", typeflag: tar.TypeReg, mode: 0644, content: content},
 	})
-	destination := filepath.Join(root, "layer")
-	if err = unpackLayer(context.Background(), bytes.NewReader(layer), mediaOCILayerGzip, destination, storage); err != nil {
-		t.Fatal(err)
-	}
-
-	first, err := os.Stat(filepath.Join(destination, "usr/share/first"))
+	files, err := unpackTestLayer(t, layer, mediaOCILayerGzip)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := os.Stat(filepath.Join(destination, "usr/share/second"))
-	if err != nil {
-		t.Fatal(err)
+	byPath := make(map[string]fvsrepo.FileEntry, len(files))
+	for _, file := range files {
+		byPath[file.Path] = file
 	}
-	if first.Sys().(*syscall.Stat_t).Ino != second.Sys().(*syscall.Stat_t).Ino {
-		t.Fatal("equal layer files do not share an object")
+	first := byPath["usr/share/first"]
+	second := byPath["usr/share/second"]
+	if len(first.Blocks) == 0 || len(second.Blocks) == 0 || first.Blocks[0] != second.Blocks[0] {
+		t.Fatal("equal layer files do not share blocks")
 	}
 }
 
 func TestUnpackLayerReadsZstd(t *testing.T) {
-	root := t.TempDir()
-	storage, err := store.Open(store.Options{Root: filepath.Join(root, "objects")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer storage.Close()
-
 	layer := testLayer(t, mediaOCILayerZstd, []testLayerEntry{
 		{name: "app/value", typeflag: tar.TypeReg, mode: 0755, content: []byte("zstd")},
 	})
-	destination := filepath.Join(root, "layer")
-	if err = unpackLayer(context.Background(), bytes.NewReader(layer), mediaOCILayerZstd, destination, storage); err != nil {
-		t.Fatal(err)
-	}
-	content, err := os.ReadFile(filepath.Join(destination, "app/value"))
+	files, err := unpackTestLayer(t, layer, mediaOCILayerZstd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "zstd" {
-		t.Fatalf("content: %q", content)
+	var value fvsrepo.FileEntry
+	for _, file := range files {
+		if file.Path == "app/value" {
+			value = file
+			break
+		}
+	}
+	if value.Path == "" || value.Mode != 0o755 || value.Size != 4 {
+		t.Fatalf("files = %+v", files)
 	}
 }
 
 func TestUnpackLayerRejectsPathTraversal(t *testing.T) {
-	root := t.TempDir()
-	storage, err := store.Open(store.Options{Root: filepath.Join(root, "objects")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer storage.Close()
-
 	layer := testLayer(t, mediaOCILayerTar, []testLayerEntry{
 		{name: "../escape", typeflag: tar.TypeReg, mode: 0644, content: []byte("escape")},
 	})
-	err = unpackLayer(context.Background(), bytes.NewReader(layer), mediaOCILayerTar, filepath.Join(root, "layer"), storage)
+	_, err := unpackTestLayer(t, layer, mediaOCILayerTar)
 	if err == nil || !strings.Contains(err.Error(), "path escapes root") {
 		t.Fatalf("path traversal was accepted: %v", err)
 	}
 }
 
 func TestUnpackLayerRejectsSymlinkParent(t *testing.T) {
-	root := t.TempDir()
-	storage, err := store.Open(store.Options{Root: filepath.Join(root, "objects")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer storage.Close()
-
 	layer := testLayer(t, mediaOCILayerTar, []testLayerEntry{
 		{name: "escape", typeflag: tar.TypeSymlink, mode: 0777, linkname: "../outside"},
 		{name: "escape/value", typeflag: tar.TypeReg, mode: 0644, content: []byte("escape")},
 	})
-	err = unpackLayer(context.Background(), bytes.NewReader(layer), mediaOCILayerTar, filepath.Join(root, "layer"), storage)
-	if err == nil || !strings.Contains(err.Error(), "parent is not a directory") {
+	_, err := unpackTestLayer(t, layer, mediaOCILayerTar)
+	if err == nil || !strings.Contains(err.Error(), "non-directory parent") {
 		t.Fatalf("symlink parent was accepted: %v", err)
 	}
 }
 
 func TestUnpackLayerRejectsHardlinkToSymlink(t *testing.T) {
-	root := t.TempDir()
-	storage, err := store.Open(store.Options{Root: filepath.Join(root, "objects")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer storage.Close()
-
 	layer := testLayer(t, mediaOCILayerTar, []testLayerEntry{
 		{name: "target", typeflag: tar.TypeSymlink, mode: 0777, linkname: "../outside"},
 		{name: "copy", typeflag: tar.TypeLink, mode: 0644, linkname: "target"},
 	})
-	err = unpackLayer(context.Background(), bytes.NewReader(layer), mediaOCILayerTar, filepath.Join(root, "layer"), storage)
-	if err == nil || !strings.Contains(err.Error(), "target is not a regular file") {
+	_, err := unpackTestLayer(t, layer, mediaOCILayerTar)
+	if err == nil || !strings.Contains(err.Error(), "targets missing regular file") {
 		t.Fatalf("hardlink to symlink was accepted: %v", err)
 	}
+}
+
+func unpackTestLayer(t *testing.T, layer []byte, mediaType string) ([]fvsrepo.FileEntry, error) {
+	t.Helper()
+	repository := filepath.Join(t.TempDir(), "layer")
+	if _, err := fvsrepo.Init(repository, 0); err != nil {
+		return nil, err
+	}
+	writer, err := fvsrepo.BeginSnapshot(repository, fvsrepo.SnapshotOptions{ComputeSHA256: true})
+	if err != nil {
+		return nil, err
+	}
+	if err := unpackLayer(context.Background(), bytes.NewReader(layer), mediaType, writer); err != nil {
+		_ = writer.Abort()
+		return nil, err
+	}
+	result, err := writer.Commit()
+	if err != nil {
+		return nil, err
+	}
+	return fvsrepo.StateFiles(repository, result.StateID)
 }
 
 func testLayer(t *testing.T, mediaType string, entries []testLayerEntry) []byte {

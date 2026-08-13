@@ -59,6 +59,12 @@ type Container struct {
 	// CgroupPath is the delegated cgroup used for optional resource limits.
 	CgroupPath string `json:"cgroup_path"`
 
+	// FVSLayerMountId identifies the read-only layer view held by fvs2d.
+	FVSLayerMountId string `json:"fvs_layer_mount_id"`
+
+	// FVSLayerMountPath is the lower directory passed to OverlayFS.
+	FVSLayerMountPath string `json:"fvs_layer_mount_path"`
+
 	// Instance identifies the optional application instance.
 	Instance string `json:"instance"`
 

@@ -6,10 +6,13 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
+	"golang.org/x/term"
 )
 
 type RunCmd struct {
@@ -23,6 +26,7 @@ type RunCmd struct {
 	Commit        string `cli:"commit,c" help:"Specify a commit"`
 	Release       string `cli:"release,r" help:"Specify a release"`
 	NestedRequest string `cli:"nested-request" help:"Run an encoded request from the cpak service"`
+	icon          []byte
 
 	cli.Base
 }
@@ -39,6 +43,7 @@ func (c *RunCmd) Run() error {
 		}
 		return c.runError(cp.RunAuthorized(params, c.Verbose))
 	}
+	c.configureStorageMigration(&cp)
 
 	remote, err := resolveApplicationOrigin(cp, c.Remote)
 	if err != nil {
@@ -52,6 +57,65 @@ func (c *RunCmd) Run() error {
 	}
 
 	return nil
+}
+
+func (c *RunCmd) Configure(icon []byte) {
+	c.icon = icon
+}
+
+func (c *RunCmd) configureStorageMigration(cp *cpak.Cpak) {
+	cp.SetStorageMigrationHandler(func(run func(func(cpak.StorageMigrationProgress)) error) error {
+		if term.IsTerminal(int(os.Stdout.Fd())) || term.IsTerminal(int(os.Stderr.Fd())) {
+			lastLayer := 0
+			lastPercentage := -5
+			return run(func(report cpak.StorageMigrationProgress) {
+				percentage := migrationPercentage(report)
+				if report.Layer == lastLayer && percentage < lastPercentage+5 && report.Bytes < report.TotalBytes {
+					return
+				}
+				lastLayer = report.Layer
+				lastPercentage = percentage
+				logger.Printf("Migrating storage: layer %d of %d, %s of %s", report.Layer, report.Layers, formatMigrationBytes(report.Bytes), formatMigrationBytes(report.TotalBytes))
+			})
+		}
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return run(nil)
+		}
+		request := desktopui.ProgressRequest{
+			Title: "cpak storage upgrade", Heading: "Updating application storage",
+			Detail: "Converting existing layers to the current cpak storage format", IconPNG: c.icon,
+		}
+		return desktopui.Progress(desktopui.SelectBackend(""), request, func(progress func(desktopui.ProgressUpdate)) error {
+			return run(func(report cpak.StorageMigrationProgress) {
+				progress(desktopui.ProgressUpdate{
+					Message: fmt.Sprintf("Layer %d of %d, %s of %s", report.Layer, report.Layers, formatMigrationBytes(report.Bytes), formatMigrationBytes(report.TotalBytes)),
+					Current: report.Bytes, Total: report.TotalBytes,
+				})
+			})
+		})
+	})
+}
+
+func migrationPercentage(report cpak.StorageMigrationProgress) int {
+	if report.TotalBytes <= 0 {
+		return 0
+	}
+	return int(report.Bytes * 100 / report.TotalBytes)
+}
+
+func formatMigrationBytes(value int64) string {
+	const unit = int64(1024)
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	labels := []string{"KiB", "MiB", "GiB", "TiB"}
+	scaled := float64(value)
+	index := -1
+	for scaled >= float64(unit) && index < len(labels)-1 {
+		scaled /= float64(unit)
+		index++
+	}
+	return fmt.Sprintf("%.1f %s", scaled, labels[index])
 }
 
 func (c *RunCmd) runError(iErr error) error {

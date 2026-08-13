@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -292,18 +294,19 @@ func isURL(s string) bool {
 
 // createExports creates the exports for a given application.
 func (c *Cpak) createExports(app types.Application) (err error) {
-	for _, entry := range app.ParsedDesktopEntries {
-		var exportErr error
-		for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
-			layer := app.ParsedLayers[i]
-			layerDir := c.GetInStoreDir("layers", layer)
-			exportErr = c.exportDesktopEntry(layerDir, app, entry)
-			if exportErr == nil {
-				break
+	if len(app.ParsedDesktopEntries) > 0 {
+		entries, entriesErr := c.fvsMergedEntries(app.ParsedLayers)
+		if entriesErr != nil {
+			return entriesErr
+		}
+		for _, entry := range app.ParsedDesktopEntries {
+			err = c.exportFVSDesktopEntry(entries, app, entry)
+			if err != nil {
+				return err
 			}
 		}
-		if exportErr != nil {
-			return exportErr
+		if err != nil {
+			return err
 		}
 	}
 	if err = removeLegacyDesktopExports(app); err != nil {
@@ -317,6 +320,113 @@ func (c *Cpak) createExports(app types.Application) (err error) {
 		}
 	}
 	return
+}
+
+func (c *Cpak) exportFVSDesktopEntry(entries map[string]fvsViewEntry, app types.Application, desktopEntry string) error {
+	entryName := strings.TrimPrefix(path.Clean(desktopEntry), "/")
+	if _, ok := entries[entryName]; !ok {
+		base := path.Base(entryName)
+		names := make([]string, 0, len(entries))
+		for name := range entries {
+			if path.Base(name) == base {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		if len(names) == 0 {
+			return fmt.Errorf("desktop entry %s not found in application layers", base)
+		}
+		entryName = names[0]
+	}
+	data, err := fvsViewFileData(c.Ctx, entries, entryName)
+	if err != nil {
+		return err
+	}
+	return c.writeDesktopExport(entries, app, desktopEntry, string(data))
+}
+
+func (c *Cpak) writeDesktopExport(entries map[string]fvsViewEntry, app types.Application, desktopEntry, content string) error {
+	entryBase := filepath.Base(desktopEntry)
+	desktopDir := filepath.Join(os.Getenv("HOME"), ".local", "share", "applications")
+	if err := os.MkdirAll(desktopDir, 0o755); err != nil {
+		return err
+	}
+	desktopDest := desktopEntryExportPath(app, entryBase)
+
+	iconName := desktopEntryValue([]byte(content), "Icon")
+	if iconName != "" {
+		if iconEntry := findFVSIcon(entries, iconName); iconEntry != "" {
+			iconData, err := fvsViewFileData(c.Ctx, entries, iconEntry)
+			if err != nil {
+				return err
+			}
+			extension := path.Ext(iconEntry)
+			iconDest := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", applicationExportID(app)+extension)
+			if err := os.MkdirAll(filepath.Dir(iconDest), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(iconDest, iconData, 0o644); err != nil {
+				return err
+			}
+			logger.Printf("Exported icon to %s", iconDest)
+			iconName = iconDest
+		} else {
+			logger.Printf("Warning: icon %s not found for app %s", iconName, app.Name)
+		}
+	}
+
+	lines := strings.Split(content, "\n")
+	for index, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "Exec="):
+			lines[index] = rewriteDesktopExec(app.Origin, strings.TrimPrefix(line, "Exec="))
+		case strings.HasPrefix(line, "TryExec="):
+			lines[index] = "TryExec=cpak"
+		case strings.HasPrefix(line, "Icon=") && iconName != "":
+			lines[index] = "Icon=" + iconName
+		}
+	}
+	newContent := strings.Join(lines, "\n")
+	if err := os.WriteFile(desktopDest, []byte(newContent), 0o755); err != nil {
+		return err
+	}
+	return exportDesktopAlias(app, entryBase, newContent)
+}
+
+func findFVSIcon(entries map[string]fvsViewEntry, iconName string) string {
+	if path.IsAbs(iconName) {
+		name := strings.TrimPrefix(path.Clean(iconName), "/")
+		if _, ok := entries[name]; ok {
+			return name
+		}
+		return ""
+	}
+	iconPath := ""
+	iconScore := -1
+	for name := range entries {
+		base := path.Base(name)
+		extension := strings.ToLower(path.Ext(base))
+		if extension != ".png" && extension != ".svg" && extension != ".xpm" {
+			continue
+		}
+		if base != iconName && strings.TrimSuffix(base, extension) != iconName {
+			continue
+		}
+		score := 0
+		if extension == ".svg" {
+			score = 1000000
+		}
+		resolution := path.Base(path.Dir(path.Dir(name)))
+		var width, height int
+		if _, err := fmt.Sscanf(resolution, "%dx%d", &width, &height); err == nil {
+			score += min(width, height)
+		}
+		if score > iconScore || score == iconScore && name < iconPath {
+			iconPath = name
+			iconScore = score
+		}
+	}
+	return iconPath
 }
 
 // exportDesktopEntry exports a desktop entry to the user's home directory
@@ -368,14 +478,7 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 	}
 	var absIconPath string
 	if iconName != "" {
-		for i := len(app.ParsedLayers) - 1; i >= 0; i-- {
-			layer := app.ParsedLayers[i]
-			layerDir := c.GetInStoreDir("layers", layer)
-			if iconPath := findIcon(layerDir, iconName); iconPath != "" {
-				absIconPath = iconPath
-				break
-			}
-		}
+		absIconPath = findIcon(rootFs, iconName)
 
 		if absIconPath == "" && filepath.IsAbs(iconName) {
 			if _, err := os.Stat(iconName); err == nil {
@@ -725,13 +828,7 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		return fmt.Errorf("remove rollback history for %s: %w", appToRemove.Name, err)
 	}
 
-	// an Audit is needed to remove resources (containers, exports, etc.)
-	// which are not used anymore
-	err = c.Audit(true)
-	if err != nil {
-		return
-	}
-	return
+	return c.removeApplicationLayers(appToRemove)
 }
 
 func sessionsRemovedByVersionSelection(apps []types.Application, branch, commit, release string) ([]types.Session, int) {

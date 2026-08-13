@@ -69,6 +69,7 @@ var cpakIcon []byte
 
 func main() {
 	root := &CLI{}
+	root.Run.Configure(cpakIcon)
 	root.SelfUpdate.Configure(version, selfUpdateMode, cpakIcon)
 	app, err := cli.New(root, cli.WithVersion(version))
 	if err != nil {

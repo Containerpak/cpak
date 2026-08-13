@@ -10,14 +10,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
+	"path"
 	"strings"
-	"syscall"
 
+	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/klauspost/compress/zstd"
-	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
 const (
@@ -27,17 +24,7 @@ const (
 	mediaDockerLayerGzip = "application/vnd.docker.image.rootfs.diff.tar.gzip"
 )
 
-type layerDirectory struct {
-	path string
-	mode fs.FileMode
-}
-
-type layerHardlink struct {
-	path   string
-	target string
-}
-
-func unpackLayer(ctx context.Context, compressed io.Reader, mediaType, root string, storage *store.Store) error {
+func unpackLayer(ctx context.Context, compressed io.Reader, mediaType string, writer *fvsrepo.SnapshotWriter) error {
 	reader, closeReader, err := layerReader(compressed, mediaType)
 	if err != nil {
 		return err
@@ -45,8 +32,6 @@ func unpackLayer(ctx context.Context, compressed io.Reader, mediaType, root stri
 	defer closeReader()
 
 	tarReader := tar.NewReader(reader)
-	directories := make([]layerDirectory, 0, 64)
-	hardlinks := make([]layerHardlink, 0, 16)
 	for {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -58,57 +43,52 @@ func unpackLayer(ctx context.Context, compressed io.Reader, mediaType, root stri
 		if readErr != nil {
 			return fmt.Errorf("unpack layer: read tar header: %w", readErr)
 		}
-		path, pathErr := layerPath(root, header.Name)
+		name, pathErr := layerEntryPath(header.Name)
 		if pathErr != nil {
 			return pathErr
 		}
-		if path == "" {
+		if name == "" {
 			continue
 		}
-		mode := tarFileMode(header.Mode)
+		entry := fvsrepo.Entry{
+			Path:    name,
+			Mode:    uint32(header.Mode & 0o7777),
+			ModTime: header.ModTime,
+		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err = os.MkdirAll(path, 0755); err != nil {
-				return fmt.Errorf("unpack layer: create directory: %w", err)
-			}
-			directories = append(directories, layerDirectory{path: path, mode: mode})
+			entry.Kind = fvsrepo.EntryDir
+			err = writer.Add(entry, nil)
 		case tar.TypeReg, tar.TypeRegA, tar.TypeGNUSparse:
-			metadata := store.Metadata{Mode: mode, UID: os.Getuid(), GID: os.Getgid()}
-			if _, err = storage.Import(ctx, path, io.LimitReader(tarReader, header.Size), store.ImportOptions{Metadata: &metadata}); err != nil {
-				return fmt.Errorf("unpack layer: import %s: %w", header.Name, err)
-			}
+			entry.Kind = fvsrepo.EntryFile
+			entry.Size = header.Size
+			err = writer.Add(entry, io.LimitReader(tarReader, header.Size))
 		case tar.TypeSymlink:
-			if err = replaceSymlink(path, header.Linkname); err != nil {
-				return fmt.Errorf("unpack layer: create symlink %s: %w", header.Name, err)
-			}
+			entry.Kind = fvsrepo.EntrySymlink
+			entry.Link = header.Linkname
+			err = writer.Add(entry, nil)
 		case tar.TypeLink:
-			target, targetErr := layerPath(root, header.Linkname)
+			target, targetErr := layerEntryPath(header.Linkname)
 			if targetErr != nil || target == "" {
 				return fmt.Errorf("unpack layer: invalid hardlink target %q", header.Linkname)
 			}
-			hardlinks = append(hardlinks, layerHardlink{path: path, target: target})
+			entry.Kind = fvsrepo.EntryHardlink
+			entry.Link = target
+			err = writer.Add(entry, nil)
 		case tar.TypeFifo:
-			if err = replaceFIFO(path, uint32(mode.Perm())); err != nil {
-				return fmt.Errorf("unpack layer: create fifo %s: %w", header.Name, err)
-			}
+			entry.Kind = fvsrepo.EntryFIFO
+			err = writer.Add(entry, nil)
 		case tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		default:
 			return fmt.Errorf("unpack layer: unsupported tar entry %q with type %d", header.Name, header.Typeflag)
 		}
+		if err != nil {
+			return fmt.Errorf("unpack layer: import %s: %w", header.Name, err)
+		}
 	}
 	if _, err = io.Copy(io.Discard, reader); err != nil {
 		return fmt.Errorf("unpack layer: finish compressed stream: %w", err)
-	}
-	for _, link := range hardlinks {
-		if err = replaceHardlink(link.target, link.path); err != nil {
-			return fmt.Errorf("unpack layer: create hardlink: %w", err)
-		}
-	}
-	for index := len(directories) - 1; index >= 0; index-- {
-		if err = os.Chmod(directories[index].path, directories[index].mode); err != nil {
-			return fmt.Errorf("unpack layer: set directory mode: %w", err)
-		}
 	}
 	return nil
 }
@@ -134,77 +114,16 @@ func layerReader(reader io.Reader, mediaType string) (io.Reader, func() error, e
 	}
 }
 
-func layerPath(root, name string) (string, error) {
-	clean := filepath.Clean(filepath.FromSlash(name))
+func layerEntryPath(name string) (string, error) {
+	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
 	if clean == "." {
 		return "", nil
 	}
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	if strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("unpack layer: path escapes root: %q", name)
 	}
-	if clean == "dev" || strings.HasPrefix(clean, "dev"+string(filepath.Separator)) {
+	if clean == "dev" || strings.HasPrefix(clean, "dev/") {
 		return "", nil
 	}
-	target := filepath.Join(root, clean)
-	current := root
-	parts := strings.Split(filepath.Dir(clean), string(filepath.Separator))
-	for _, part := range parts {
-		if part == "." || part == "" {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("unpack layer: inspect path %q: %w", name, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return "", fmt.Errorf("unpack layer: parent is not a directory: %q", name)
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return "", fmt.Errorf("unpack layer: create parent: %w", err)
-	}
-	return target, nil
-}
-
-func tarFileMode(mode int64) fs.FileMode {
-	result := fs.FileMode(mode & 0777)
-	if mode&04000 != 0 {
-		result |= os.ModeSetuid
-	}
-	if mode&02000 != 0 {
-		result |= os.ModeSetgid
-	}
-	if mode&01000 != 0 {
-		result |= os.ModeSticky
-	}
-	return result
-}
-
-func replaceSymlink(path, target string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return os.Symlink(target, path)
-}
-
-func replaceHardlink(target, path string) error {
-	info, err := os.Lstat(target)
-	if err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("target is not a regular file")
-	}
-	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return os.Link(target, path)
-}
-
-func replaceFIFO(path string, mode uint32) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return syscall.Mkfifo(path, mode)
+	return clean, nil
 }

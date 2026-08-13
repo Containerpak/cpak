@@ -101,6 +101,15 @@ func runTerminal(capsule bootstrap.Capsule) error {
 }
 
 func install(capsule bootstrap.Capsule, progress progressFunc) error {
+	if len(capsule.Companion) > 0 {
+		changed, err := installStorageService(capsule.Companion)
+		if err != nil {
+			return err
+		}
+		if changed {
+			progress("Installed the cpak storage service in ~/.local/bin")
+		}
+	}
 	cpakPath, changed, err := installCpak(capsule.Payload)
 	if err != nil {
 		return err
@@ -122,6 +131,15 @@ func install(capsule bootstrap.Capsule, progress progressFunc) error {
 }
 
 func installCpak(payload []byte) (string, bool, error) {
+	return installBinary("cpak", payload)
+}
+
+func installStorageService(payload []byte) (bool, error) {
+	_, changed, err := installBinary("cpak-storaged", payload)
+	return changed, err
+}
+
+func installBinary(name string, payload []byte) (string, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false, err
@@ -130,13 +148,13 @@ func installCpak(payload []byte) (string, bool, error) {
 	if err = os.MkdirAll(dir, 0755); err != nil {
 		return "", false, err
 	}
-	target := filepath.Join(dir, "cpak")
+	target := filepath.Join(dir, name)
 	wanted := sha256.Sum256(payload)
 	if current, readErr := os.ReadFile(target); readErr == nil && sha256.Sum256(current) == wanted {
 		return target, false, nil
 	}
 
-	temporary, err := os.CreateTemp(dir, ".cpak-*")
+	temporary, err := os.CreateTemp(dir, "."+name+"-*")
 	if err != nil {
 		return "", false, err
 	}

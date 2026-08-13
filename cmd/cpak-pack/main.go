@@ -15,6 +15,7 @@ import (
 func main() {
 	installerPath := flag.String("installer", "", "path to the installer binary")
 	cpakPath := flag.String("cpak", "", "path to the cpak binary")
+	companionPath := flag.String("storaged", "", "path to the cpak storage service binary")
 	outputPath := flag.String("output", "", "output path")
 	flag.Parse()
 	if *installerPath == "" || *cpakPath == "" || *outputPath == "" {
@@ -30,7 +31,14 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	packed, err := bootstrap.PackInstaller(installer, payload)
+	var companion []byte
+	if *companionPath != "" {
+		companion, err = os.ReadFile(*companionPath)
+		if err != nil {
+			fail(err)
+		}
+	}
+	packed, err := bootstrap.PackInstallerWithCompanion(installer, payload, companion)
 	if err != nil {
 		fail(err)
 	}

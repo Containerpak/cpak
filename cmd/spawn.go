@@ -61,6 +61,7 @@ type SpawnCmd struct {
 	StateDir       string   `cli:"state-dir" help:"set the state directory"`
 	ImageDir       string   `cli:"image-dir" help:"set the image directory"`
 	LayersDir      string   `cli:"layers-dir" help:"set the layers directory"`
+	LowerDir       string   `cli:"lower-dir" help:"set the prepared lower directory"`
 	Filesystem     []string `cli:"filesystem" help:"encoded filesystem permission"`
 	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
 	SystemShims    []string `cli:"system-shims" help:"set the system integration shims"`
@@ -102,7 +103,7 @@ func (c *SpawnCmd) Run() error {
 	}
 
 	layersAsList := parseLayers(c.Layers)
-	err = mountLayers(c.Rootfs, c.LayersDir, c.StateDir, layersAsList)
+	err = mountLayers(c.Rootfs, c.LayersDir, c.LowerDir, c.StateDir, layersAsList)
 	if err != nil {
 		return err
 	}
@@ -179,7 +180,11 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 
-	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, c.LayersDir, c.Layers)
+	layersPath := c.LayersDir
+	if c.LowerDir != "" {
+		layersPath = c.LowerDir
+	}
+	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, layersPath, c.Layers)
 	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute)
 	if err != nil {
 		return err
@@ -288,13 +293,16 @@ func parseLayers(layers string) []string {
 	return layersAsList
 }
 
-func mountLayers(rootFs, layersDir string, stateDir string, layersList []string) error {
-	if len(layersList) == 0 {
+func mountLayers(rootFs, layersDir, lowerDir, stateDir string, layersList []string) error {
+	if lowerDir == "" && len(layersList) == 0 {
 		return fmt.Errorf("mount:layers: no layers specified")
 	}
 
-	layerDirs := layerDirectories(layersDir, layersList)
-	layersDirs := strings.Join(layerDirs, ":")
+	layersDirs := lowerDir
+	if layersDirs == "" {
+		layerDirs := layerDirectories(layersDir, layersList)
+		layersDirs = strings.Join(layerDirs, ":")
+	}
 
 	err := tools.MountOverlay(rootFs, layersDirs, filepath.Join(stateDir, "up"), filepath.Join(stateDir, "work"))
 	if err != nil {

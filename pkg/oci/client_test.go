@@ -288,6 +288,43 @@ func TestBlobRangePreservesRangeAcrossRedirect(t *testing.T) {
 	}
 }
 
+func TestResumableBlobContinuesWithVerifiedRange(t *testing.T) {
+	content := []byte("0123456789")
+	descriptor := Descriptor{Digest: digestBytes(content), Size: int64(len(content))}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		if request.Header.Get("Range") == "" {
+			writer.Header().Set("Content-Length", "10")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write(content[:4])
+			return
+		}
+		if request.Header.Get("Range") != "bytes=4-9" {
+			t.Fatalf("range: %q", request.Header.Get("Range"))
+		}
+		writer.Header().Set("Content-Range", "bytes 4-9/10")
+		writer.Header().Set("Content-Length", "6")
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(content[4:])
+	}))
+	defer server.Close()
+
+	ref, _ := ParseReference(strings.TrimPrefix(server.URL, "http://") + "/example/app")
+	reader, err := (&Client{HTTP: server.Client()}).ResumableBlob(context.Background(), ref, descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) || requests.Load() != 2 {
+		t.Fatalf("resumed content: %q requests=%d", got, requests.Load())
+	}
+}
+
 func sourceURL(request *http.Request) string {
 	return "http://" + request.Host
 }

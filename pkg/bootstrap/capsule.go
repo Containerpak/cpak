@@ -27,8 +27,9 @@ const (
 )
 
 var (
-	payloadMagic = [8]byte{'C', 'P', 'A', 'K', 'P', 'A', 'Y', '1'}
-	capsuleMagic = [8]byte{'C', 'P', 'A', 'K', 'A', 'P', 'P', '1'}
+	payloadMagic   = [8]byte{'C', 'P', 'A', 'K', 'P', 'A', 'Y', '1'}
+	companionMagic = [8]byte{'C', 'P', 'A', 'K', 'F', 'V', 'S', '1'}
+	capsuleMagic   = [8]byte{'C', 'P', 'A', 'K', 'A', 'P', 'P', '1'}
 )
 
 type Metadata struct {
@@ -50,8 +51,9 @@ type Permission struct {
 }
 
 type Capsule struct {
-	Metadata Metadata
-	Payload  []byte
+	Metadata  Metadata
+	Payload   []byte
+	Companion []byte
 }
 
 func ParsePrivateKeyPEM(encoded []byte) (ed25519.PrivateKey, error) {
@@ -125,12 +127,20 @@ func validMetadataText(value string, limit int) bool {
 }
 
 func PackInstaller(installer, cpak []byte) ([]byte, error) {
-	capacity, err := checkedCapacity(len(installer), len(cpak), footerSize)
+	return PackInstallerWithCompanion(installer, cpak, nil)
+}
+
+func PackInstallerWithCompanion(installer, cpak, companion []byte) ([]byte, error) {
+	capacity, err := checkedCapacity(len(installer), len(companion), footerSize, len(cpak), footerSize)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]byte, 0, capacity)
 	result = append(result, installer...)
+	if len(companion) > 0 {
+		result = append(result, companion...)
+		result = appendFooter(result, companionMagic, uint64(len(companion)))
+	}
 	result = append(result, cpak...)
 	result = appendFooter(result, payloadMagic, uint64(len(cpak)))
 	return result, nil
@@ -230,7 +240,33 @@ func ReadCapsule(source io.ReaderAt, size int64, publicKey ed25519.PublicKey) (C
 	if _, err = source.ReadAt(payload, payloadOffset); err != nil {
 		return Capsule{}, err
 	}
-	return Capsule{Metadata: metadata, Payload: payload}, nil
+	companionOffset, companionLength, found, err := optionalSection(source, payloadOffset, companionMagic)
+	if err != nil {
+		return Capsule{}, fmt.Errorf("read embedded storage service: %w", err)
+	}
+	var companion []byte
+	if found {
+		companion = make([]byte, companionLength)
+		if _, err = source.ReadAt(companion, companionOffset); err != nil {
+			return Capsule{}, err
+		}
+	}
+	return Capsule{Metadata: metadata, Payload: payload, Companion: companion}, nil
+}
+
+func optionalSection(source io.ReaderAt, size int64, magic [8]byte) (int64, int, bool, error) {
+	if size < footerSize {
+		return 0, 0, false, nil
+	}
+	footer := make([]byte, footerSize)
+	if _, err := source.ReadAt(footer, size-footerSize); err != nil {
+		return 0, 0, false, err
+	}
+	if string(footer[:8]) != string(magic[:]) {
+		return 0, 0, false, nil
+	}
+	offset, length, err := section(source, size, magic, 0)
+	return offset, length, true, err
 }
 
 func section(source io.ReaderAt, size int64, magic [8]byte, trailing int) (int64, int, error) {
