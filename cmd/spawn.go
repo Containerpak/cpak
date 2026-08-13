@@ -73,6 +73,7 @@ type SpawnCmd struct {
 	MountHostRoot  bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
 	Nvidia         bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
 	UserNamespaces bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	AllowPtrace    bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
 	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
@@ -373,12 +374,7 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 }
 
 func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts []string, filesystem []types.FilesystemPermission, mountHostRoot bool) ([]sandbox.PathGrant, error) {
-	grants := []sandbox.PathGrant{
-		{Path: "/tmp"},
-		{Path: "/dev"},
-		{Path: "/proc", ReadOnly: true},
-		{Path: "/sys", ReadOnly: true},
-	}
+	grants := baseSandboxGrants(c.UserNamespaces)
 	c.spawnVerbose("Mounting: /tmp")
 	tmpPath, err := prepareRootfsDirectory(rootFs, "/tmp")
 	if err != nil {
@@ -475,6 +471,15 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, sandbox.PathGrant{Path: cpakSockTarget})
 	}
 	return grants, nil
+}
+
+func baseSandboxGrants(userNamespaces bool) []sandbox.PathGrant {
+	return []sandbox.PathGrant{
+		{Path: "/tmp"},
+		{Path: "/dev"},
+		{Path: "/proc", ReadOnly: true, WriteFiles: userNamespaces},
+		{Path: "/sys", ReadOnly: true},
+	}
 }
 
 func resolveOverrideMountSource(target, hostRoot string) (string, bool, error) {
@@ -910,6 +915,9 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	if c.UserNamespaces {
 		args = append(args, "--user-namespaces")
 	}
+	if c.AllowPtrace {
+		args = append(args, "--allow-ptrace")
+	}
 	args = append(args, landlockArguments(grants)...)
 	args = append(args, "--")
 	args = append(args, request.Args...)
@@ -981,7 +989,9 @@ func landlockArguments(grants []sandbox.PathGrant) []string {
 	args := make([]string, 0, len(grants)*2)
 	for _, grant := range grants {
 		flag := "--landlock-read-write"
-		if grant.ReadOnly {
+		if grant.WriteFiles {
+			flag = "--landlock-write-files"
+		} else if grant.ReadOnly {
 			flag = "--landlock-read-only"
 		}
 		args = append(args, flag, grant.Path)

@@ -17,10 +17,12 @@ import (
 )
 
 type LaunchCmd struct {
-	UserNamespaces    bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
-	LandlockReadOnly  []string `cli:"landlock-read-only" help:"grant read-only filesystem access"`
-	LandlockReadWrite []string `cli:"landlock-read-write" help:"grant read-write filesystem access"`
-	ExtraArgs         []string `arg:"extra" help:"command and arguments"`
+	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside a private process namespace"`
+	LandlockReadOnly   []string `cli:"landlock-read-only" help:"grant read-only filesystem access"`
+	LandlockWriteFiles []string `cli:"landlock-write-files" help:"grant writes to existing files"`
+	LandlockReadWrite  []string `cli:"landlock-read-write" help:"grant read-write filesystem access"`
+	ExtraArgs          []string `arg:"extra" help:"command and arguments"`
 
 	cli.Base
 }
@@ -29,13 +31,7 @@ func (c *LaunchCmd) Run() error {
 	if len(c.ExtraArgs) == 0 {
 		return fmt.Errorf("command is required")
 	}
-	grants := make([]sandbox.PathGrant, 0, len(c.LandlockReadOnly)+len(c.LandlockReadWrite))
-	for _, path := range c.LandlockReadOnly {
-		grants = append(grants, sandbox.PathGrant{Path: path, ReadOnly: true})
-	}
-	for _, path := range c.LandlockReadWrite {
-		grants = append(grants, sandbox.PathGrant{Path: path})
-	}
+	grants := c.landlockGrants()
 	if len(grants) == 0 {
 		return fmt.Errorf("landlock grants are required")
 	}
@@ -46,7 +42,7 @@ func (c *LaunchCmd) Run() error {
 			return err
 		}
 	}
-	if err := sandbox.ApplySeccomp(c.UserNamespaces); err != nil {
+	if err := sandbox.ApplySeccomp(c.UserNamespaces, c.AllowPtrace); err != nil {
 		if errors.Is(err, sandbox.ErrUnavailable) {
 			c.Logger.Warning("Seccomp is unavailable; continuing without syscall restrictions")
 		} else {
@@ -58,4 +54,18 @@ func (c *LaunchCmd) Run() error {
 		return err
 	}
 	return syscall.Exec(path, c.ExtraArgs, os.Environ())
+}
+
+func (c *LaunchCmd) landlockGrants() []sandbox.PathGrant {
+	grants := make([]sandbox.PathGrant, 0, len(c.LandlockReadOnly)+len(c.LandlockWriteFiles)+len(c.LandlockReadWrite))
+	for _, path := range c.LandlockReadOnly {
+		grants = append(grants, sandbox.PathGrant{Path: path, ReadOnly: true})
+	}
+	for _, path := range c.LandlockWriteFiles {
+		grants = append(grants, sandbox.PathGrant{Path: path, ReadOnly: true, WriteFiles: true})
+	}
+	for _, path := range c.LandlockReadWrite {
+		grants = append(grants, sandbox.PathGrant{Path: path})
+	}
+	return grants
 }

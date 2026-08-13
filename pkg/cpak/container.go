@@ -360,6 +360,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if override.UserNamespaces {
 		cmds = append(cmds, "--user-namespaces")
 	}
+	if applicationPtraceAllowed(override) {
+		cmds = append(cmds, "--allow-ptrace")
+	}
 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
@@ -483,6 +486,10 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		return "", 0, "", fmt.Errorf("container init is not running: %w", err)
 	}
 	return
+}
+
+func applicationPtraceAllowed(override types.Override) bool {
+	return override.UserNamespaces && !override.Process
 }
 
 func inheritHostTimezone(env []string) []string {

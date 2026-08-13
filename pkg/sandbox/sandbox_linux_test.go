@@ -22,6 +22,7 @@ import (
 func TestNormalizeGrantsKeepsTheLeastRestrictiveRule(t *testing.T) {
 	grants := normalizeGrants([]PathGrant{
 		{Path: "/readonly", ReadOnly: true},
+		{Path: "/readonly", ReadOnly: true, WriteFiles: true},
 		{Path: "/readonly", ReadOnly: false},
 		{Path: "relative", ReadOnly: false},
 	})
@@ -30,6 +31,16 @@ func TestNormalizeGrantsKeepsTheLeastRestrictiveRule(t *testing.T) {
 	}
 	if grants[0].ReadOnly {
 		t.Fatalf("grant must keep writable permission: %v", grants[0])
+	}
+}
+
+func TestNormalizeGrantsKeepsExistingFileWrites(t *testing.T) {
+	grants := normalizeGrants([]PathGrant{
+		{Path: "/proc", ReadOnly: true},
+		{Path: "/proc", ReadOnly: true, WriteFiles: true},
+	})
+	if len(grants) != 1 || !grants[0].ReadOnly || !grants[0].WriteFiles {
+		t.Fatalf("grant must keep existing file writes: %v", grants)
 	}
 }
 
@@ -47,8 +58,8 @@ func TestSeccompMountSyscallsFollowNestedUserNamespaceOverride(t *testing.T) {
 		t.Skip("unsupported audit architecture")
 	}
 	for _, profile := range profiles {
-		blocked := seccompProfileFilter(profile, false)
-		allowed := seccompProfileFilter(profile, true)
+		blocked := seccompProfileFilter(profile, false, false)
+		allowed := seccompProfileFilter(profile, true, false)
 		for _, number := range profile.namespaceMount {
 			deny := bpfDeny(number, uint32(unix.EPERM))
 			if !containsFilterSequence(blocked, deny) {
@@ -57,6 +68,22 @@ func TestSeccompMountSyscallsFollowNestedUserNamespaceOverride(t *testing.T) {
 			if containsFilterSequence(allowed, deny) {
 				t.Fatalf("namespace mount syscall %d remains blocked", number)
 			}
+		}
+	}
+}
+
+func TestSeccompPtraceFollowsProcessNamespaceIsolation(t *testing.T) {
+	profiles, supported := seccompProfiles()
+	if !supported {
+		t.Skip("unsupported audit architecture")
+	}
+	for _, profile := range profiles {
+		deny := bpfDeny(profile.ptrace, uint32(unix.EPERM))
+		if !containsFilterSequence(seccompProfileFilter(profile, true, false), deny) {
+			t.Fatalf("ptrace syscall %d is not blocked", profile.ptrace)
+		}
+		if containsFilterSequence(seccompProfileFilter(profile, true, true), deny) {
+			t.Fatalf("ptrace syscall %d remains blocked", profile.ptrace)
 		}
 	}
 }
@@ -76,7 +103,7 @@ func TestSeccompFiltersEndWithAllow(t *testing.T) {
 		t.Skip("unsupported audit architecture")
 	}
 	for _, allowUserNamespaces := range []bool{false, true} {
-		filter := seccompFilter(profiles, allowUserNamespaces)
+		filter := seccompFilter(profiles, allowUserNamespaces, false)
 		last := filter[len(filter)-1]
 		if last.Code != unix.BPF_RET|unix.BPF_K || last.K != unix.SECCOMP_RET_ALLOW {
 			t.Fatalf("allow user namespaces %t: final instruction does not allow", allowUserNamespaces)
@@ -153,7 +180,7 @@ func TestLandlockAllowsWritableChildOfReadOnlyRoot(t *testing.T) {
 }
 
 func TestLandlockDeviceGrantExcludesDirectoryAccess(t *testing.T) {
-	access := landlockGrantAccess(7, false, unix.S_IFCHR)
+	access := landlockGrantAccess(7, PathGrant{}, unix.S_IFCHR)
 	directoryAccess := landlockAccess(7) &^ landlockFileAccess(7)
 	if access&directoryAccess != 0 {
 		t.Fatalf("device grant contains directory access: %#x", access)
@@ -161,6 +188,33 @@ func TestLandlockDeviceGrantExcludesDirectoryAccess(t *testing.T) {
 	if access&unix.LANDLOCK_ACCESS_FS_WRITE_FILE == 0 || access&unix.LANDLOCK_ACCESS_FS_IOCTL_DEV == 0 {
 		t.Fatalf("device grant is missing writable device access: %#x", access)
 	}
+}
+
+func TestLandlockExistingFileGrantExcludesDirectoryMutation(t *testing.T) {
+	access := landlockGrantAccess(7, PathGrant{ReadOnly: true, WriteFiles: true}, unix.S_IFDIR)
+	if access&unix.LANDLOCK_ACCESS_FS_WRITE_FILE == 0 || access&unix.LANDLOCK_ACCESS_FS_TRUNCATE == 0 {
+		t.Fatalf("existing file grant is missing file writes: %#x", access)
+	}
+	for _, denied := range []uint64{
+		unix.LANDLOCK_ACCESS_FS_REMOVE_DIR,
+		unix.LANDLOCK_ACCESS_FS_REMOVE_FILE,
+		unix.LANDLOCK_ACCESS_FS_MAKE_DIR,
+		unix.LANDLOCK_ACCESS_FS_MAKE_REG,
+		unix.LANDLOCK_ACCESS_FS_REFER,
+	} {
+		if access&denied != 0 {
+			t.Fatalf("existing file grant contains directory mutation %#x: %#x", denied, access)
+		}
+	}
+}
+
+func TestLandlockAllowsExistingFileWritesOnly(t *testing.T) {
+	directory := t.TempDir()
+	existing := filepath.Join(directory, "existing")
+	if err := os.WriteFile(existing, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSandboxHelper(t, "existing-files", directory, "")
 }
 
 func TestLandlockAllowsDeviceGrant(t *testing.T) {
@@ -175,7 +229,7 @@ func TestSandboxHelper(t *testing.T) {
 
 	switch mode {
 	case "seccomp":
-		if err := ApplySeccomp(false); err != nil {
+		if err := ApplySeccomp(false, false); err != nil {
 			if errors.Is(err, ErrUnavailable) {
 				os.Exit(77)
 			}
@@ -193,7 +247,7 @@ func TestSandboxHelper(t *testing.T) {
 		}
 		os.Exit(0)
 	case "seccomp-userns":
-		if err := ApplySeccomp(true); err != nil {
+		if err := ApplySeccomp(true, false); err != nil {
 			if errors.Is(err, ErrUnavailable) {
 				os.Exit(77)
 			}
@@ -263,6 +317,25 @@ func TestSandboxHelper(t *testing.T) {
 		}
 		if err = file.Close(); err != nil {
 			failSandboxHelper("close device: %v", err)
+		}
+		os.Exit(0)
+	case "existing-files":
+		directory := os.Getenv("CPAK_SANDBOX_ALLOWED")
+		existing := filepath.Join(directory, "existing")
+		if _, err := ApplyLandlock([]PathGrant{{Path: directory, ReadOnly: true, WriteFiles: true}}); err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				os.Exit(77)
+			}
+			failSandboxHelper(err)
+		}
+		if err := os.WriteFile(existing, []byte("new"), 0o644); err != nil {
+			failSandboxHelper("write existing file: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "new"), []byte("no"), 0o644); !errors.Is(err, unix.EACCES) {
+			failSandboxHelper("create file: %v", err)
+		}
+		if err := os.Remove(existing); !errors.Is(err, unix.EACCES) {
+			failSandboxHelper("remove file: %v", err)
 		}
 		os.Exit(0)
 	default:

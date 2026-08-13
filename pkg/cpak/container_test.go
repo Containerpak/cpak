@@ -207,6 +207,18 @@ func TestOpenURIEnvironmentKeepsTheHostDesktop(t *testing.T) {
 	}
 }
 
+func TestApplicationPtraceRequiresPrivateNestedNamespaces(t *testing.T) {
+	if applicationPtraceAllowed(types.Override{}) {
+		t.Fatal("ptrace is allowed without nested user namespaces")
+	}
+	if applicationPtraceAllowed(types.Override{UserNamespaces: true, Process: true}) {
+		t.Fatal("ptrace is allowed with the host process namespace")
+	}
+	if !applicationPtraceAllowed(types.Override{UserNamespaces: true}) {
+		t.Fatal("ptrace is blocked in a private nested sandbox")
+	}
+}
+
 func TestApplicationMachineIDIsStableAndPrivate(t *testing.T) {
 	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
 	first, err := cp.applicationMachineID("application-one")

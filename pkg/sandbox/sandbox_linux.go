@@ -20,8 +20,9 @@ import (
 var ErrUnavailable = errors.New("sandbox feature is unavailable")
 
 type PathGrant struct {
-	Path     string
-	ReadOnly bool
+	Path       string
+	ReadOnly   bool
+	WriteFiles bool
 }
 
 func ApplyLandlock(grants []PathGrant) (int, error) {
@@ -47,7 +48,7 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 			unix.Close(fd)
 			return 0, fmt.Errorf("stat landlock path %s: %w", grant.Path, statErr)
 		}
-		access := landlockGrantAccess(version, grant.ReadOnly, stat.Mode)
+		access := landlockGrantAccess(version, grant, stat.Mode)
 		addErr := landlockAddPathRule(ruleset, access, fd)
 		closeErr := unix.Close(fd)
 		if addErr != nil {
@@ -70,10 +71,15 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 	return version, nil
 }
 
-func landlockGrantAccess(version int, readOnly bool, mode uint32) uint64 {
+func landlockGrantAccess(version int, grant PathGrant, mode uint32) uint64 {
 	access := landlockReadAccess(version)
-	if !readOnly {
+	if !grant.ReadOnly {
 		access = landlockAccess(version)
+	} else if grant.WriteFiles {
+		access |= unix.LANDLOCK_ACCESS_FS_WRITE_FILE
+		if version >= 3 {
+			access |= unix.LANDLOCK_ACCESS_FS_TRUNCATE
+		}
 	}
 	if mode&unix.S_IFMT != unix.S_IFDIR {
 		access &= landlockFileAccess(version)
@@ -81,7 +87,7 @@ func landlockGrantAccess(version int, readOnly bool, mode uint32) uint64 {
 	return access
 }
 
-func ApplySeccomp(allowUserNamespaces bool) error {
+func ApplySeccomp(allowUserNamespaces, allowPtrace bool) error {
 	profiles, supported := seccompProfiles()
 	if !supported {
 		return ErrUnavailable
@@ -89,7 +95,7 @@ func ApplySeccomp(allowUserNamespaces bool) error {
 	if err := enableNoNewPrivileges(); err != nil {
 		return err
 	}
-	filter := seccompFilter(profiles, allowUserNamespaces)
+	filter := seccompFilter(profiles, allowUserNamespaces, allowPtrace)
 	program := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
 	if err := unix.Prctl(unix.PR_SET_SECCOMP, unix.SECCOMP_MODE_FILTER, uintptr(unsafe.Pointer(&program)), 0, 0); err != nil {
 		if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EOPNOTSUPP) {
@@ -115,8 +121,9 @@ func normalizeGrants(grants []PathGrant) []PathGrant {
 			continue
 		}
 		current, exists := merged[path]
-		if !exists || !grant.ReadOnly {
-			merged[path] = PathGrant{Path: path, ReadOnly: grant.ReadOnly}
+		if !exists || pathGrantAccess(grant) > pathGrantAccess(current) {
+			grant.Path = path
+			merged[path] = grant
 			continue
 		}
 		merged[path] = current
@@ -131,6 +138,16 @@ func normalizeGrants(grants []PathGrant) []PathGrant {
 		result = append(result, merged[path])
 	}
 	return result
+}
+
+func pathGrantAccess(grant PathGrant) int {
+	if !grant.ReadOnly {
+		return 2
+	}
+	if grant.WriteFiles {
+		return 1
+	}
+	return 0
 }
 
 func landlockVersion() (int, error) {
@@ -237,15 +254,16 @@ type seccompProfile struct {
 	unshare        uint32
 	clone3         uint32
 	clone          uint32
+	ptrace         uint32
 }
 
-func seccompFilter(profiles []seccompProfile, allowUserNamespaces bool) []unix.SockFilter {
+func seccompFilter(profiles []seccompProfile, allowUserNamespaces, allowPtrace bool) []unix.SockFilter {
 	filter := []unix.SockFilter{bpfLoad(4)}
 	sections := make([][]unix.SockFilter, len(profiles))
 	headerLength := 1 + len(profiles) + 1
 	nextSection := headerLength
 	for index, profile := range profiles {
-		sections[index] = seccompProfileFilter(profile, allowUserNamespaces)
+		sections[index] = seccompProfileFilter(profile, allowUserNamespaces, allowPtrace)
 		offset := nextSection - (1 + index) - 1
 		filter = append(filter, bpfJump(unix.BPF_JEQ, profile.architecture, uint8(offset), 0))
 		nextSection += len(sections[index])
@@ -257,13 +275,16 @@ func seccompFilter(profiles []seccompProfile, allowUserNamespaces bool) []unix.S
 	return filter
 }
 
-func seccompProfileFilter(profile seccompProfile, allowUserNamespaces bool) []unix.SockFilter {
+func seccompProfileFilter(profile seccompProfile, allowUserNamespaces, allowPtrace bool) []unix.SockFilter {
 	filter := []unix.SockFilter{
 		bpfLoad(0),
 		bpfJump(unix.BPF_JGE, 0x40000000, 0, 1),
 		bpfReturn(unix.SECCOMP_RET_KILL_PROCESS),
 	}
 	for _, number := range profile.blocked {
+		if allowPtrace && number == profile.ptrace {
+			continue
+		}
 		filter = append(filter, bpfDeny(number, uint32(unix.EPERM))...)
 	}
 
@@ -336,6 +357,7 @@ func seccompProfiles() ([]seccompProfile, bool) {
 		unshare:        uint32(unix.SYS_UNSHARE),
 		clone3:         uint32(unix.SYS_CLONE3),
 		clone:          uint32(unix.SYS_CLONE),
+		ptrace:         uint32(unix.SYS_PTRACE),
 	}
 	switch runtime.GOARCH {
 	case "amd64":
@@ -363,5 +385,6 @@ func linuxI386SeccompProfile() seccompProfile {
 		unshare:        310,
 		clone3:         435,
 		clone:          120,
+		ptrace:         26,
 	}
 }

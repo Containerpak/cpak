@@ -47,6 +47,30 @@ func TestLayerDirectoriesUseOverlayPriority(t *testing.T) {
 	}
 }
 
+func TestBaseSandboxGrantsLimitProcWritesToNestedSandboxes(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		userNamespaces bool
+		want           sandbox.PathGrant
+	}{
+		{name: "disabled", want: sandbox.PathGrant{Path: "/proc", ReadOnly: true}},
+		{name: "enabled", userNamespaces: true, want: sandbox.PathGrant{Path: "/proc", ReadOnly: true, WriteFiles: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var proc sandbox.PathGrant
+			for _, grant := range baseSandboxGrants(test.userNamespaces) {
+				if grant.Path == "/proc" {
+					proc = grant
+					break
+				}
+			}
+			if proc != test.want {
+				t.Fatalf("proc grant: got %+v, want %+v", proc, test.want)
+			}
+		})
+	}
+}
+
 func TestPrepareRootfsBindTargetReusesAnExistingMount(t *testing.T) {
 	rootfs := t.TempDir()
 	source := filepath.Join(t.TempDir(), "service.sock")
@@ -87,10 +111,12 @@ func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 func TestLandlockArgumentsKeepAccessModes(t *testing.T) {
 	got := landlockArguments([]sandbox.PathGrant{
 		{Path: "/", ReadOnly: true},
+		{Path: "/proc", ReadOnly: true, WriteFiles: true},
 		{Path: "/tmp"},
 	})
 	want := []string{
 		"--landlock-read-only", "/",
+		"--landlock-write-files", "/proc",
 		"--landlock-read-write", "/tmp",
 	}
 	if !reflect.DeepEqual(got, want) {
