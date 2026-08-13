@@ -3,8 +3,8 @@
   <img src="cpak-logo.svg#gh-dark-mode-only" height="120">
   <p>A portable, low-overhead application format for Linux.</p>
   <p>
-    <a href="https://github.com/fabricatorsltd/FPAL/blob/main/LICENSE-TCV.md">
-      <img src="https://img.shields.io/badge/License-FPAL_TCV_1.0-orange.svg" alt="License: FPAL-TCV-1.0">
+    <a href="LICENSE">
+      <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPLv3">
     </a>
   </p>
 </div>
@@ -303,3 +303,15 @@ that was installed.
 
 The full user and package author documentation is available at
 [cpak.it](https://cpak.it/).
+
+## Contributing
+
+Contributions are accepted under the [Contributor License Agreement](CLA.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+## License
+
+cpak is available under the [GNU General Public License v3.0 only](LICENSE).
+Non-exclusive commercial licenses are available directly from
+[Mirko Brombin](https://bromb.in/). See
+[COMMERCIAL-LICENSING.md](COMMERCIAL-LICENSING.md) for the licensing notice.
