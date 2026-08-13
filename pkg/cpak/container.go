@@ -44,12 +44,12 @@ import (
 // use the user's home directory for that or expose other system directories
 // where data can be stored.
 func (c *Cpak) PrepareContainer(app types.Application, override types.Override) (container types.Container, err error) {
-	return c.prepareContainer(app, override, app.CpakId, "")
+	return c.prepareContainer(app, override, app.CpakId, "", nil)
 }
 
 func (c *Cpak) PrepareContainerInstance(app types.Application, override types.Override, instance string) (types.Container, error) {
 	scope := ApplicationScope(app.CpakId, instance)
-	return c.prepareContainer(app, override, scope, instance)
+	return c.prepareContainer(app, override, scope, instance, nil)
 }
 
 func ApplicationScope(applicationCpakId, instance string) string {
@@ -61,31 +61,21 @@ func ApplicationScope(applicationCpakId, instance string) string {
 
 func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Override) (types.Container, error) {
 	scope := app.CpakId + ":nested:" + uuid.NewString()
-	return c.prepareContainer(app, override, scope, "")
+	return c.prepareContainer(app, override, scope, "", nil)
 }
 
-func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string) (container types.Container, err error) {
+func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string, store *Store) (container types.Container, err error) {
 	unlock, err := c.lockContainerScope(scope)
 	if err != nil {
 		return types.Container{}, err
 	}
 	defer unlock()
 
-	addons, err := c.resolveEnabledAddons(app)
-	if err != nil {
-		return types.Container{}, err
-	}
-	components, err := c.resolveLayerDependencies(app)
-	if err != nil {
-		return types.Container{}, err
-	}
-	policyHash, err := containerPolicyHash(override, components, addons)
-	if err != nil {
-		return types.Container{}, err
-	}
-	store, err := NewStore(c.Options.StorePath)
-	if err != nil {
-		return
+	if store == nil {
+		store, err = NewStore(c.Options.StorePath)
+		if err != nil {
+			return
+		}
 	}
 	defer func() {
 		if store != nil {
@@ -93,6 +83,18 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		}
 	}()
 
+	addons, err := c.resolveEnabledAddonsFromStore(app, store)
+	if err != nil {
+		return types.Container{}, err
+	}
+	components, err := c.resolveLayerDependenciesFromStore(app, store)
+	if err != nil {
+		return types.Container{}, err
+	}
+	policyHash, err := containerPolicyHash(override, components, addons)
+	if err != nil {
+		return types.Container{}, err
+	}
 	// Check if a container already exists for the given application
 	scopedApp := app
 	scopedApp.CpakId = scope

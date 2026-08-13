@@ -286,6 +286,22 @@ func (c *Cpak) resolveEnabledAddons(app types.Application) ([]types.Application,
 		return nil, nil
 	}
 
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return c.resolveEnabledAddonsFromStore(app, store)
+}
+
+func (c *Cpak) resolveEnabledAddonsFromStore(app types.Application, store *Store) ([]types.Application, error) {
+	enabled, err := loadEnabledAddons(app)
+	if err != nil {
+		return nil, err
+	}
+	if len(enabled) == 0 {
+		return nil, nil
+	}
 	enabledSet := make(map[string]bool, len(enabled))
 	for _, origin := range enabled {
 		if !supportedAddon(app, origin) {
@@ -293,12 +309,6 @@ func (c *Cpak) resolveEnabledAddons(app types.Application) ([]types.Application,
 		}
 		enabledSet[origin] = true
 	}
-
-	store, err := NewStore(c.Options.StorePath)
-	if err != nil {
-		return nil, err
-	}
-	defer store.Close()
 
 	addons := make([]types.Application, 0, len(enabled))
 	seen := make(map[string]bool, len(enabled))

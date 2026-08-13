@@ -92,11 +92,8 @@ func (c *Cpak) RunInstance(origin string, version string, branch string, commit 
 		_ = store.Close()
 		return fmt.Errorf("no application found for origin %s and version/criteria %s: %w", origin, version, err)
 	}
-	if err := store.Close(); err != nil {
-		return err
-	}
 
-	return c.runApplicationInstance(app, resolvedOverride(app), instance, binary, verbose, false, extraArgs...)
+	return c.runApplicationInstanceWithStore(app, resolvedOverride(app), instance, binary, verbose, false, store, extraArgs...)
 }
 
 func (c *Cpak) RunAuthorized(params types.RequestParams, verbose bool) error {
@@ -113,13 +110,17 @@ func (c *Cpak) runApplication(app types.Application, override types.Override, bi
 }
 
 func (c *Cpak) runApplicationInstance(app types.Application, override types.Override, instance, binary string, verbose, nested bool, extraArgs ...string) error {
+	return c.runApplicationInstanceWithStore(app, override, instance, binary, verbose, nested, nil, extraArgs...)
+}
+
+func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override types.Override, instance, binary string, verbose, nested bool, store *Store, extraArgs ...string) error {
 	startTime := time.Now()
 	var container types.Container
 	var err error
 	if nested {
 		container, err = c.PrepareNestedContainer(app, override)
 	} else {
-		container, err = c.PrepareContainerInstance(app, override, instance)
+		container, err = c.prepareContainer(app, override, ApplicationScope(app.CpakId, instance), instance, store)
 	}
 	if err != nil {
 		return err

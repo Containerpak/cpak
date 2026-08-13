@@ -75,11 +75,23 @@ func GetNvidiaLibs() ([]string, error) {
 }
 
 func GetNvidiaMounts(rootFs string) ([]NvidiaMount, error) {
+	if !nvidiaDriverAvailableAt("/") {
+		return nil, nil
+	}
 	files, err := GetNvidiaLibs()
 	if err != nil {
 		return nil, err
 	}
 	return nvidiaMountsForFiles(rootFs, files), nil
+}
+
+func nvidiaDriverAvailableAt(root string) bool {
+	for _, path := range []string{"/dev/nvidiactl", "/proc/driver/nvidia/version", "/sys/module/nvidia/version"} {
+		if _, err := os.Stat(filepath.Join(root, strings.TrimPrefix(path, "/"))); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func nvidiaMountsForFiles(rootFs string, files []string) []NvidiaMount {
@@ -315,12 +327,12 @@ func matchLibrary(path string, d fs.DirEntry) bool {
 }
 
 func matchLibraryName(name string) bool {
-	if strings.HasPrefix(name, "libnvcuvid") || strings.HasPrefix(name, "libnvoptix") {
+	lower := strings.ToLower(name)
+	if strings.HasPrefix(lower, "libnvcuvid") || strings.HasPrefix(lower, "libnvoptix") || strings.HasPrefix(lower, "libcuda") {
 		return true
 	}
-	if strings.Contains(strings.ToLower(name), ".so") {
-		lower := strings.ToLower(name)
-		if strings.Contains(lower, "nvidia") || strings.Contains(lower, "cuda") {
+	if strings.Contains(lower, ".so") {
+		if strings.Contains(lower, "nvidia") {
 			return true
 		}
 	}

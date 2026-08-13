@@ -107,3 +107,33 @@ func TestGetNvidiaLibraryDirs(t *testing.T) {
 		t.Fatalf("GetNvidiaLibraryDirs() = %v, want %v", got, want)
 	}
 }
+
+func TestNvidiaDriverAvailableAt(t *testing.T) {
+	root := t.TempDir()
+	if nvidiaDriverAvailableAt(root) {
+		t.Fatal("empty root reported an NVIDIA driver")
+	}
+	path := filepath.Join(root, "sys", "module", "nvidia")
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "version"), []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !nvidiaDriverAvailableAt(root) {
+		t.Fatal("NVIDIA module version was not detected")
+	}
+}
+
+func TestMatchNvidiaLibraryName(t *testing.T) {
+	for _, name := range []string{"libcuda.so.1", "libcudart.so", "libnvidia-glcore.so.565", "libnvcuvid.so"} {
+		if !matchLibraryName(name) {
+			t.Fatalf("NVIDIA library %s was not detected", name)
+		}
+	}
+	for _, name := range []string{"libicudata.so.78", "libexample.so"} {
+		if matchLibraryName(name) {
+			t.Fatalf("unrelated library %s was detected as NVIDIA", name)
+		}
+	}
+}

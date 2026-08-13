@@ -15,7 +15,13 @@ func (c *Cpak) resolveLayerDependencies(app types.Application) ([]types.Applicat
 		return nil, err
 	}
 	defer store.Close()
+	return c.resolveLayerDependenciesFromStore(app, store)
+}
 
+func (c *Cpak) resolveLayerDependenciesFromStore(app types.Application, store *Store) ([]types.Application, error) {
+	if len(app.ParsedDependencies) == 0 {
+		return nil, nil
+	}
 	states := make(map[string]int)
 	states[app.CpakId] = 1
 	components := make([]types.Application, 0)
