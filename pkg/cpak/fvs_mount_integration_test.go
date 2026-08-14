@@ -24,6 +24,25 @@ func TestLegacyRunningContainerDoesNotRequireAnFVSMount(t *testing.T) {
 	}
 }
 
+func TestFVSManagerSocketIsScopedToTheMountNamespace(t *testing.T) {
+	cp := newTestCpak(t)
+	one, err := cp.fvsManagerSocketForNamespace("mnt:[1]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := cp.fvsManagerSocketForNamespace("mnt:[2]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := cp.legacyFVSManagerSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one == two || one == legacy || two == legacy {
+		t.Fatalf("storage service sockets are not isolated: %q %q %q", one, two, legacy)
+	}
+}
+
 func TestFVSMountLifecycle(t *testing.T) {
 	binary := os.Getenv("CPAK_FVS2D_TEST_BINARY")
 	if binary == "" {
@@ -34,11 +53,11 @@ func TestFVSMountLifecycle(t *testing.T) {
 	seedFVSLayerFile(t, cp, "base", "usr/share/base", []byte("base"))
 	seedFVSLayerFile(t, cp, "top", "usr/share/top", []byte("top"))
 	state := cp.GetInStoreDir("states", "test")
-	mountID, mountPath, err := cp.prepareFVSMount(state, []string{"base", "top"})
+	mountID, mountPath, managerSocket, err := cp.prepareFVSMount(state, []string{"base", "top"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cp.releaseFVSMount(mountID)
+	defer cp.releaseFVSMount(mountID, managerSocket)
 	for name, expected := range map[string]string{"base": "base", "top": "top"} {
 		content, err := os.ReadFile(filepath.Join(mountPath, "usr", "share", name))
 		if err != nil {
@@ -48,7 +67,7 @@ func TestFVSMountLifecycle(t *testing.T) {
 			t.Fatalf("%s = %q", name, content)
 		}
 	}
-	if err := cp.releaseFVSMount(mountID); err != nil {
+	if err := cp.releaseFVSMount(mountID, managerSocket); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(mountPath); err != nil {
@@ -72,11 +91,11 @@ func TestFVSMountMigratesLegacyLayer(t *testing.T) {
 	}
 
 	state := cp.GetInStoreDir("states", "migration")
-	mountID, mountPath, err := cp.prepareFVSMount(state, []string{"legacy"})
+	mountID, mountPath, managerSocket, err := cp.prepareFVSMount(state, []string{"legacy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cp.cleanupFVSMount(mountID, mountPath)
+	defer cp.cleanupFVSMount(mountID, mountPath, managerSocket)
 
 	content, err := os.ReadFile(filepath.Join(mountPath, "usr", "share", "value"))
 	if err != nil {
@@ -123,11 +142,11 @@ func TestFVSUpgradeFromV201Store(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := cp.GetInStoreDir("states", "upgrade-probe")
-	mountID, mountPath, err := cp.prepareFVSMount(state, []string{"upgrade-probe"})
+	mountID, mountPath, managerSocket, err := cp.prepareFVSMount(state, []string{"upgrade-probe"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cp.cleanupFVSMount(mountID, mountPath)
+	defer cp.cleanupFVSMount(mountID, mountPath, managerSocket)
 	content, err := os.ReadFile(filepath.Join(mountPath, "usr", "share", "version"))
 	if err != nil {
 		t.Fatal(err)

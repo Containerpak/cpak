@@ -65,6 +65,9 @@ type Container struct {
 	// FVSLayerMountPath is the lower directory passed to OverlayFS.
 	FVSLayerMountPath string `json:"fvs_layer_mount_path"`
 
+	// FVSManagerSocketPath identifies the storage service that owns the layer view.
+	FVSManagerSocketPath string `json:"fvs_manager_socket_path"`
+
 	// Instance identifies the optional application instance.
 	Instance string `json:"instance"`
 

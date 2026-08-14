@@ -166,7 +166,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
-	container.FVSLayerMountId, container.FVSLayerMountPath, err = c.prepareLayerMount(container.StatePath, composedLayers(app, components, addons))
+	container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath, err = c.prepareLayerMount(container.StatePath, composedLayers(app, components, addons))
 	if err != nil {
 		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 		os.RemoveAll(container.StatePath)
@@ -175,7 +175,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	mountOwned := true
 	defer func() {
 		if err != nil && mountOwned {
-			_ = c.releaseFVSMount(container.FVSLayerMountId)
+			_ = c.releaseFVSMount(container.FVSLayerMountId, container.FVSManagerSocketPath)
 		}
 	}()
 
@@ -278,7 +278,7 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 4
+const containerRuntimePolicyVersion = 5
 
 const openURIMimeApps = `[Default Applications]
 x-scheme-handler/http=cpak-open-uri.desktop;
@@ -966,7 +966,7 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	stopSystemBroker(container.SystemBrokerPid)
 	cleanupSystemBrokerRuntime(container)
 	cleanupCgroup(container.CpakId, container.CgroupPath)
-	if releaseErr := c.cleanupFVSMount(container.FVSLayerMountId, container.FVSLayerMountPath); releaseErr != nil {
+	if releaseErr := c.cleanupFVSMount(container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath); releaseErr != nil {
 		logger.Printf("Cannot release FVS mount %s: %v", container.FVSLayerMountId, releaseErr)
 	}
 	_ = os.Chmod(filepath.Join(container.StatePath, "work", "work"), 0o700)

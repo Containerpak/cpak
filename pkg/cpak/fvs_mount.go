@@ -28,41 +28,45 @@ const fvsManagerTimeout = 5 * time.Second
 
 var errStorageServiceMissing = errors.New("cpak storage service is not installed")
 
-func (c *Cpak) prepareLayerMount(statePath string, layers []string) (string, string, error) {
+func (c *Cpak) prepareLayerMount(statePath string, layers []string) (string, string, string, error) {
 	if _, err := findStorageService(); err == nil {
 		return c.prepareFVSMount(statePath, layers)
 	} else if !errors.Is(err, errStorageServiceMissing) {
-		return "", "", err
+		return "", "", "", err
 	}
 	for _, layer := range layers {
 		info, err := os.Stat(c.GetInStoreDir("layers", layer))
 		if err != nil || !info.IsDir() {
-			return "", "", errStorageServiceMissing
+			return "", "", "", errStorageServiceMissing
 		}
 	}
-	return "", "", nil
+	return "", "", "", nil
 }
 
-func (c *Cpak) prepareFVSMount(statePath string, layers []string) (string, string, error) {
+func (c *Cpak) prepareFVSMount(statePath string, layers []string) (string, string, string, error) {
 	if len(layers) == 0 {
-		return "", "", errors.New("no layers specified")
+		return "", "", "", errors.New("no layers specified")
 	}
 	if err := c.ensureFVSLayers(layers); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	mountPoint := filepath.Join(statePath, "lower")
 	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+	managerSocket, err := c.fvsManagerSocket()
+	if err != nil {
+		return "", "", "", err
 	}
 
 	unlock, err := c.lockFVSManager()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer unlock()
-	client, connection, err := c.ensureFVSManager()
+	client, connection, err := c.ensureFVSManager(managerSocket)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer connection.Close()
 	spec := &fvs2dpb.MountSpec{
@@ -77,9 +81,9 @@ func (c *Cpak) prepareFVSMount(statePath string, layers []string) (string, strin
 	defer cancel()
 	mount, err := client.CreateMount(ctx, &fvs2dpb.CreateMountRequest{Spec: spec})
 	if err != nil {
-		return "", "", fmt.Errorf("mount FVS layers: %w", err)
+		return "", "", "", fmt.Errorf("mount FVS layers: %w", err)
 	}
-	return mount.GetId(), mountPoint, nil
+	return mount.GetId(), mountPoint, managerSocket, nil
 }
 
 func (c *Cpak) withFVSMount(layers []string, run func(string) error) error {
@@ -92,11 +96,11 @@ func (c *Cpak) withFVSMount(layers []string, run func(string) error) error {
 		return err
 	}
 	defer os.RemoveAll(state)
-	mountID, mountPath, err := c.prepareFVSMount(state, layers)
+	mountID, mountPath, managerSocket, err := c.prepareFVSMount(state, layers)
 	if err != nil {
 		return err
 	}
-	defer c.releaseFVSMount(mountID)
+	defer c.releaseFVSMount(mountID, managerSocket)
 	return run(mountPath)
 }
 
@@ -119,16 +123,23 @@ func (c *Cpak) WithApplicationFilesystem(app types.Application, run func(string)
 	return c.withFVSMount(app.ParsedLayers, run)
 }
 
-func (c *Cpak) releaseFVSMount(id string) error {
+func (c *Cpak) releaseFVSMount(id, managerSocket string) error {
 	if id == "" {
 		return nil
+	}
+	if managerSocket == "" {
+		var err error
+		managerSocket, err = c.legacyFVSManagerSocket()
+		if err != nil {
+			return err
+		}
 	}
 	unlock, err := c.lockFVSManager()
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	client, connection, err := c.connectFVSManager()
+	client, connection, err := c.connectFVSManager(managerSocket)
 	if err != nil {
 		return nil
 	}
@@ -148,8 +159,8 @@ func (c *Cpak) releaseFVSMount(id string) error {
 	return nil
 }
 
-func (c *Cpak) cleanupFVSMount(id, mountPath string) error {
-	err := c.releaseFVSMount(id)
+func (c *Cpak) cleanupFVSMount(id, mountPath, managerSocket string) error {
+	err := c.releaseFVSMount(id, managerSocket)
 	if mountPath == "" {
 		return err
 	}
@@ -170,11 +181,18 @@ func (c *Cpak) cleanupFVSMount(id, mountPath string) error {
 	return errors.Join(err, errors.New("fusermount is not installed"))
 }
 
-func (c *Cpak) fvsMountAlive(id, mountPath string) bool {
+func (c *Cpak) fvsMountAlive(id, mountPath, managerSocket string) bool {
 	if id == "" || mountPath == "" {
 		return false
 	}
-	client, connection, err := c.connectFVSManager()
+	if managerSocket == "" {
+		var err error
+		managerSocket, err = c.legacyFVSManagerSocket()
+		if err != nil {
+			return false
+		}
+	}
+	client, connection, err := c.connectFVSManager(managerSocket)
 	if err != nil {
 		return false
 	}
@@ -186,24 +204,20 @@ func (c *Cpak) fvsMountAlive(id, mountPath string) bool {
 		return false
 	}
 	var status syscall.Statfs_t
-	return syscall.Statfs(mountPath, &status) == nil
+	return syscall.Statfs(mountPath, &status) == nil && uint64(status.Type) == uint64(unix.FUSE_SUPER_MAGIC)
 }
 
 func (c *Cpak) containerLayerMountAlive(container types.Container) bool {
 	if container.FVSLayerMountId == "" && container.FVSLayerMountPath == "" {
 		return true
 	}
-	return c.fvsMountAlive(container.FVSLayerMountId, container.FVSLayerMountPath)
+	return c.fvsMountAlive(container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath)
 }
 
-func (c *Cpak) ensureFVSManager() (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error) {
-	client, connection, err := c.connectFVSManager()
+func (c *Cpak) ensureFVSManager(socket string) (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error) {
+	client, connection, err := c.connectFVSManager(socket)
 	if err == nil {
 		return client, connection, nil
-	}
-	socket, err := c.fvsManagerSocket()
-	if err != nil {
-		return nil, nil, err
 	}
 	_ = os.Remove(socket)
 	binary, err := findStorageService()
@@ -227,7 +241,7 @@ func (c *Cpak) ensureFVSManager() (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error)
 	_ = logFile.Close()
 	deadline := time.Now().Add(fvsManagerTimeout)
 	for time.Now().Before(deadline) {
-		client, connection, err = c.connectFVSManager()
+		client, connection, err = c.connectFVSManager(socket)
 		if err == nil {
 			return client, connection, nil
 		}
@@ -236,11 +250,7 @@ func (c *Cpak) ensureFVSManager() (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error)
 	return nil, nil, fmt.Errorf("start cpak storage service: %w", err)
 }
 
-func (c *Cpak) connectFVSManager() (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error) {
-	socket, err := c.fvsManagerSocket()
-	if err != nil {
-		return nil, nil, err
-	}
+func (c *Cpak) connectFVSManager(socket string) (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error) {
 	connection, err := grpc.NewClient("unix://"+socket, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, nil, err
@@ -256,11 +266,28 @@ func (c *Cpak) connectFVSManager() (fvs2dpb.Fvs2DClient, *grpc.ClientConn, error
 }
 
 func (c *Cpak) fvsManagerSocket() (string, error) {
+	namespace, err := os.Readlink("/proc/self/ns/mnt")
+	if err != nil {
+		return "", fmt.Errorf("read mount namespace: %w", err)
+	}
+	return c.fvsManagerSocketForNamespace(namespace)
+}
+
+func (c *Cpak) legacyFVSManagerSocket() (string, error) {
 	directory, err := c.GetInStoreDirMkdir("runtime", "storage")
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(c.Options.StorePath))
+	return filepath.Join(directory, hex.EncodeToString(digest[:8])+".sock"), nil
+}
+
+func (c *Cpak) fvsManagerSocketForNamespace(namespace string) (string, error) {
+	directory, err := c.GetInStoreDirMkdir("runtime", "storage")
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(c.Options.StorePath + "\x00" + namespace))
 	return filepath.Join(directory, hex.EncodeToString(digest[:8])+".sock"), nil
 }
 

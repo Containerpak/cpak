@@ -348,12 +348,15 @@ func TestPrepareLayerMountFallsBackWithoutTheStorageService(t *testing.T) {
 	if err := os.MkdirAll(cp.GetInStoreDir("layers", layer), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mountID, mountPath, err := cp.prepareLayerMount(t.TempDir(), []string{layer})
+	mountID, mountPath, managerSocket, err := cp.prepareLayerMount(t.TempDir(), []string{layer})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mountID != "" || mountPath != "" {
 		t.Fatalf("legacy fallback returned an FVS mount: %q %q", mountID, mountPath)
+	}
+	if managerSocket != "" {
+		t.Fatalf("legacy fallback returned a manager socket: %q", managerSocket)
 	}
 	if _, err := os.Stat(cp.GetInStoreDir("layers", layer)); err != nil {
 		t.Fatalf("legacy layer changed during fallback: %v", err)

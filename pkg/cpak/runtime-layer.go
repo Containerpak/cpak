@@ -76,11 +76,11 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 			return nil, err
 		}
 	}
-	mountID, lowerDir, err := c.prepareFVSMount(stateDir, baseLayers)
+	mountID, lowerDir, managerSocket, err := c.prepareFVSMount(stateDir, baseLayers)
 	if err != nil {
 		return nil, err
 	}
-	defer c.releaseFVSMount(mountID)
+	defer c.releaseFVSMount(mountID, managerSocket)
 
 	cpakBinary, err := getCpakBinary()
 	if err != nil {
