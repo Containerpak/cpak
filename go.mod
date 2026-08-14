@@ -3,7 +3,7 @@ module github.com/mirkobrombin/cpak
 go 1.25.0
 
 require (
-	github.com/containerpak/storage v0.1.0
+	github.com/containerpak/storage v0.1.1
 	github.com/creack/pty v1.1.21
 	github.com/fvs-lab/fvs2 v0.11.0
 	github.com/fvs-lab/fvs2d v0.13.0

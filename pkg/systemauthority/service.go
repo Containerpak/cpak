@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2025 FABRICATORS S.R.L.
- * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (c) 2025 Fabricators and Mirko Brombin <brombin94@gmail.com>
+ * SPDX-License-Identifier: LGPL-2.1-only
  */
 package systemauthority
 

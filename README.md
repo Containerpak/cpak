@@ -4,7 +4,7 @@
   <p>A portable, low-overhead application format for Linux.</p>
   <p>
     <a href="LICENSE">
-      <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPLv3">
+      <img src="https://img.shields.io/badge/License-LGPLv2.1-blue.svg" alt="License: LGPLv2.1">
     </a>
   </p>
 </div>
@@ -336,7 +336,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
-cpak is available under the [GNU General Public License v3.0 only](LICENSE).
-Non-exclusive commercial licenses are available directly from
-[Mirko Brombin](https://bromb.in/). See
-[COMMERCIAL-LICENSING.md](COMMERCIAL-LICENSING.md) for the licensing notice.
+cpak is free software licensed under the
+[GNU Lesser General Public License v2.1](LICENSE). Accepted contributions remain
+available under LGPL-2.1-only.
