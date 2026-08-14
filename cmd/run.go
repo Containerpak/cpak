@@ -43,42 +43,20 @@ func (c *RunCmd) Run() error {
 		}
 		return c.runError(cp.RunAuthorized(params, c.Verbose))
 	}
+	c.configureStorageMigration(&cp)
+
 	remote, err := resolveApplicationOrigin(cp, c.Remote)
 	if err != nil {
 		return c.runError(err)
 	}
 	logger.Println("Running cpak from remote:", remote)
 
-	run := func() error {
-		return cp.RunInstance(remote, "", c.Branch, c.Commit, c.Release, c.Instance, c.Binary, c.Verbose, c.Extra...)
-	}
-	err = c.runWithProgress(&cp, run)
+	err = cp.RunInstance(remote, "", c.Branch, c.Commit, c.Release, c.Instance, c.Binary, c.Verbose, c.Extra...)
 	if err != nil {
 		return c.runError(err)
 	}
 
 	return nil
-}
-
-func (c *RunCmd) runWithProgress(cp *cpak.Cpak, run func() error) error {
-	if runUsesTerminal() || os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-		c.configureStorageMigration(cp)
-		return run()
-	}
-
-	request := desktopui.ProgressRequest{
-		Title: "cpak", Heading: "Starting application",
-		Detail: "Preparing the application environment", IconPNG: c.icon,
-	}
-	return desktopui.Progress(desktopui.SelectBackend(""), request, func(progress func(desktopui.ProgressUpdate)) error {
-		progress(desktopui.ProgressUpdate{Message: "Checking application storage"})
-		c.configureStorageMigrationProgress(cp, progress)
-		return run()
-	})
-}
-
-func runUsesTerminal() bool {
-	return term.IsTerminal(int(os.Stdout.Fd())) || term.IsTerminal(int(os.Stderr.Fd()))
 }
 
 func (c *RunCmd) Configure(icon []byte) {
@@ -87,7 +65,7 @@ func (c *RunCmd) Configure(icon []byte) {
 
 func (c *RunCmd) configureStorageMigration(cp *cpak.Cpak) {
 	cp.SetStorageMigrationHandler(func(run func(func(cpak.StorageMigrationProgress)) error) error {
-		if runUsesTerminal() {
+		if term.IsTerminal(int(os.Stdout.Fd())) || term.IsTerminal(int(os.Stderr.Fd())) {
 			lastLayer := 0
 			lastPercentage := -5
 			return run(func(report cpak.StorageMigrationProgress) {
@@ -113,17 +91,6 @@ func (c *RunCmd) configureStorageMigration(cp *cpak.Cpak) {
 					Message: fmt.Sprintf("Layer %d of %d, %s of %s", report.Layer, report.Layers, formatMigrationBytes(report.Bytes), formatMigrationBytes(report.TotalBytes)),
 					Current: report.Bytes, Total: report.TotalBytes,
 				})
-			})
-		})
-	})
-}
-
-func (c *RunCmd) configureStorageMigrationProgress(cp *cpak.Cpak, progress func(desktopui.ProgressUpdate)) {
-	cp.SetStorageMigrationHandler(func(run func(func(cpak.StorageMigrationProgress)) error) error {
-		return run(func(report cpak.StorageMigrationProgress) {
-			progress(desktopui.ProgressUpdate{
-				Message: fmt.Sprintf("Updating storage: layer %d of %d, %s of %s", report.Layer, report.Layers, formatMigrationBytes(report.Bytes), formatMigrationBytes(report.TotalBytes)),
-				Current: report.Bytes, Total: report.TotalBytes,
 			})
 		})
 	})
