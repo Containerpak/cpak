@@ -54,7 +54,7 @@ func TestForwardChromiumSingleton(t *testing.T) {
 	}
 	select {
 	case payload := <-received:
-		if !bytes.Contains(payload, []byte("\x00/opt/chrome\x00https://cpak.it\x00")) {
+		if !bytes.HasSuffix(payload, []byte("\x00/opt/chrome\x00https://cpak.it")) {
 			t.Fatalf("unexpected payload %q", payload)
 		}
 	case <-time.After(time.Second):

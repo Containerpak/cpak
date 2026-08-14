@@ -131,12 +131,14 @@ func chromiumSingletonPayload(executable string, args []string) ([]byte, error) 
 	}
 	parts := append([]string{"START", currentDirectory, executable}, args...)
 	var payload bytes.Buffer
-	for _, part := range parts {
+	for index, part := range parts {
 		if strings.IndexByte(part, 0) >= 0 {
 			return nil, errors.New("Chromium argument contains a null byte")
 		}
+		if index > 0 {
+			payload.WriteByte(0)
+		}
 		payload.WriteString(part)
-		payload.WriteByte(0)
 		if payload.Len() > chromiumSingletonMessageLimit {
 			return nil, fmt.Errorf("Chromium launch request exceeds %d bytes", chromiumSingletonMessageLimit)
 		}
