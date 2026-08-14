@@ -7,6 +7,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
@@ -92,6 +93,32 @@ func (c *RunCmd) configureStorageMigration(cp *cpak.Cpak) {
 					Current: report.Bytes, Total: report.TotalBytes,
 				})
 			})
+		})
+	})
+	cp.SetStoragePreparationHandler(func(run func() error) error {
+		if term.IsTerminal(int(os.Stdout.Fd())) || term.IsTerminal(int(os.Stderr.Fd())) {
+			done := make(chan struct{})
+			go func() {
+				select {
+				case <-time.After(400 * time.Millisecond):
+					logger.Println("Preparing application storage...")
+				case <-done:
+				}
+			}()
+			err := run()
+			close(done)
+			return err
+		}
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return run()
+		}
+		request := desktopui.ProgressRequest{
+			Title: "cpak storage upgrade", Heading: "Preparing application storage",
+			Detail: "Building the native application view", IconPNG: c.icon,
+		}
+		return desktopui.Progress(desktopui.SelectBackend(""), request, func(progress func(desktopui.ProgressUpdate)) error {
+			progress(desktopui.ProgressUpdate{Message: "Preparing application files"})
+			return run()
 		})
 	})
 }

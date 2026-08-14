@@ -38,6 +38,9 @@ type CpakOptions struct {
 	// RegistryAuthPath stores public registry credential bindings.
 	RegistryAuthPath string `json:"registry_auth_path" conf:"registry_auth_path"`
 
+	// StorageDriver selects the runtime layer checkout driver.
+	StorageDriver string `json:"storage_driver" conf:"storage_driver"`
+
 	// DaBaDeeStoreopts is the configuration for the DaBaDee store.
 	DaBaDeeStoreOptions store.Options `json:"dabadee_store"`
 

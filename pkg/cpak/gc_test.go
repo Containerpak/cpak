@@ -2,11 +2,13 @@ package cpak
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mirkobrombin/cpak/pkg/storaged"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
@@ -159,5 +161,43 @@ func TestCollectGarbageRemovesFVSBlocksAfterLastLayer(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("block store still contains %d entries", len(entries))
+	}
+}
+
+func TestCollectGarbageRemovesUnreferencedDriverCheckout(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	handler, err := storaged.NewFVS(c.fvsRoot(), c.storageDriverRoot("fvs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.storageDriver = handler
+	seedFVSLayerFile(t, c, "used", "value", []byte("used"))
+	seedFVSLayerFile(t, c, "orphan", "value", []byte("orphan"))
+	if _, err := c.prepareStorageDriver([]string{"used", "orphan"}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := c.collectGarbageReport([]types.Application{{ParsedLayers: []string{"used"}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.DriverLayers != 1 {
+		t.Fatalf("dry-run report = %+v", report)
+	}
+	if _, err := os.Stat(c.fvsCheckoutPath("orphan")); err != nil {
+		t.Fatalf("dry run removed checkout: %v", err)
+	}
+	report, err = c.collectGarbageReport([]types.Application{{ParsedLayers: []string{"used"}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.DriverLayers != 1 {
+		t.Fatalf("applied report = %+v", report)
+	}
+	if _, err := os.Stat(c.fvsCheckoutPath("orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphan checkout remained: %v", err)
+	}
+	if _, err := c.preparedLayerDirectories([]string{"orphan"}); !errors.Is(err, errStoragePreparationRequired) {
+		t.Fatalf("orphan index entry remained: %v", err)
 	}
 }

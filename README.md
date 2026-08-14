@@ -288,12 +288,37 @@ removes registered cpak sessions before uninstalling the authority.
 ## Store
 
 cpak deduplicates package data at two levels. OCI layers are addressed by digest,
-so an unchanged base or dependency layer is downloaded and stored once. Every
-new layer then passes through DaBaDee before publication, which replaces equal
-files with hard links even when those bytes arrived through different layer
-layouts. Installs and updates stage data before changing the active application
-record. Interrupted updates are recovered on the next start, while garbage
-collection retains every layer referenced by an installed package.
+so an unchanged base or dependency layer is downloaded and stored once. FVS
+then shares equal content-defined blocks across files and layers. Persistent
+native checkouts reuse complete files through reflinks or hard links where the
+filesystem supports them. DaBaDee remains available as a compatible storage
+driver and as the explicit path deduplication tool.
+
+Application launch reads an atomic index of prepared layer directories and
+passes them directly to rootless OverlayFS. Storage preparation and publication
+complete before the runtime index becomes active. Updating cpak prepares
+existing stores before installing or updating an application. If that
+preparation was interrupted, the next desktop launch shows progress, resumes
+completed layers, and starts the application after publication.
+
+Inspect, prepare, and verify the selected storage driver with:
+
+```sh
+cpak storage status
+cpak storage migrate
+cpak storage verify
+cpak storage verify --repair
+```
+
+The storage driver protocol is versioned independently from cpak and uses a
+private Unix socket. The built-in FVS and DaBaDee providers implement the same
+contract. External drivers can use any language, but cpak accepts their paths
+only below the configured driver root and refuses to start an external driver
+when the host cannot confine it.
+
+Installs and updates stage data before changing the active application record.
+Interrupted updates are recovered on the next start, while garbage collection
+retains every layer referenced by an installed package.
 
 The package origin remains a normal Git repository, so the manifest can follow a
 branch, release or immutable commit while the OCI digest records the exact image

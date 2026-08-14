@@ -166,7 +166,8 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
-	container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath, err = c.prepareLayerMount(container.StatePath, composedLayers(app, components, addons))
+	layers := composedLayers(app, components, addons)
+	container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath, err = c.prepareLayerMount(container.StatePath, layers)
 	if err != nil {
 		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 		os.RemoveAll(container.StatePath)
@@ -178,7 +179,6 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 			_ = c.releaseFVSMount(container.FVSLayerMountId, container.FVSManagerSocketPath)
 		}
 	}()
-
 	if len(systemBrokerShims(override)) > 0 {
 		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime(container.StatePath)
 		if err != nil {
@@ -321,8 +321,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 			return "", 0, "", err
 		}
 	}
+	composed := composedLayers(app, components, addons)
 	layers := ""
-	for _, layer := range composedLayers(app, components, addons) {
+	for _, layer := range composed {
 		layers += layer + "|"
 	}
 
@@ -699,6 +700,9 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 	envVars = append(envVars, config.Config.Env...)
 	envVars = append(envVars, override.Env...)
 	envVars = inheritHostCursor(envVars)
+	if override.SocketAtSpiBus && len(atSpiSocketPaths(fmt.Sprintf("%d", os.Getuid()))) == 0 {
+		envVars = setEnvironmentValue(envVars, "NO_AT_BRIDGE", "1")
+	}
 	if override.OpenURI {
 		envVars = openURIEnvironment(envVars)
 	}
@@ -899,6 +903,17 @@ func environmentValue(environment []string, name string) string {
 		}
 	}
 	return value
+}
+
+func setEnvironmentValue(environment []string, name, value string) []string {
+	prefix := name + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, variable := range environment {
+		if !strings.HasPrefix(variable, prefix) {
+			result = append(result, variable)
+		}
+	}
+	return append(result, prefix+value)
 }
 
 func (c *Cpak) dependencyLinks(app types.Application) ([]string, error) {

@@ -101,6 +101,7 @@ func runTerminal(capsule bootstrap.Capsule) error {
 }
 
 func install(capsule bootstrap.Capsule, progress progressFunc) error {
+	storageChanged := false
 	if len(capsule.Companion) > 0 {
 		changed, err := installStorageService(capsule.Companion)
 		if err != nil {
@@ -109,6 +110,7 @@ func install(capsule bootstrap.Capsule, progress progressFunc) error {
 		if changed {
 			progress("Installed the cpak storage service in ~/.local/bin")
 		}
+		storageChanged = changed
 	}
 	cpakPath, changed, err := installCpak(capsule.Payload)
 	if err != nil {
@@ -118,6 +120,12 @@ func install(capsule bootstrap.Capsule, progress progressFunc) error {
 		progress("Installed cpak in ~/.local/bin")
 	} else {
 		progress("cpak is ready")
+	}
+	if changed || storageChanged {
+		progress("Preparing cpak storage")
+		if err := runCommand(cpakPath, []string{"storage", "migrate"}, progress); err != nil {
+			return err
+		}
 	}
 
 	metadata := capsule.Metadata

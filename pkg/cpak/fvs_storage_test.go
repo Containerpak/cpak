@@ -9,14 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
+	"github.com/mirkobrombin/cpak/pkg/storaged"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
 )
 
-func seedFVSLayerFile(t *testing.T, cp *Cpak, digest, name string, content []byte) {
+func seedFVSLayerFile(t testing.TB, cp *Cpak, digest, name string, content []byte) {
 	t.Helper()
 	repository, err := fvsrepo.InitWithOptions(cp.fvsLayerPath(digest), fvsrepo.InitOptions{BlocksPath: cp.fvsBlocksPath()})
 	if err != nil {
@@ -81,6 +83,18 @@ func TestEnsureFVSLayerMigratesLegacyDirectory(t *testing.T) {
 	}
 	if len(files) != 3 || files[2].Path != "usr/share/value" || files[2].ContentDigest == "" {
 		t.Fatalf("migrated files = %+v", files)
+	}
+}
+
+func TestRemoveMissingLegacyLayerSkipsLegacyStore(t *testing.T) {
+	cp := newTestCpak(t)
+	legacyStore := filepath.Join(t.TempDir(), "legacy-store")
+	if err := os.WriteFile(legacyStore, []byte("not a store"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cp.Options.DaBaDeeStoreOptions.Root = legacyStore
+	if err := cp.removeLegacyLayer(filepath.Join(t.TempDir(), "missing")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -363,8 +377,71 @@ func TestPrepareLayerMountFallsBackWithoutTheStorageService(t *testing.T) {
 	}
 }
 
+func TestPrepareLayerMountUsesPersistentNativeCheckouts(t *testing.T) {
+	t.Setenv("CPAK_STORAGE_BACKEND", "native")
+	cp := newTestCpak(t)
+	handler, err := storaged.NewFVS(cp.fvsRoot(), cp.storageDriverRoot("fvs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp.storageDriver = handler
+	seedFVSLayerFile(t, cp, "base", "base", []byte("base"))
+	seedFVSLayerFile(t, cp, "top", "top", []byte("top"))
+	app := types.Application{CpakId: "native-checkout", Origin: "github.com/containerpak/test", ParsedLayers: []string{"base", "top"}}
+	if err := cp.PrepareApplicationStorage(app); err != nil {
+		t.Fatal(err)
+	}
+
+	mountID, lowerDirs, managerSocket, err := cp.prepareLayerMount(t.TempDir(), app.ParsedLayers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mountID != "" || managerSocket != "" {
+		t.Fatalf("native checkouts returned a service lease: %q %q", mountID, managerSocket)
+	}
+	paths := strings.Split(lowerDirs, ":")
+	if len(paths) != 2 {
+		t.Fatalf("lower dirs = %q", lowerDirs)
+	}
+	if _, err := os.Stat(filepath.Join(paths[0], "top")); err != nil {
+		t.Fatalf("highest-priority layer is not first: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(paths[1], "base")); err != nil {
+		t.Fatalf("base layer is not last: %v", err)
+	}
+	if !nativeLayerCheckoutsAlive(lowerDirs) {
+		t.Fatal("prepared checkout set is not reusable")
+	}
+}
+
+func TestPrepareLayerMountReportsMissingCheckoutPreparation(t *testing.T) {
+	cp := newTestCpak(t)
+	handler, err := storaged.NewFVS(cp.fvsRoot(), cp.storageDriverRoot("fvs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp.storageDriver = handler
+	seedFVSLayerFile(t, cp, "layer", "value", []byte("value"))
+	shown := false
+	cp.SetStoragePreparationHandler(func(run func() error) error {
+		shown = true
+		return run()
+	})
+	_, lowerDirs, _, err := cp.prepareLayerMount(t.TempDir(), []string{"layer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !shown {
+		t.Fatal("storage preparation handler was not called")
+	}
+	if !nativeLayerCheckoutsAlive(lowerDirs) {
+		t.Fatalf("prepared checkout is not reusable: %q", lowerDirs)
+	}
+}
+
 func TestWithApplicationFilesystemFallsBackToLegacyLayers(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	requireRootlessOverlay(t)
+	t.Setenv("CPAK_STORAGE_DRIVER_BINARY", filepath.Join(t.TempDir(), "missing"))
 	t.Setenv("CPAK_STORAGE_BINARY", "")
 	t.Setenv("CPAK_FVS2D_BINARY", "")
 	cp := newTestCpak(t)
@@ -390,7 +467,7 @@ func TestWithApplicationFilesystemFallsBackToLegacyLayers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(visited) != 2 || visited[0] != "base" || visited[1] != "top" {
+	if len(visited) != 1 || visited[0] != "top" {
 		t.Fatalf("visited = %v", visited)
 	}
 }

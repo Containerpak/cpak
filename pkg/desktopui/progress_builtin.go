@@ -31,11 +31,14 @@ func progressBuiltin(request ProgressRequest, updates <-chan ProgressUpdate, don
 	var windowErr error
 	driver.Main(func(display screen.Screen) {
 		const width, height = 520, 310
+		decoration := captureDesktopWindows()
 		window, err := display.NewWindow(&screen.NewWindowOptions{Width: width, Height: height, Title: request.Title})
 		if err != nil {
+			decoration.Close()
 			windowErr = err
 			return
 		}
+		decoration.Apply(request.Title, request.IconPNG)
 		defer window.Release()
 		frame := newDesktopFrame(request.Title)
 		if frame != nil {

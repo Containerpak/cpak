@@ -63,11 +63,14 @@ func updateBuiltin(request UpdateRequest, action func(func(string)) error) error
 	var windowErr error
 	driver.Main(func(display screen.Screen) {
 		const width, height = 560, 600
+		decoration := captureDesktopWindows()
 		window, err := display.NewWindow(&screen.NewWindowOptions{Width: width, Height: height, Title: "cpak update"})
 		if err != nil {
+			decoration.Close()
 			windowErr = err
 			return
 		}
+		decoration.Apply("cpak update", request.IconPNG)
 		defer window.Release()
 
 		frame := newDesktopFrame("cpak update")

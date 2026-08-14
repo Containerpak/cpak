@@ -175,6 +175,9 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
 	}
+	if err = c.PrepareApplicationStorage(app); err != nil {
+		return
+	}
 
 	if options.CreateExports {
 		err = c.createExports(app)

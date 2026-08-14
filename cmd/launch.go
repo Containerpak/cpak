@@ -18,6 +18,7 @@ import (
 type LaunchCmd struct {
 	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside a private process namespace"`
+	RequireSandbox     bool     `cli:"require-sandbox" help:"fail if filesystem or syscall restrictions are unavailable"`
 	LandlockReadOnly   []string `cli:"landlock-read-only" help:"grant read-only filesystem access"`
 	LandlockWriteFiles []string `cli:"landlock-write-files" help:"grant writes to existing files"`
 	LandlockReadWrite  []string `cli:"landlock-read-write" help:"grant read-write filesystem access"`
@@ -35,14 +36,14 @@ func (c *LaunchCmd) Run() error {
 		return fmt.Errorf("landlock grants are required")
 	}
 	if _, err := sandbox.ApplyLandlock(grants); err != nil {
-		if errors.Is(err, sandbox.ErrUnavailable) {
+		if errors.Is(err, sandbox.ErrUnavailable) && !c.RequireSandbox {
 			c.Logger.Warning("Landlock is unavailable; continuing without filesystem restrictions")
 		} else {
 			return err
 		}
 	}
 	if err := sandbox.ApplySeccomp(c.UserNamespaces, c.AllowPtrace); err != nil {
-		if errors.Is(err, sandbox.ErrUnavailable) {
+		if errors.Is(err, sandbox.ErrUnavailable) && !c.RequireSandbox {
 			c.Logger.Warning("Seccomp is unavailable; continuing without syscall restrictions")
 		} else {
 			return err

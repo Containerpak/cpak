@@ -40,7 +40,11 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 	if err := os.WriteFile(target, []byte("old cpak"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	checker := Checker{Executable: target}
+	var migrated string
+	checker := Checker{Executable: target, Migrate: func(_ context.Context, executable string) error {
+		migrated = executable
+		return nil
+	}}
 	release := Release{BinaryURL: server.URL + "/cpak", StorageURL: server.URL + "/cpak-storaged", ChecksumsURL: server.URL + "/SHA256SUMS"}
 	if err := checker.Install(context.Background(), release); err != nil {
 		t.Fatal(err)
@@ -52,6 +56,9 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 	installedCompanion, err := os.ReadFile(filepath.Join(filepath.Dir(target), "cpak-storaged"))
 	if err != nil || string(installedCompanion) != string(companion) {
 		t.Fatalf("unexpected installed FVS service: %q %v", installedCompanion, err)
+	}
+	if migrated != target {
+		t.Fatalf("storage migration used %q", migrated)
 	}
 }
 

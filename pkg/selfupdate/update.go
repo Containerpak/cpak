@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -49,6 +50,7 @@ type Checker struct {
 	CachePath      string
 	Executable     string
 	HTTP           *http.Client
+	Migrate        func(context.Context, string) error
 }
 
 type cache struct {
@@ -152,7 +154,20 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	if err = replaceExecutable(executable, binary); err != nil {
 		return fmt.Errorf("selfupdate: replace cpak: %w", err)
 	}
+	if err = c.migrate(ctx, executable); err != nil {
+		return fmt.Errorf("selfupdate: migrate storage: %w", err)
+	}
 	return nil
+}
+
+func (c Checker) migrate(ctx context.Context, executable string) error {
+	if c.Migrate != nil {
+		return c.Migrate(ctx, executable)
+	}
+	command := exec.CommandContext(ctx, executable, "storage", "migrate")
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
 }
 
 func replaceExecutable(target string, payload []byte) error {
