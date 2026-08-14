@@ -33,6 +33,7 @@ type CLI struct {
 	Orchestrate        cmd.OrchestrateCmd        `cmd:"orchestrate" help:"Run multiple cpak applications"`
 	Spawn              cmd.SpawnCmd              `cmd:"spawn" help:"Spawn a container for a package"`
 	Launch             cmd.LaunchCmd             `cmd:"launch" help:"Launch a command inside a package container"`
+	ChromiumLaunch     cmd.ChromiumLaunchCmd     `cmd:"chromium-launch" help:"Launch or forward a Chromium command"`
 	Service            cmd.ServiceCmd            `cmd:"service" help:"Manage cpak services"`
 	Stop               cmd.StopCmd               `cmd:"stop" help:"Stop a running container"`
 	Dedup              cmd.DedupCmd              `cmd:"dedup" help:"Deduplicate layers in the local store"`
@@ -137,7 +138,7 @@ func skipUpdateCheck(args []string) bool {
 		return true
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "dedup" || argument == "host-action" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" {
 			return true
 		}
 	}
