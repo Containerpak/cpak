@@ -216,6 +216,9 @@ func (c *Cpak) EnableAddon(app types.Application, origin string) error {
 	if err := saveEnabledAddons(app, append(enabled, origin)); err != nil {
 		return err
 	}
+	if err := c.PrepareApplicationStorage(app); err != nil {
+		return err
+	}
 	return c.StopContainer(app)
 }
 
@@ -238,6 +241,9 @@ func (c *Cpak) DisableAddon(app types.Application, origin string) error {
 		return fmt.Errorf("addon %s is not enabled for %s", origin, app.Name)
 	}
 	if err := saveEnabledAddons(app, remaining); err != nil {
+		return err
+	}
+	if err := c.PrepareApplicationStorage(app); err != nil {
 		return err
 	}
 	return c.StopContainer(app)

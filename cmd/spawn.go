@@ -134,7 +134,7 @@ func (c *SpawnCmd) Run() error {
 	}
 	grants = append(grants, machineIDGrant)
 
-	configurationGrants, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia)
+	configurationGrants, refreshDynamicLinker, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func (c *SpawnCmd) Run() error {
 		layersPath = c.LowerDir
 	}
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, layersPath, c.Layers)
-	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute)
+	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute, refreshDynamicLinker)
 	if err != nil {
 		return err
 	}
@@ -593,14 +593,14 @@ func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) 
 	return grants, nil
 }
 
-func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) ([]sandbox.PathGrant, error) {
+func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) ([]sandbox.PathGrant, bool, error) {
 	grants := []sandbox.PathGrant{}
 	var err error
 	nvidiaMounts := []cpak.NvidiaMount{}
 	if includeNvidia {
 		nvidiaMounts, err = cpak.GetNvidiaMounts(rootFs)
 		if err != nil {
-			return nil, fmt.Errorf("an error occurred while spawning the namespace: %s", err)
+			return nil, false, fmt.Errorf("an error occurred while spawning the namespace: %s", err)
 		}
 	}
 
@@ -619,21 +619,21 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) (
 			continue
 		}
 		if readErr != nil {
-			return nil, fmt.Errorf("read:%s: an error occurred while spawning the namespace: %s", conf, readErr)
+			return nil, false, fmt.Errorf("read:%s: an error occurred while spawning the namespace: %s", conf, readErr)
 		}
 		destination, prepareErr := prepareRootfsConfigurationFile(rootFs, conf)
 		if prepareErr != nil {
-			return nil, fmt.Errorf("prepare:%s: an error occurred while spawning the namespace: %s", conf, prepareErr)
+			return nil, false, fmt.Errorf("prepare:%s: an error occurred while spawning the namespace: %s", conf, prepareErr)
 		}
 		c.spawnVerbose("Writing: ", conf)
 		if err = os.WriteFile(destination, content, 0644); err != nil {
-			return nil, fmt.Errorf("write:%s: an error occurred while spawning the namespace: %s", conf, err)
+			return nil, false, fmt.Errorf("write:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
 		if err = os.Chmod(destination, 0644); err != nil {
-			return nil, fmt.Errorf("chmod:%s: an error occurred while spawning the namespace: %s", conf, err)
+			return nil, false, fmt.Errorf("chmod:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
 		if err = tools.MountBindReadOnlyPrepared(destination, destination, true); err != nil {
-			return nil, fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", conf, err)
+			return nil, false, fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
 		grants = append(grants, sandbox.PathGrant{Path: conf, ReadOnly: true})
 	}
@@ -642,17 +642,17 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) (
 		c.spawnVerbose("Mounting: ", mount.Source, " as ", mount.Destination)
 		destination, prepareErr := prepareRootfsMountTarget(rootFs, mount.Destination, mount.Source)
 		if prepareErr != nil {
-			return nil, fmt.Errorf("prepare:%s: an error occurred while spawning the namespace: %s", mount.Destination, prepareErr)
+			return nil, false, fmt.Errorf("prepare:%s: an error occurred while spawning the namespace: %s", mount.Destination, prepareErr)
 		}
 		if mount.RewriteLibraryPath {
 			if err = writeNvidiaLoaderConfiguration(mount.Source, destination); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			if err = tools.MountBindReadOnlyPrepared(destination, destination, true); err != nil {
-				return nil, fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", mount.Destination, err)
+				return nil, false, fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", mount.Destination, err)
 			}
 		} else if err = tools.MountBindReadOnlyPrepared(mount.Source, destination, false); err != nil {
-			return nil, fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", mount.Source, mount.Destination, err)
+			return nil, false, fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", mount.Source, mount.Destination, err)
 		}
 		grants = append(grants, sandbox.PathGrant{Path: mount.Destination, ReadOnly: true})
 	}
@@ -660,22 +660,22 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) (
 	if len(nvidiaMounts) > 0 {
 		_, prepareErr := prepareRootfsDirectory(rootFs, "/etc/ld.so.conf.d")
 		if prepareErr != nil {
-			return nil, fmt.Errorf("mkdir:/etc/ld.so.conf.d: an error occurred while spawning the namespace: %s", prepareErr)
+			return nil, false, fmt.Errorf("mkdir:/etc/ld.so.conf.d: an error occurred while spawning the namespace: %s", prepareErr)
 		}
 		ldConfig := strings.Join(cpak.NvidiaLibraryDirs(), "\n") + "\n"
 		ldConfigPath, prepareErr := prepareRootfsFile(rootFs, "/etc/ld.so.conf.d/cpak-nvidia.conf")
 		if prepareErr != nil {
-			return nil, fmt.Errorf("prepare:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", prepareErr)
+			return nil, false, fmt.Errorf("prepare:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", prepareErr)
 		}
 		if err = os.WriteFile(ldConfigPath, []byte(ldConfig), 0644); err != nil {
-			return nil, fmt.Errorf("write:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
+			return nil, false, fmt.Errorf("write:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
 		}
 		if err = os.Chmod(ldConfigPath, 0644); err != nil {
-			return nil, fmt.Errorf("chmod:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
+			return nil, false, fmt.Errorf("chmod:/etc/ld.so.conf.d/cpak-nvidia.conf: an error occurred while spawning the namespace: %s", err)
 		}
 	}
 
-	return grants, nil
+	return grants, len(nvidiaMounts) > 0, nil
 }
 
 var absoluteNvidiaLibraryPath = regexp.MustCompile(`("library_path"\s*:\s*")/[^"/]*/(?:[^"/]*/)*([^"/]+")`)
@@ -815,9 +815,11 @@ func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
-	c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
-	if _, err := os.Stat("/sbin/ldconfig"); err == nil {
+func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration, refreshDynamicLinker bool) error {
+	if refreshDynamicLinker {
+		c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
+	}
+	if _, err := os.Stat("/sbin/ldconfig"); refreshDynamicLinker && err == nil {
 		l := exec.Command("/sbin/ldconfig")
 		if err = l.Run(); err != nil {
 			return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)

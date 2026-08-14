@@ -18,7 +18,7 @@ import (
 
 const testOrigin = "github.com/user/demo"
 
-func newTestCpak(t *testing.T) *Cpak {
+func newTestCpak(t testing.TB) *Cpak {
 	t.Helper()
 
 	root := t.TempDir()

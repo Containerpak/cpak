@@ -231,20 +231,28 @@ func systemBrokerShims(o types.Override) []string {
 
 func atSpiSocketPaths(uid string) []string {
 	base := "/run/user/" + uid + "/at-spi"
-	paths := []string{}
-	if address := strings.TrimPrefix(os.Getenv("AT_SPI_BUS_ADDRESS"), "unix:"); address != "" {
-		for _, option := range strings.Split(address, ",") {
-			path := strings.TrimPrefix(option, "path=")
-			if path != option && filepath.Clean(path) == path && strings.HasPrefix(path, base+"/") {
-				paths = append(paths, path)
-			}
-		}
-	}
+	paths := atSpiAddressPaths(os.Getenv("AT_SPI_BUS_ADDRESS"), base)
 	if discovered, err := filepath.Glob(base + "/bus*"); err == nil {
 		paths = append(paths, discovered...)
 	}
-	if len(paths) == 0 {
-		paths = append(paths, base+"/bus")
+	available := make([]string, 0, len(paths))
+	for _, path := range uniqueStrings(paths) {
+		info, err := os.Stat(path)
+		if err == nil && info.Mode()&os.ModeSocket != 0 {
+			available = append(available, path)
+		}
+	}
+	return available
+}
+
+func atSpiAddressPaths(address, base string) []string {
+	address = strings.TrimPrefix(address, "unix:")
+	paths := []string{}
+	for _, option := range strings.Split(address, ",") {
+		path := strings.TrimPrefix(option, "path=")
+		if path != option && filepath.Clean(path) == path && strings.HasPrefix(path, base+"/") {
+			paths = append(paths, path)
+		}
 	}
 	return uniqueStrings(paths)
 }

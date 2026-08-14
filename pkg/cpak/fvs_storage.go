@@ -32,8 +32,14 @@ type StorageMigrationProgress struct {
 
 type StorageMigrationHandler func(func(func(StorageMigrationProgress)) error) error
 
+type StoragePreparationHandler func(func() error) error
+
 func (c *Cpak) SetStorageMigrationHandler(handler StorageMigrationHandler) {
 	c.storageMigration = handler
+}
+
+func (c *Cpak) SetStoragePreparationHandler(handler StoragePreparationHandler) {
+	c.storagePreparation = handler
 }
 
 func (c *Cpak) fvsRoot() string {
@@ -50,6 +56,10 @@ func (c *Cpak) fvsLayersPath() string {
 
 func (c *Cpak) fvsLayerPath(digest string) string {
 	return filepath.Join(c.fvsLayersPath(), digest)
+}
+
+func (c *Cpak) fvsCheckoutPath(digest string) string {
+	return filepath.Join(c.storageDriverRoot("fvs"), "layers", digest)
 }
 
 func (c *Cpak) beginFVSLayerSnapshot(digest string, options fvsrepo.SnapshotOptions) (string, *fvsrepo.SnapshotWriter, error) {
@@ -178,11 +188,18 @@ func (c *Cpak) removeApplicationLayers(removed types.Application) error {
 		}
 	}
 	seen := make(map[string]bool)
+	removable := make([]string, 0, len(removed.ParsedLayers))
 	for _, layer := range removed.ParsedLayers {
 		if seen[layer] || referenced[layer] {
 			continue
 		}
 		seen[layer] = true
+		removable = append(removable, layer)
+	}
+	if err := c.removePreparedLayers(removable); err != nil {
+		return err
+	}
+	for _, layer := range removable {
 		for _, path := range []string{c.fvsLayerPath(layer), c.GetInStoreDir("layers", layer)} {
 			if err := os.RemoveAll(path); err != nil {
 				return fmt.Errorf("remove layer %s: %w", layer, err)
@@ -261,7 +278,7 @@ func (c *Cpak) migrateLegacyLayer(digest, legacy string, progress func(int64)) e
 }
 
 func (c *Cpak) ensureFVSLayers(layers []string) error {
-	pending, sizes, total, err := c.pendingLegacyLayers(layers)
+	pending, available, sizes, total, err := c.pendingLegacyLayers(layers)
 	if err != nil {
 		return err
 	}
@@ -273,13 +290,19 @@ func (c *Cpak) ensureFVSLayers(layers []string) error {
 		index := 0
 		migrated := make(map[string]bool)
 		for _, layer := range layers {
+			if available[layer] {
+				if err := c.removeLegacyLayer(c.GetInStoreDir("layers", layer)); err != nil {
+					return err
+				}
+				continue
+			}
 			layerTotal, migrates := sizes[layer]
 			if !migrates || migrated[layer] {
-				available, layerErr := c.ensureFVSLayer(layer)
+				ready, layerErr := c.ensureFVSLayer(layer)
 				if layerErr != nil {
 					return layerErr
 				}
-				if !available {
+				if !ready {
 					return fmt.Errorf("layer %s is not available", layer)
 				}
 				continue
@@ -331,8 +354,9 @@ func ensureMigrationSpace(path string, required int64) error {
 	return nil
 }
 
-func (c *Cpak) pendingLegacyLayers(layers []string) ([]string, map[string]int64, int64, error) {
+func (c *Cpak) pendingLegacyLayers(layers []string) ([]string, map[string]bool, map[string]int64, int64, error) {
 	pending := make([]string, 0, len(layers))
+	available := make(map[string]bool)
 	sizes := make(map[string]int64)
 	seen := make(map[string]bool)
 	var total int64
@@ -341,11 +365,12 @@ func (c *Cpak) pendingLegacyLayers(layers []string) ([]string, map[string]int64,
 			continue
 		}
 		seen[layer] = true
-		available, err := c.fvsLayerAvailable(layer)
-		if err != nil || available {
+		ready, err := c.fvsLayerAvailable(layer)
+		if err != nil || ready {
 			if err != nil {
-				return nil, nil, 0, err
+				return nil, nil, nil, 0, err
 			}
+			available[layer] = true
 			continue
 		}
 		legacy := c.GetInStoreDir("layers", layer)
@@ -354,20 +379,20 @@ func (c *Cpak) pendingLegacyLayers(layers []string) ([]string, map[string]int64,
 			continue
 		}
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, nil, 0, err
 		}
 		if !info.IsDir() {
-			return nil, nil, 0, fmt.Errorf("legacy layer %s is not a directory", layer)
+			return nil, nil, nil, 0, fmt.Errorf("legacy layer %s is not a directory", layer)
 		}
 		size, err := legacyLayerSize(legacy)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, nil, 0, err
 		}
 		pending = append(pending, layer)
 		sizes[layer] = size
 		total += size
 	}
-	return pending, sizes, total, nil
+	return pending, available, sizes, total, nil
 }
 
 func legacyLayerSize(root string) (int64, error) {
@@ -391,7 +416,13 @@ func legacyLayerSize(root string) (int64, error) {
 
 func publishFVSLayer(source, target string) error {
 	if err := os.Rename(source, target); err == nil {
-		return nil
+		parent, openErr := os.Open(filepath.Dir(target))
+		if openErr != nil {
+			return openErr
+		}
+		syncErr := parent.Sync()
+		closeErr := parent.Close()
+		return errors.Join(syncErr, closeErr)
 	} else if states, statErr := fvsrepo.States(target); statErr != nil || len(states) == 0 {
 		return err
 	}
@@ -472,6 +503,11 @@ func verifyMigratedLayer(source, repository, state string) error {
 }
 
 func (c *Cpak) removeLegacyLayer(path string) error {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	storage "github.com/containerpak/storage/pkg/driver"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
@@ -26,6 +27,8 @@ type Cpak struct {
 	serviceSocketOwned bool
 	brokerSocketOwned  bool
 	storageMigration   StorageMigrationHandler
+	storagePreparation StoragePreparationHandler
+	storageDriver      storage.Handler
 }
 
 // NewCpak creates a new cpak instance.
@@ -67,6 +70,7 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 		},
 		CachePath:        filepath.Join(installationPath, "cache"),
 		RegistryAuthPath: filepath.Join(homedir, ".config", "cpak", "registry-auth.json"),
+		StorageDriver:    "fvs",
 	}
 
 	var confPaths []string
@@ -177,11 +181,14 @@ func (c *Cpak) Audit(repair bool) (err error) {
 	if err != nil {
 		return fmt.Errorf("audit: failed to open store: %w", err)
 	}
-	defer store.Close()
 
 	allDbApps, err := store.GetApplications()
 	if err != nil {
+		_ = store.Close()
 		return fmt.Errorf("audit: failed to get applications from DB: %w", err)
+	}
+	if err := store.Close(); err != nil {
+		return fmt.Errorf("audit: failed to close store: %w", err)
 	}
 
 	logger.Println("\nChecking application layers...")
@@ -206,6 +213,11 @@ func (c *Cpak) Audit(repair bool) (err error) {
 
 	// Containers check
 	logger.Println("\nChecking container integrity and process states...")
+	store, err = NewStore(c.Options.StorePath)
+	if err != nil {
+		return fmt.Errorf("audit: failed to reopen store: %w", err)
+	}
+	defer store.Close()
 	for _, app := range allDbApps {
 		appContainers, _ := store.GetApplicationContainers(app)
 		for _, container := range appContainers {

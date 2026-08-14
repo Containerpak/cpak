@@ -52,11 +52,9 @@ func TestInputDevicesRequireTheirOwnPermission(t *testing.T) {
 func TestAtSpiUsesSessionAddress(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	want := "/run/user/" + uid + "/at-spi/bus_9"
-	t.Setenv("AT_SPI_BUS_ADDRESS", "unix:path="+want+",guid=test")
-
-	mounts, _ := GetOverrideMounts(types.Override{SocketAtSpiBus: true})
-	if !slicesContain(mounts, want) {
-		t.Fatalf("AT-SPI mounts %v do not contain %s", mounts, want)
+	paths := atSpiAddressPaths("unix:path="+want+",guid=test", "/run/user/"+uid+"/at-spi")
+	if !slicesContain(paths, want) {
+		t.Fatalf("AT-SPI paths %v do not contain %s", paths, want)
 	}
 }
 
@@ -64,7 +62,7 @@ func TestAtSpiRejectsAddressOutsideRuntimeDirectory(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	t.Setenv("AT_SPI_BUS_ADDRESS", "unix:path=/tmp/foreign-at-spi")
 
-	for _, path := range atSpiSocketPaths(uid) {
+	for _, path := range atSpiAddressPaths(os.Getenv("AT_SPI_BUS_ADDRESS"), "/run/user/"+uid+"/at-spi") {
 		if path == "/tmp/foreign-at-spi" {
 			t.Fatalf("accepted AT-SPI path outside the user runtime directory")
 		}

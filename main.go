@@ -58,6 +58,7 @@ type CLI struct {
 	Session            cmd.SessionCmd            `cmd:"session" help:"Manage desktop and kiosk login sessions"`
 	Auth               cmd.AuthCmd               `cmd:"auth" help:"Manage package registry access"`
 	SelfUpdate         cmd.SelfUpdateCmd         `cmd:"self-update" help:"Update the cpak binary"`
+	Storage            cmd.StorageCmd            `cmd:"storage" help:"Manage application storage"`
 
 	cli.Base
 }

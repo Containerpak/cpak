@@ -332,6 +332,20 @@ func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T)
 	}
 }
 
+func TestContainerEnvironmentDisablesMissingAtSpiBridge(t *testing.T) {
+	app := types.Application{
+		Config:         `{"config":{}}`,
+		ParsedOverride: types.Override{SocketAtSpiBus: true},
+	}
+	environment, err := containerEnvironment(app, types.Container{CpakId: "container-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slicesContain(environment, "NO_AT_BRIDGE=1") {
+		t.Fatalf("missing AT-SPI fallback in %v", environment)
+	}
+}
+
 func TestContainerEnvironmentIncludesHostApplicationCatalog(t *testing.T) {
 	app := types.Application{
 		Config:         `{"config":{"Env":["XDG_DATA_DIRS=/opt/desktop/share:/usr/share"]}}`,

@@ -3,8 +3,9 @@ module github.com/mirkobrombin/cpak
 go 1.25.0
 
 require (
+	github.com/containerpak/storage v0.1.0
 	github.com/creack/pty v1.1.21
-	github.com/fvs-lab/fvs2 v0.10.0
+	github.com/fvs-lab/fvs2 v0.11.0
 	github.com/fvs-lab/fvs2d v0.13.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/google/uuid v1.6.0
@@ -36,12 +37,11 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fvs-lab/core v0.1.2 // indirect
+	github.com/fvs-lab/core v0.1.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang/glog v1.2.5 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/hanwen/go-fuse/v2 v2.10.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect

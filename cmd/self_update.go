@@ -28,7 +28,7 @@ type SelfUpdateCmd struct {
 
 func (c *SelfUpdateCmd) Run() error {
 	checker := selfupdate.Checker{CurrentVersion: c.version, Mode: c.mode}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	release, available, err := checker.Check(ctx, 0)
 	if err != nil {

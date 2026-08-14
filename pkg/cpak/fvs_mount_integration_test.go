@@ -58,6 +58,9 @@ func TestFVSMountLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cp.releaseFVSMount(mountID, managerSocket)
+	if !cp.fvsMountAlive(mountID, mountPath, managerSocket) {
+		t.Fatalf("storage backend did not return a mounted view: %s", mountPath)
+	}
 	for name, expected := range map[string]string{"base": "base", "top": "top"} {
 		content, err := os.ReadFile(filepath.Join(mountPath, "usr", "share", name))
 		if err != nil {
@@ -72,6 +75,29 @@ func TestFVSMountLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(mountPath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConfiguredStorageBackend(t *testing.T) {
+	tests := map[string]storageBackend{
+		"":          storageBackendAuto,
+		"auto":      storageBackendAuto,
+		"native":    storageBackendNative,
+		"overlayfs": storageBackendNative,
+		"fuse":      storageBackendFUSE,
+	}
+	for value, expected := range tests {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CPAK_STORAGE_BACKEND", value)
+			backend, err := configuredStorageBackend()
+			if err != nil || backend != expected {
+				t.Fatalf("backend = %s, err = %v, want %s", backend, err, expected)
+			}
+		})
+	}
+	t.Setenv("CPAK_STORAGE_BACKEND", "invalid")
+	if _, err := configuredStorageBackend(); err == nil {
+		t.Fatal("invalid storage backend was accepted")
 	}
 }
 

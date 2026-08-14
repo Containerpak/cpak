@@ -61,14 +61,15 @@ func (c *Cpak) storeApplication(app types.Application) (err error) {
 // updateDeps groups the operations an update performs outside of the store,
 // so that tests can replace them.
 type updateDeps struct {
-	latestRelease func(origin string) (string, error)
-	fetchManifest func(origin, branch, release, commit string) (*types.CpakManifest, error)
-	installDeps   func(origin string, manifest *types.CpakManifest) ([]types.Dependency, error)
-	pull          func(image, cpakImageId, origin string) ([]string, string, string, error)
-	buildRuntime  func(layers []string, sources []types.RuntimeSource) ([]string, error)
-	stop          func(app types.Application) error
-	createExports func(app types.Application) error
-	removeExports func(old types.Application, updated types.Application) error
+	latestRelease  func(origin string) (string, error)
+	fetchManifest  func(origin, branch, release, commit string) (*types.CpakManifest, error)
+	installDeps    func(origin string, manifest *types.CpakManifest) ([]types.Dependency, error)
+	pull           func(image, cpakImageId, origin string) ([]string, string, string, error)
+	buildRuntime   func(layers []string, sources []types.RuntimeSource) ([]string, error)
+	prepareStorage func(app types.Application) error
+	stop           func(app types.Application) error
+	createExports  func(app types.Application) error
+	removeExports  func(old types.Application, updated types.Application) error
 }
 
 // UpdateOptions controls updates which need explicit permission approval.
@@ -78,14 +79,15 @@ type UpdateOptions struct {
 
 func (c *Cpak) newUpdateDeps() updateDeps {
 	return updateDeps{
-		latestRelease: c.GetLatestRelease,
-		fetchManifest: c.FetchManifest,
-		installDeps:   c.installDependencies,
-		pull:          c.pull,
-		buildRuntime:  c.BuildRuntimeLayers,
-		stop:          c.stopApplicationContainers,
-		createExports: c.createExports,
-		removeExports: c.removeStaleExports,
+		latestRelease:  c.GetLatestRelease,
+		fetchManifest:  c.FetchManifest,
+		installDeps:    c.installDependencies,
+		pull:           c.pull,
+		buildRuntime:   c.BuildRuntimeLayers,
+		prepareStorage: c.PrepareApplicationStorage,
+		stop:           c.stopApplicationContainers,
+		createExports:  c.createExports,
+		removeExports:  c.removeStaleExports,
 	}
 }
 
@@ -150,6 +152,11 @@ func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateO
 		result := preflight[index]
 		if result.Status != "" {
 			if result.Status == types.UpdateStatusUpToDate {
+				if deps.prepareStorage != nil {
+					if err := deps.prepareStorage(app); err != nil {
+						result = failedUpdate(result, err)
+					}
+				}
 				if err := deps.createExports(app); err != nil {
 					result = failedUpdate(result, err)
 				}
@@ -333,6 +340,11 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		Image:                image,
 		ImageDigest:          imageDigest,
 		ParsedOverride:       manifest.Override,
+	}
+	if deps.prepareStorage != nil {
+		if err = deps.prepareStorage(updated); err != nil {
+			return failedUpdate(result, err)
+		}
 	}
 	if sameInstallation(app, updated) {
 		if err = deps.createExports(updated); err != nil {

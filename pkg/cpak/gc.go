@@ -18,17 +18,21 @@ type GarbageItem struct {
 }
 
 type GarbageReport struct {
-	Applied       bool          `json:"applied"`
-	Layers        []GarbageItem `json:"layers"`
-	Cache         []GarbageItem `json:"cache"`
-	Objects       int           `json:"objects"`
-	Chunks        int           `json:"chunks"`
-	ObjectBytes   int64         `json:"object_bytes"`
-	FVSBlocks     int           `json:"fvs_blocks"`
-	LegacyObjects int           `json:"legacy_objects"`
-	LegacyChunks  int           `json:"legacy_chunks"`
-	LegacyBytes   int64         `json:"legacy_bytes"`
-	Bytes         int64         `json:"bytes"`
+	Applied        bool          `json:"applied"`
+	Layers         []GarbageItem `json:"layers"`
+	Cache          []GarbageItem `json:"cache"`
+	Objects        int           `json:"objects"`
+	Chunks         int           `json:"chunks"`
+	ObjectBytes    int64         `json:"object_bytes"`
+	FVSBlocks      int           `json:"fvs_blocks"`
+	FVSObjects     int           `json:"fvs_objects"`
+	FVSObjectBytes int64         `json:"fvs_object_bytes"`
+	LegacyObjects  int           `json:"legacy_objects"`
+	LegacyChunks   int           `json:"legacy_chunks"`
+	LegacyBytes    int64         `json:"legacy_bytes"`
+	DriverLayers   int           `json:"driver_layers"`
+	DriverBytes    int64         `json:"driver_bytes"`
+	Bytes          int64         `json:"bytes"`
 }
 
 func (c *Cpak) CollectGarbage(apply bool) (GarbageReport, error) {
@@ -66,12 +70,19 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 	if err != nil {
 		return report, err
 	}
+	installedLayers, err := c.installedStorageLayersFrom(apps)
+	if err != nil {
+		return report, err
+	}
 	apps = append(apps, history...)
 	referencedLayers := map[string]struct{}{}
 	for _, app := range apps {
 		for _, layer := range app.ParsedLayers {
 			referencedLayers[layer] = struct{}{}
 		}
+	}
+	for _, layer := range installedLayers {
+		referencedLayers[layer] = struct{}{}
 	}
 
 	report.Layers, err = c.collectOrphanedLayers(referencedLayers, apply)
@@ -91,8 +102,16 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 		return report, err
 	}
 	report.FVSBlocks = result.RemovedBlocks
-	report.Objects = result.RemovedBlocks
-	report.ObjectBytes = result.RemovedBytes
+	report.FVSObjects = result.RemovedObjects
+	report.FVSObjectBytes = result.RemovedObjectBytes
+	report.Objects = result.RemovedBlocks + result.RemovedObjects
+	report.ObjectBytes = result.RemovedBytes + result.RemovedObjectBytes
+	driverResult, err := c.collectStorageDriverGarbage(referencedLayers, apply)
+	if err != nil {
+		return report, err
+	}
+	report.DriverLayers = len(driverResult.Layers)
+	report.DriverBytes = driverResult.Bytes
 	legacyOptions := c.daBaDeeStoreOptions()
 	if _, statErr := os.Stat(legacyOptions.Root); statErr == nil {
 		dedupStore, openErr := store.Open(legacyOptions)
@@ -127,6 +146,7 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 		report.Bytes += item.Bytes
 	}
 	report.Bytes += report.ObjectBytes
+	report.Bytes += report.DriverBytes
 	return report, nil
 }
 

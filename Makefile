@@ -13,7 +13,7 @@ cpak:
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION) -X main.selfUpdateMode=$(SELF_UPDATE_MODE) -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=$(DIALOG_BACKEND)" -o cpak .
 
 storaged:
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cpak-storaged github.com/fvs-lab/fvs2d/cmd/fvs2d
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cpak-storaged ./cmd/cpak-storaged
 
 installer: cpak storaged
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=$(DIALOG_BACKEND)" -o /tmp/cpak-installer ./cmd/cpak-installer
