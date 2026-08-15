@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -255,5 +256,27 @@ func TestResolveOverrideMountSourceUsesHostRootFallback(t *testing.T) {
 	}
 	if !found || got != source {
 		t.Fatalf("override source: got %q, found %t, want %q", got, found, source)
+	}
+}
+
+func TestX11SocketPathsKeepsDisplaySockets(t *testing.T) {
+	directory := t.TempDir()
+	for _, name := range []string{"X0", "X12", "wayland-0"} {
+		listener, err := net.Listen("unix", filepath.Join(directory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+	}
+	if err := os.WriteFile(filepath.Join(directory, "X1"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sockets, err := x11SocketPaths(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(directory, "X0"), filepath.Join(directory, "X12")}
+	if !reflect.DeepEqual(sockets, want) {
+		t.Fatalf("X11 sockets: got %v, want %v", sockets, want)
 	}
 }

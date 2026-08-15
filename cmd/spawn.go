@@ -468,6 +468,13 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 			c.spawnVerbose(mount, " does not exist, that's probably unsupported by the host, ignoring")
 			continue
 		}
+		if filepath.Clean(mount) == "/tmp/.X11-unix" {
+			if err = mountX11Sockets(rootFs, source); err != nil {
+				return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
+			}
+			grants = append(grants, sandbox.PathGrant{Path: "/tmp/.X11-unix"})
+			continue
+		}
 		destination, prepareErr := prepareRootfsMountTarget(rootFs, mount, source)
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", mount, prepareErr)
@@ -535,6 +542,64 @@ func baseSandboxGrants(userNamespaces bool) []sandbox.PathGrant {
 		{Path: "/proc", ReadOnly: true, WriteFiles: userNamespaces},
 		{Path: "/sys", ReadOnly: true},
 	}
+}
+
+func mountX11Sockets(rootFs, source string) error {
+	destination, err := prepareRootfsDirectory(rootFs, "/tmp/.X11-unix")
+	if err != nil {
+		return err
+	}
+	if err = os.Chmod(destination, os.ModeSticky|0777); err != nil {
+		return err
+	}
+	sockets, err := x11SocketPaths(source)
+	if err != nil {
+		return err
+	}
+	for _, socket := range sockets {
+		target, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/tmp/.X11-unix", filepath.Base(socket)))
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if err = tools.MountPrepared(socket, target, syscall.MS_BIND); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func x11SocketPaths(directory string) ([]string, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	var sockets []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !isX11SocketName(name) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil, infoErr
+		}
+		if info.Mode()&os.ModeSocket != 0 {
+			sockets = append(sockets, filepath.Join(directory, name))
+		}
+	}
+	return sockets, nil
+}
+
+func isX11SocketName(name string) bool {
+	if len(name) < 2 || name[0] != 'X' {
+		return false
+	}
+	for _, char := range name[1:] {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveOverrideMountSource(target, hostRoot string) (string, bool, error) {
