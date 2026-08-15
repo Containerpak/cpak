@@ -47,12 +47,13 @@ func (b *resumableBlob) Read(data []byte) (int, error) {
 		if b.ctx.Err() != nil || b.attempts >= blobResumeAttempts {
 			return read, err
 		}
-		b.body.Close()
+		_ = b.body.Close()
 		remaining := b.descriptor.Size - b.offset
-		b.body, err = b.client.BlobRange(b.ctx, b.ref, b.descriptor, b.offset, remaining)
+		next, err := b.client.BlobRange(b.ctx, b.ref, b.descriptor, b.offset, remaining)
 		if err != nil {
 			return read, err
 		}
+		b.body = next
 		b.attempts++
 		if read != 0 {
 			return read, nil
@@ -61,5 +62,8 @@ func (b *resumableBlob) Read(data []byte) (int, error) {
 }
 
 func (b *resumableBlob) Close() error {
+	if b.body == nil {
+		return nil
+	}
 	return b.body.Close()
 }

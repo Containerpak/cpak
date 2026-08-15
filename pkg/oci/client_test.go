@@ -325,6 +325,33 @@ func TestResumableBlobContinuesWithVerifiedRange(t *testing.T) {
 	}
 }
 
+func TestResumableBlobClosesAfterRangeFailure(t *testing.T) {
+	content := []byte("0123456789")
+	descriptor := Descriptor{Digest: digestBytes(content), Size: int64(len(content))}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Range") != "" {
+			http.Error(writer, "range unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		writer.Header().Set("Content-Length", "10")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(content[:4])
+	}))
+	defer server.Close()
+
+	ref, _ := ParseReference(strings.TrimPrefix(server.URL, "http://") + "/example/app")
+	reader, err := (&Client{HTTP: server.Client()}).ResumableBlob(context.Background(), ref, descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.ReadAll(reader); err == nil {
+		t.Fatal("resumed read succeeded after range failure")
+	}
+	if err = reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func sourceURL(request *http.Request) string {
 	return "http://" + request.Host
 }
