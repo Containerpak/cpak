@@ -152,7 +152,8 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 
 func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, apply bool) ([]GarbageItem, error) {
 	items := []GarbageItem{}
-	for _, layersDir := range []string{c.fvsLayersPath(), c.GetInStoreDir("layers")} {
+	legacyLayersDir := c.GetInStoreDir("layers")
+	for _, layersDir := range []string{c.fvsLayersPath(), legacyLayersDir} {
 		entries, err := os.ReadDir(layersDir)
 		if os.IsNotExist(err) {
 			continue
@@ -165,7 +166,16 @@ func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, apply bool)
 				continue
 			}
 			if _, exists := referenced[entry.Name()]; exists {
-				continue
+				if layersDir != legacyLayersDir {
+					continue
+				}
+				available, err := c.fvsLayerAvailable(entry.Name())
+				if err != nil {
+					return nil, err
+				}
+				if !available {
+					continue
+				}
 			}
 			path := filepath.Join(layersDir, entry.Name())
 			item, err := garbageItem(path)

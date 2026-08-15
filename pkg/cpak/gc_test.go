@@ -43,6 +43,76 @@ func TestCollectGarbageKeepsReferencedLayers(t *testing.T) {
 	}
 }
 
+func TestCollectGarbageRemovesReferencedLegacyLayerWhenFVSIsAvailable(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	legacy := c.GetInStoreDir("layers", "used")
+	storage, err := store.Open(c.daBaDeeStoreOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.Import(context.Background(), filepath.Join(legacy, "value"), strings.NewReader("legacy"), store.ImportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+	seedFVSLayerFile(t, c, "used", "value", []byte("current"))
+
+	report, err := c.collectGarbageReport([]types.Application{{ParsedLayers: []string{"used"}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Layers) != 1 || report.Layers[0].Path != legacy {
+		t.Fatalf("dry-run report = %+v", report)
+	}
+	if report.LegacyObjects != 1 || report.LegacyBytes != 6 {
+		t.Fatalf("legacy dry-run report = %+v", report)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("dry run removed legacy layer: %v", err)
+	}
+
+	report, err = c.collectGarbageReport([]types.Application{{ParsedLayers: []string{"used"}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Layers) != 1 || report.Layers[0].Path != legacy {
+		t.Fatalf("applied report = %+v", report)
+	}
+	if report.LegacyObjects != 1 || report.LegacyBytes != 6 {
+		t.Fatalf("legacy applied report = %+v", report)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy layer remained: %v", err)
+	}
+	if available, err := c.fvsLayerAvailable("used"); err != nil || !available {
+		t.Fatalf("FVS layer changed: available=%t err=%v", available, err)
+	}
+}
+
+func TestCollectGarbageKeepsReferencedLegacyLayerWhenFVSIsIncomplete(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	legacy := c.GetInStoreDir("layers", "used")
+	if err := os.MkdirAll(legacy, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "value"), []byte("legacy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(c.fvsLayerPath("used"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.collectGarbageReport([]types.Application{{ParsedLayers: []string{"used"}}}, true); err == nil {
+		t.Fatal("incomplete FVS layer was accepted")
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("legacy layer changed: %v", err)
+	}
+}
+
 func TestCollectGarbageReportsBeforeApplying(t *testing.T) {
 	c := newTestCpak(t)
 	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
