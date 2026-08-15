@@ -72,6 +72,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if err = types.ValidateHostActions(manifest.Override.HostActions); err != nil {
 		return err
 	}
+	if err = types.ValidateFilePickerGrant(manifest.Override.FilePicker); err != nil {
+		return err
+	}
 	if err = validateSessions(manifest); err != nil {
 		return err
 	}
@@ -131,6 +134,9 @@ func validateSessions(manifest *types.CpakManifest) error {
 			return fmt.Errorf("session %s cannot declare host commands", session.ID)
 		}
 		if err := types.ValidateHostActions(session.Override.HostActions); err != nil {
+			return fmt.Errorf("session %s: %w", session.ID, err)
+		}
+		if err := types.ValidateFilePickerGrant(session.Override.FilePicker); err != nil {
 			return fmt.Errorf("session %s: %w", session.ID, err)
 		}
 		if err := types.ValidateFilesystemPermissions(session.Override.Filesystem); err != nil {

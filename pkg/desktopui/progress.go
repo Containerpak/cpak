@@ -5,9 +5,6 @@
 package desktopui
 
 import (
-	"fmt"
-	"os/exec"
-	"strings"
 	"time"
 )
 
@@ -45,62 +42,13 @@ func Progress(backend Backend, request ProgressRequest, action func(func(Progres
 	}
 
 	switch backend {
-	case BackendGNOME:
-		return progressGNOME(request, updates, done)
-	case BackendKDE:
-		return progressKDE(request, updates, done)
+	case BackendAdwaita, BackendGTK, BackendKDE, BackendQt:
+		handled, err := runAdapterProgress(backend, request, updates, done)
+		if handled {
+			return err
+		}
 	}
 	return progressBuiltin(request, updates, done)
-}
-
-func progressGNOME(request ProgressRequest, updates <-chan ProgressUpdate, done <-chan error) error {
-	path, err := exec.LookPath("zenity")
-	if err != nil {
-		return waitProgress(done)
-	}
-	command := exec.Command(path, "--progress", "--auto-close", "--no-cancel", "--title="+request.Title, "--text="+request.Detail, "--percentage=0", "--width=520")
-	input, err := command.StdinPipe()
-	if err != nil {
-		return waitProgress(done)
-	}
-	if err = command.Start(); err != nil {
-		return waitProgress(done)
-	}
-	for {
-		select {
-		case update := <-updates:
-			percentage := progressPercentage(update)
-			_, _ = fmt.Fprintf(input, "%d\n# %s\n", percentage, strings.ReplaceAll(update.Message, "\n", " "))
-		case result := <-done:
-			_ = input.Close()
-			_ = command.Wait()
-			return result
-		}
-	}
-}
-
-func progressKDE(request ProgressRequest, updates <-chan ProgressUpdate, done <-chan error) error {
-	path, err := exec.LookPath("kdialog")
-	if err != nil {
-		return waitProgress(done)
-	}
-	command := exec.Command(path, "--title", request.Title, "--passivepopup", request.Detail, "300")
-	if err = command.Start(); err != nil {
-		return waitProgress(done)
-	}
-	for {
-		select {
-		case <-updates:
-		case result := <-done:
-			_ = command.Process.Kill()
-			_, _ = command.Process.Wait()
-			return result
-		}
-	}
-}
-
-func waitProgress(done <-chan error) error {
-	return <-done
 }
 
 func progressPercentage(update ProgressUpdate) int {

@@ -5,8 +5,7 @@
 package desktopui
 
 import (
-	"fmt"
-	"os/exec"
+	"context"
 	"regexp"
 	"strings"
 )
@@ -27,92 +26,34 @@ type UpdateRequest struct {
 
 // Update shows the configured desktop interface and applies the update after confirmation.
 func Update(backend Backend, request UpdateRequest, action func(func(string)) error) error {
-	started := false
 	wrapper := func(progress func(string)) error {
-		started = true
 		return action(progress)
 	}
-	switch backend {
-	case BackendGNOME:
-		if err := updateGNOME(request, wrapper); err == nil {
-			return nil
-		} else if started {
-			return err
+	if backend == BackendAdwaita || backend == BackendGTK || backend == BackendKDE || backend == BackendQt {
+		acceptLabel := "Update"
+		cancelLabel := "Later"
+		recommended := true
+		if request.Managed {
+			acceptLabel = "Close"
+			cancelLabel = ""
+			recommended = false
 		}
-	case BackendKDE:
-		if err := updateKDE(request, wrapper); err == nil {
-			return nil
-		} else if started {
-			return err
+		result, err := runAdapterPrompt(context.Background(), backend, adapterPrompt{
+			Title: "cpak update", Heading: "cpak " + request.Version + " is available",
+			Body: stripMarkup(updateMessage(request)), AcceptLabel: acceptLabel, CancelLabel: cancelLabel, Recommended: recommended,
+		})
+		if err == nil {
+			if !result.Accepted || request.Managed {
+				return nil
+			}
+			return Progress(backend, ProgressRequest{Title: "Updating cpak", Heading: "Updating cpak", Detail: "Downloading cpak", IconPNG: request.IconPNG}, func(progress func(ProgressUpdate)) error {
+				return wrapper(func(message string) {
+					progress(ProgressUpdate{Message: message})
+				})
+			})
 		}
 	}
 	return updateBuiltin(request, wrapper)
-}
-
-func updateGNOME(request UpdateRequest, action func(func(string)) error) error {
-	path, err := exec.LookPath("zenity")
-	if err != nil {
-		return err
-	}
-	message := updateMessage(request)
-	if request.Managed {
-		return exec.Command(path, "--info", "--title=cpak update", "--text="+message, "--width=520").Run()
-	}
-	confirm := exec.Command(path, "--question", "--title=cpak update", "--text="+message, "--ok-label=Update", "--cancel-label=Later", "--width=520")
-	if err = confirm.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
-			return nil
-		}
-		return err
-	}
-	progress := exec.Command(path, "--progress", "--pulsate", "--auto-close", "--no-cancel", "--title=Updating cpak", "--text=Downloading cpak", "--width=520")
-	input, err := progress.StdinPipe()
-	if err != nil {
-		return err
-	}
-	if err = progress.Start(); err != nil {
-		return err
-	}
-	actionErr := action(func(message string) {
-		_, _ = fmt.Fprintf(input, "# %s\n", strings.ReplaceAll(message, "\n", " "))
-	})
-	_ = input.Close()
-	_ = progress.Wait()
-	if actionErr != nil {
-		showGNOMEError(path, "cpak update", actionErr)
-		return actionErr
-	}
-	return exec.Command(path, "--info", "--title=cpak update", "--text=cpak "+request.Version+" is installed", "--width=520").Run()
-}
-
-func updateKDE(request UpdateRequest, action func(func(string)) error) error {
-	path, err := exec.LookPath("kdialog")
-	if err != nil {
-		return err
-	}
-	message := stripMarkup(updateMessage(request))
-	if request.Managed {
-		return exec.Command(path, "--title", "cpak update", "--msgbox", message).Run()
-	}
-	confirm := exec.Command(path, "--title", "cpak update", "--yesno", message, "--yes-label", "Update", "--no-label", "Later")
-	if err = confirm.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
-			return nil
-		}
-		return err
-	}
-	progress := exec.Command(path, "--title", "Updating cpak", "--passivepopup", "Downloading cpak", "300")
-	if err = progress.Start(); err != nil {
-		return err
-	}
-	actionErr := action(func(string) {})
-	_ = progress.Process.Kill()
-	_, _ = progress.Process.Wait()
-	if actionErr != nil {
-		_ = exec.Command(path, "--title", "cpak update", "--error", actionErr.Error()).Run()
-		return actionErr
-	}
-	return exec.Command(path, "--title", "cpak update", "--msgbox", "cpak "+request.Version+" is installed").Run()
 }
 
 func updateMessage(request UpdateRequest) string {

@@ -29,6 +29,7 @@ const (
 var (
 	payloadMagic   = [8]byte{'C', 'P', 'A', 'K', 'P', 'A', 'Y', '1'}
 	companionMagic = [8]byte{'C', 'P', 'A', 'K', 'F', 'V', 'S', '1'}
+	brandMagic     = [8]byte{'C', 'P', 'A', 'K', 'I', 'C', 'N', '1'}
 	capsuleMagic   = [8]byte{'C', 'P', 'A', 'K', 'A', 'P', 'P', '1'}
 )
 
@@ -54,6 +55,7 @@ type Capsule struct {
 	Metadata  Metadata
 	Payload   []byte
 	Companion []byte
+	BrandIcon []byte
 }
 
 func ParsePrivateKeyPEM(encoded []byte) (ed25519.PrivateKey, error) {
@@ -131,12 +133,20 @@ func PackInstaller(installer, cpak []byte) ([]byte, error) {
 }
 
 func PackInstallerWithCompanion(installer, cpak, companion []byte) ([]byte, error) {
-	capacity, err := checkedCapacity(len(installer), len(companion), footerSize, len(cpak), footerSize)
+	return PackInstallerWithAssets(installer, cpak, companion, nil)
+}
+
+func PackInstallerWithAssets(installer, cpak, companion, brandIcon []byte) ([]byte, error) {
+	capacity, err := checkedCapacity(len(installer), len(brandIcon), footerSize, len(companion), footerSize, len(cpak), footerSize)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]byte, 0, capacity)
 	result = append(result, installer...)
+	if len(brandIcon) > 0 {
+		result = append(result, brandIcon...)
+		result = appendFooter(result, brandMagic, uint64(len(brandIcon)))
+	}
 	if len(companion) > 0 {
 		result = append(result, companion...)
 		result = appendFooter(result, companionMagic, uint64(len(companion)))
@@ -251,7 +261,22 @@ func ReadCapsule(source io.ReaderAt, size int64, publicKey ed25519.PublicKey) (C
 			return Capsule{}, err
 		}
 	}
-	return Capsule{Metadata: metadata, Payload: payload, Companion: companion}, nil
+	brandSearchOffset := payloadOffset
+	if found {
+		brandSearchOffset = companionOffset
+	}
+	brandOffset, brandLength, brandFound, err := optionalSection(source, brandSearchOffset, brandMagic)
+	if err != nil {
+		return Capsule{}, fmt.Errorf("read embedded brand icon: %w", err)
+	}
+	var brandIcon []byte
+	if brandFound {
+		brandIcon = make([]byte, brandLength)
+		if _, err = source.ReadAt(brandIcon, brandOffset); err != nil {
+			return Capsule{}, err
+		}
+	}
+	return Capsule{Metadata: metadata, Payload: payload, Companion: companion, BrandIcon: brandIcon}, nil
 }
 
 func optionalSection(source io.ReaderAt, size int64, magic [8]byte) (int64, int, bool, error) {

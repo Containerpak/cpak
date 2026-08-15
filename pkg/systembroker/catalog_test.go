@@ -58,6 +58,22 @@ func TestCatalogReadsPublishedPolicyUpdates(t *testing.T) {
 	}
 }
 
+func TestCatalogPreservesFilePickerApplication(t *testing.T) {
+	directory := t.TempDir()
+	token := strings.Repeat("g", 64)
+	policy := Policy{FilePickerApplication: "Google Chrome"}
+	if err := WritePolicy(directory, token, policy); err != nil {
+		t.Fatal(err)
+	}
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.FilePickerApplication != policy.FilePickerApplication {
+		t.Fatalf("application: %q", options.FilePickerApplication)
+	}
+}
+
 func TestCatalogRejectsSymlinkedPolicy(t *testing.T) {
 	directory := t.TempDir()
 	token := strings.Repeat("e", 64)

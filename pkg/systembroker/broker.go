@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,9 +45,17 @@ type Options struct {
 	ContainerOwner        string
 	ContainerCapabilities map[string]bool
 	ContainerPaths        []ContainerPathGrant
+	FilePicker            FilePickerPolicy
+	FilePickerPaths       []FilePickerPathGrant
+	FilePickerApplication string
+	FilePickerOrigin      string
+	FileGrantSocketPath   string
+	FileGrantStorePath    string
 	Notify                func(context.Context, NotificationRequest) error
 	LaunchApplication     func(context.Context, string, []string, []string) error
 	Containers            func(context.Context, string, map[string]bool, []ContainerPathGrant, ContainerRequest, io.Writer, io.Writer) (int, error)
+	PickFile              func(context.Context, desktopui.FilePickerRequest) (desktopui.FilePickerResult, error)
+	ConfirmFileGrant      func(context.Context, desktopui.FilePickerResult, desktopui.FilePickerRequest) (desktopui.FilePickerResult, error)
 }
 
 func (o Options) validate() error {
@@ -56,7 +65,7 @@ func (o Options) validate() error {
 	if len(o.Token) < 32 {
 		return errors.New("system broker token is too short")
 	}
-	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 {
+	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && !o.FilePicker.Enabled() {
 		return errors.New("system broker has no enabled operations")
 	}
 	if o.AllowHostApplications {
@@ -72,6 +81,22 @@ func (o Options) validate() error {
 	}
 	if len(o.ContainerOwner) > 512 || strings.ContainsAny(o.ContainerOwner, "\x00\r\n") {
 		return errors.New("system broker container owner is invalid")
+	}
+	if o.FilePicker.Enabled() {
+		if o.FilePickerOrigin == "" {
+			return errors.New("system broker file picker origin is required")
+		}
+		if len(o.FilePickerApplication) > 160 || strings.ContainsAny(o.FilePickerApplication, "\x00\r\n") {
+			return errors.New("system broker file picker application is invalid")
+		}
+		if !filepath.IsAbs(o.FileGrantSocketPath) || !filepath.IsAbs(o.FileGrantStorePath) {
+			return errors.New("system broker file grant paths must be absolute")
+		}
+		for _, path := range o.FilePickerPaths {
+			if !filepath.IsAbs(path.Source) || filepath.Clean(path.Source) != path.Source || !filepath.IsAbs(path.Target) || filepath.Clean(path.Target) != path.Target {
+				return errors.New("system broker file picker path is invalid")
+			}
+		}
 	}
 	for capability := range o.ContainerCapabilities {
 		if capability != "read" && capability != "manage-owned" && capability != "exec-owned" {
@@ -177,7 +202,7 @@ func authorizeRequest(request Request, token string) error {
 	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(token)) != 1 {
 		return errors.New("invalid system broker token")
 	}
-	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionContainers {
+	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionFilePicker && request.Action != ActionContainers {
 		return errors.New("unsupported system broker operation")
 	}
 	return nil
@@ -264,6 +289,8 @@ func execute(ctx context.Context, request Request, options Options, writer *fram
 			return 0, errors.New("release host application backend: gio")
 		}
 		return 0, nil
+	case ActionFilePicker:
+		return executeFilePicker(ctx, request.Payload, options, writer)
 	case ActionContainers:
 		if len(options.ContainerCapabilities) == 0 {
 			return 0, errors.New("host container actions are not permitted")

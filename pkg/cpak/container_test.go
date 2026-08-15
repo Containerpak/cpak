@@ -5,12 +5,15 @@
 package cpak
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/filegrant"
+	"github.com/mirkobrombin/cpak/pkg/grantproto"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -102,6 +105,52 @@ func TestContainerScopeLockSerializesTheSameApplication(t *testing.T) {
 		unlock()
 	case <-time.After(time.Second):
 		t.Fatal("the second lock did not acquire the released scope")
+	}
+}
+
+func TestMountPersistentFileGrantsRestoresStoredGrant(t *testing.T) {
+	storePath := t.TempDir()
+	selected := filepath.Join(t.TempDir(), "document.pdf")
+	if err := os.WriteFile(selected, []byte("pdf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := filegrant.Resolve("github.com/example/viewer", selected, filegrant.AccessReadOnly, filegrant.LifetimePersistent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := filegrant.Store{Directory: filepath.Join(storePath, "grants")}
+	if err = store.Add(grant); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(t.TempDir(), "grant.sock")
+	listener, err := net.Listen("unixpacket", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	restored := make(chan filegrant.Grant, 1)
+	go func() {
+		accepted, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		connection := accepted.(*net.UnixConn)
+		defer connection.Close()
+		request, sources, receiveErr := grantproto.Receive(connection)
+		if receiveErr != nil {
+			return
+		}
+		sources.Close()
+		restored <- request.Grant
+		_ = grantproto.Reply(connection, grantproto.Response{Target: request.Grant.Target})
+	}()
+	cp := Cpak{Options: types.CpakOptions{StorePath: storePath}}
+	container := types.Container{GrantSocketPath: socket, StatePath: t.TempDir()}
+	if err = cp.mountPersistentFileGrants(grant.Origin, container); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-restored; got != grant {
+		t.Fatalf("restored grant: %+v", got)
 	}
 }
 
@@ -329,6 +378,46 @@ func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T)
 		if !slicesContain(env, value) {
 			t.Fatalf("missing %q in %v", value, env)
 		}
+	}
+}
+
+func TestContainerEnvironmentUsesThePrivateDesktopBusForFileSelection(t *testing.T) {
+	app := types.Application{Config: `{"config":{}}`}
+	container := types.Container{
+		CpakId:               "container-id",
+		DesktopBusSocketPath: "/tmp/desktop-bus.sock",
+	}
+	environment, err := containerEnvironment(app, container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slicesContain(environment, "DBUS_SESSION_BUS_ADDRESS=unix:path="+hostSessionBusPath()) {
+		t.Fatalf("private desktop bus address is missing from %v", environment)
+	}
+	if !slicesContain(environment, "GTK_USE_PORTAL=1") {
+		t.Fatalf("GTK file chooser integration is missing from %v", environment)
+	}
+}
+
+func TestPrivateApplicationHomeIsPersistentAndRestricted(t *testing.T) {
+	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	path, err := cp.privateApplicationHome("application-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(cp.Options.StorePath, "application-data", "application-id", "home")
+	if path != want {
+		t.Fatalf("private application home: got %q, want %q", path, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0700 {
+		t.Fatalf("private application home mode: %v", info.Mode())
+	}
+	if filesystemIncludesHostHome(nil) || !filesystemIncludesHostHome([]types.FilesystemPermission{{Path: "home", Access: "read-only"}}) {
+		t.Fatal("host home permission detection is invalid")
 	}
 }
 

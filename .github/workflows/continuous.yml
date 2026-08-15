@@ -25,7 +25,7 @@ env:
   EUPROVGUARD_VERSION: "v1.2.1"
 
 jobs:
-  build:
+  prepare:
     outputs:
       version: ${{ steps.version.outputs.value }}
     runs-on: ubuntu-latest
@@ -39,6 +39,8 @@ jobs:
       - name: Test
         run: |
           go test -race ./...
+          go test -tags cpak_ui_builtin ./pkg/desktopui
+          go test -tags cpak_ui_adwaita ./pkg/desktopui
           go vet ./...
           go run . gen-schema --output /tmp/manifest-v2.json
           diff -u schema/manifest-v2.json /tmp/manifest-v2.json
@@ -52,21 +54,66 @@ jobs:
           fi
           echo "value=${version}" >> "$GITHUB_OUTPUT"
 
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+
+      - name: Install desktop adapter toolkits
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev libadwaita-1-dev qt6-base-dev
+
       - name: Build
         env:
-          VERSION: ${{ steps.version.outputs.value }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p dist
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.selfUpdateMode=enabled -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=auto" -o "dist/cpak-linux-${arch}" .
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "dist/cpak-storaged-linux-${arch}" ./cmd/cpak-storaged
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags="-s -w -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=auto" -o "/tmp/cpak-installer-linux-${arch}" ./cmd/cpak-installer
-            go run ./cmd/cpak-pack \
-              --installer "/tmp/cpak-installer-linux-${arch}" \
-              --cpak "dist/cpak-linux-${arch}" \
-              --storaged "dist/cpak-storaged-linux-${arch}" \
-              --output "dist/cpak-installer-linux-${arch}"
-          done
+          make installer VERSION="${VERSION}" UI_ADAPTERS=all
+          mv cpak "dist/cpak-linux-${ARCH}"
+          mv cpak-storaged "dist/cpak-storaged-linux-${ARCH}"
+          mv cpak-installer "dist/cpak-installer-linux-${ARCH}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cpak-binaries-${{ matrix.arch }}
+          path: dist
+          if-no-files-found: error
+
+  assemble:
+    needs: [prepare, build]
+    outputs:
+      version: ${{ needs.prepare.outputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: cpak-binaries-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
           cd dist
           sha256sum cpak-linux-* cpak-storaged-linux-* cpak-installer-linux-* > SHA256SUMS
 
@@ -77,7 +124,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           go run ./cmd/cpak-catalog \
-            --release "${{ steps.version.outputs.value }}" \
+            --release "${{ needs.prepare.outputs.version }}" \
             --installer-dir dist \
             --output dist/cpak-installer-catalog.json
           cd dist
@@ -93,13 +140,13 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: cpak-${{ steps.version.outputs.value }}
+          name: cpak-${{ needs.prepare.outputs.version }}
           path: dist
           if-no-files-found: error
 
   compliance:
     name: Compliance
-    needs: build
+    needs: assemble
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -124,7 +171,7 @@ jobs:
           euprovguard \
             -path . \
             -name cpak \
-            -version-tag "${{ needs.build.outputs.version }}" \
+            -version-tag "${{ needs.assemble.outputs.version }}" \
             -output compliance/sbom-cpak.json \
             -bundle compliance/report-cpak 2>&1 | tee compliance/scan-cpak.log
 
@@ -164,7 +211,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [build, compliance]
+    needs: [assemble, compliance]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -175,7 +222,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: cpak-${{ needs.build.outputs.version }}
+          name: cpak-${{ needs.assemble.outputs.version }}
           path: dist
 
       - name: Attest binaries

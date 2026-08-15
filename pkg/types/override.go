@@ -5,6 +5,7 @@
 package types
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 )
@@ -37,6 +38,7 @@ type Override struct {
 	OpenURI          bool              `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
 	HostApplications bool              `json:"hostApplications" jsonschema:"description=Expose and launch host desktop applications,default=false" flag:"hostApplications,bool"`
 	HostActions      []HostActionGrant `json:"hostActions,omitempty" jsonschema:"description=Typed host service capabilities"`
+	FilePicker       FilePickerGrant   `json:"filePicker,omitempty" jsonschema:"description=Native file chooser capabilities"`
 
 	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions"`
 
@@ -57,6 +59,28 @@ type Override struct {
 	AsRoot bool `json:"asRoot" jsonschema:"description=Run as root inside container,default=false" flag:"asRoot,bool"`
 
 	AllowedHostCommands []string `json:"allowedHostCommands,omitempty" jsonschema:"description=Legacy host command compatibility field,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0"`
+}
+
+type FilePickerGrant struct {
+	OpenFile         bool `json:"openFile,omitempty" jsonschema:"description=Select an existing host file,default=false"`
+	OpenFolder       bool `json:"openFolder,omitempty" jsonschema:"description=Select an existing host folder,default=false"`
+	SaveFile         bool `json:"saveFile,omitempty" jsonschema:"description=Select a host destination for a new file,default=false"`
+	Persistent       bool `json:"persistent,omitempty" jsonschema:"description=Offer persistent grants,default=false"`
+	ContainingFolder bool `json:"containingFolder,omitempty" jsonschema:"description=Offer the containing folder as context,default=false"`
+}
+
+func (g FilePickerGrant) Enabled() bool {
+	return g.OpenFile || g.OpenFolder || g.SaveFile
+}
+
+func ValidateFilePickerGrant(grant FilePickerGrant) error {
+	if !grant.Enabled() && (grant.Persistent || grant.ContainingFolder) {
+		return errors.New("file picker options require an enabled picker mode")
+	}
+	if grant.ContainingFolder && !grant.OpenFile {
+		return errors.New("file picker containing folder access requires openFile")
+	}
+	return nil
 }
 
 func NewOverride() Override {
@@ -93,7 +117,7 @@ func NewOverride() Override {
 }
 
 type FilesystemPermission struct {
-	Path   string `json:"path" jsonschema:"pattern=^(?:home|host|xdg-(?:desktop|documents|download|music|pictures|public-share|templates|videos)|/.*)$,description=Host path or portable home host and XDG scope"`
+	Path   string `json:"path" jsonschema:"pattern=^(?:home(?:/.*)?|host|xdg-(?:desktop|documents|download|music|pictures|public-share|templates|videos)|/.*)$,description=Host path or portable home host and XDG scope"`
 	Access string `json:"access" jsonschema:"enum=read-only,enum=read-write,description=Filesystem access mode"`
 }
 
@@ -150,7 +174,19 @@ func (o Override) Additions(next Override) []string {
 					break
 				}
 			}
+		case reflect.Struct:
+			if key == "filePicker" && filePickerHasAdditions(o.FilePicker, next.FilePicker) {
+				changes = append(changes, key)
+			}
 		}
 	}
 	return changes
+}
+
+func filePickerHasAdditions(current, next FilePickerGrant) bool {
+	return !current.OpenFile && next.OpenFile ||
+		!current.OpenFolder && next.OpenFolder ||
+		!current.SaveFile && next.SaveFile ||
+		!current.Persistent && next.Persistent ||
+		!current.ContainingFolder && next.ContainingFolder
 }

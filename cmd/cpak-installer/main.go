@@ -37,6 +37,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	desktopui.SetBrandIcon(capsule.BrandIcon)
 	if *inspect {
 		encoded, _ := json.MarshalIndent(capsule.Metadata, "", "  ")
 		fmt.Println(string(encoded))

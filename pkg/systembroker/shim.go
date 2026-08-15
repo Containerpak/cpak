@@ -7,7 +7,9 @@ package systembroker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 )
 
 func InvokeShim(ctx context.Context, socketPath, token, shim string, args []string, environment map[string]string, stdout, stderr io.Writer) error {
@@ -37,6 +39,25 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 			return err
 		}
 		return client.LaunchApplication(ctx, request)
+	case "cpak-file-picker":
+		request, err := parseFilePicker(args)
+		if err != nil {
+			return err
+		}
+		result, err := client.FilePicker(ctx, request)
+		if err != nil {
+			return err
+		}
+		paths := result.Paths
+		if len(paths) == 0 {
+			paths = []string{result.Path}
+		}
+		for _, path := range paths {
+			if _, err = fmt.Fprintln(stdout, path); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "podman", "docker":
 		request, err := parseContainerCommand(args)
 		if err != nil {
@@ -49,6 +70,51 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 	default:
 		return errors.New("unsupported system integration shim")
 	}
+}
+
+func parseFilePicker(args []string) (FilePickerRequest, error) {
+	if len(args) == 0 {
+		return FilePickerRequest{}, errors.New("file picker mode is required")
+	}
+	request := FilePickerRequest{Mode: args[0], Title: "Select a file"}
+	for index := 1; index < len(args); index++ {
+		name := args[index]
+		if name == "--multiple" {
+			request.Multiple = true
+			continue
+		}
+		if name != "--title" && name != "--accept-label" && name != "--suggested-name" && name != "--current-folder" && name != "--filter" && name != "--mime-filter" {
+			return FilePickerRequest{}, fmt.Errorf("unsupported file picker option: %s", name)
+		}
+		index++
+		if index >= len(args) {
+			return FilePickerRequest{}, fmt.Errorf("file picker option %s requires a value", name)
+		}
+		value := args[index]
+		switch name {
+		case "--title":
+			request.Title = value
+		case "--accept-label":
+			request.AcceptLabel = value
+		case "--suggested-name":
+			request.SuggestedName = value
+		case "--current-folder":
+			request.CurrentFolder = value
+		case "--filter":
+			parts := strings.SplitN(value, "|", 2)
+			if len(parts) != 2 {
+				return FilePickerRequest{}, errors.New("file picker filter must use NAME|PATTERN;PATTERN")
+			}
+			request.Filters = append(request.Filters, FilePickerFilter{Name: parts[0], Patterns: strings.Split(parts[1], ";")})
+		case "--mime-filter":
+			parts := strings.SplitN(value, "|", 2)
+			if len(parts) != 2 {
+				return FilePickerRequest{}, errors.New("file picker MIME filter must use NAME|TYPE;TYPE")
+			}
+			request.Filters = append(request.Filters, FilePickerFilter{Name: parts[0], MIMETypes: strings.Split(parts[1], ";")})
+		}
+	}
+	return request, nil
 }
 
 func parseGIOOpen(args []string) (OpenURIRequest, error) {

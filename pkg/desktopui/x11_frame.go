@@ -5,6 +5,8 @@
 package desktopui
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jezek/xgb"
@@ -81,6 +83,30 @@ func (f *desktopFrame) StartMove() {
 	).Check()
 }
 
+func (f *desktopFrame) SetDialog(parent string) {
+	windowType, err := desktopAtom(f.conn, "_NET_WM_WINDOW_TYPE")
+	if err != nil {
+		return
+	}
+	dialog, err := desktopAtom(f.conn, "_NET_WM_WINDOW_TYPE_DIALOG")
+	if err != nil {
+		return
+	}
+	desktopProperty32(f.conn, f.window, windowType, xproto.AtomAtom, uint32(dialog))
+
+	state, err := desktopAtom(f.conn, "_NET_WM_STATE")
+	if err == nil {
+		modal, modalErr := desktopAtom(f.conn, "_NET_WM_STATE_MODAL")
+		if modalErr == nil {
+			desktopProperty32(f.conn, f.window, state, xproto.AtomAtom, uint32(modal))
+		}
+	}
+	if parentWindow, ok := desktopParentWindow(parent); ok {
+		desktopProperty32(f.conn, f.window, xproto.AtomWmTransientFor, xproto.AtomWindow, uint32(parentWindow))
+	}
+	f.conn.Sync()
+}
+
 func (f *desktopFrame) removeDecorations() {
 	motif, err := desktopAtom(f.conn, "_MOTIF_WM_HINTS")
 	if err != nil {
@@ -89,6 +115,26 @@ func (f *desktopFrame) removeDecorations() {
 	hints := make([]byte, 20)
 	xgb.Put32(hints[0:4], 2)
 	xproto.ChangeProperty(f.conn, xproto.PropModeReplace, f.window, motif, motif, 32, 5, hints)
+}
+
+func desktopProperty32(conn *xgb.Conn, window xproto.Window, property, propertyType xproto.Atom, values ...uint32) {
+	data := make([]byte, len(values)*4)
+	for index, value := range values {
+		xgb.Put32(data[index*4:], value)
+	}
+	xproto.ChangeProperty(conn, xproto.PropModeReplace, window, property, propertyType, 32, uint32(len(values)), data)
+}
+
+func desktopParentWindow(parent string) (xproto.Window, bool) {
+	value, found := strings.CutPrefix(parent, "x11:")
+	if !found || value == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseUint(value, 16, 32)
+	if err != nil || id == 0 {
+		return 0, false
+	}
+	return xproto.Window(id), true
 }
 
 func desktopWindow(conn *xgb.Conn, root xproto.Window, name xproto.Atom, title string) xproto.Window {

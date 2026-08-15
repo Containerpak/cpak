@@ -198,6 +198,7 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	}
 
 	cmd := exec.Command(cpakBinary, ServiceCommand)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	err = cmd.Start()
 	if err != nil {
 		return fmt.Errorf("cannot start the cpak service: %w", err)

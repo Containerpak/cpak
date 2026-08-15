@@ -1,5 +1,7 @@
 /cpak
 /_cpak
+/cpak-installer
+/cpak-storaged
 /vendor/
 podman-launcher
 /tools/rootlesskit
@@ -9,3 +11,5 @@ go.work.sum
 /pkg/tools/host-spawn
 /pkg/tools/nsenter
 /pkg/tools/rootlesskit.tar.gz
+/pkg/desktopui/adapter_embedded_*_generated.go
+/.build/

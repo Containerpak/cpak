@@ -94,7 +94,7 @@ func ValidateFilesystemPermissions(permissions []FilesystemPermission) error {
 	paths := make(map[string]struct{}, len(permissions))
 	for _, permission := range permissions {
 		if !validFilesystemPath(permission.Path) {
-			return fmt.Errorf("filesystem path must be home, host, an XDG user directory, or a clean absolute path: %q", permission.Path)
+			return fmt.Errorf("filesystem path must be home, a home subpath, host, an XDG user directory, or a clean absolute path: %q", permission.Path)
 		}
 		if permission.Access != "read-only" && permission.Access != "read-write" {
 			return fmt.Errorf("filesystem access must be read-only or read-write: %q", permission.Access)
@@ -117,7 +117,8 @@ func ResolveFilesystemPermission(permission FilesystemPermission) (source, targe
 	switch permission.Path {
 	case "host":
 		return "/", "/run/host", nil
-	case "home":
+	}
+	if relative, ok := homeFilesystemSubpath(permission.Path); ok {
 		home, homeErr := os.UserHomeDir()
 		if homeErr != nil || home == "" || !filepath.IsAbs(home) || filepath.Clean(home) != home || home == "/" {
 			if homeErr != nil {
@@ -125,7 +126,11 @@ func ResolveFilesystemPermission(permission FilesystemPermission) (source, targe
 			}
 			return "", "", errors.New("resolve home filesystem scope")
 		}
-		return home, home, nil
+		if relative == "." {
+			return home, home, nil
+		}
+		path := filepath.Join(home, relative)
+		return path, path, nil
 	}
 	if _, ok := xdgDirectoryKeys[permission.Path]; ok {
 		path, resolveErr := resolveXDGUserDirectory(permission.Path)
@@ -138,13 +143,30 @@ func ResolveFilesystemPermission(permission FilesystemPermission) (source, targe
 }
 
 func validFilesystemPath(path string) bool {
-	if path == "home" || path == "host" {
+	if path == "host" {
+		return true
+	}
+	if _, ok := homeFilesystemSubpath(path); ok {
 		return true
 	}
 	if _, ok := xdgDirectoryKeys[path]; ok {
 		return true
 	}
 	return path != "/" && filepath.IsAbs(path) && filepath.Clean(path) == path
+}
+
+func homeFilesystemSubpath(path string) (string, bool) {
+	if path == "home" {
+		return ".", true
+	}
+	if !strings.HasPrefix(path, "home/") {
+		return "", false
+	}
+	relative := strings.TrimPrefix(path, "home/")
+	if relative == "" || filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return relative, true
 }
 
 func resolveXDGUserDirectory(scope string) (string, error) {

@@ -15,14 +15,12 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
 	"golang.org/x/exp/shiny/driver"
 	"golang.org/x/exp/shiny/screen"
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/gobold"
-	"golang.org/x/image/font/gofont/goregular"
-	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/mobile/event/key"
 	"golang.org/x/mobile/event/lifecycle"
@@ -38,18 +36,6 @@ const (
 	phaseFailed
 )
 
-var (
-	card       = color.RGBA{0x15, 0x1f, 0x33, 0xff}
-	cardLine   = color.RGBA{0x2a, 0x3b, 0x5c, 0xff}
-	primary    = color.RGBA{0x3e, 0x7b, 0xff, 0xff}
-	primaryHot = color.RGBA{0x60, 0x94, 0xff, 0xff}
-	textMain   = color.RGBA{0xf5, 0xf7, 0xff, 0xff}
-	textMuted  = color.RGBA{0xa8, 0xb4, 0xca, 0xff}
-	good       = color.RGBA{0x3d, 0xd6, 0x91, 0xff}
-	bad        = color.RGBA{0xff, 0x6b, 0x7b, 0xff}
-	faceCache  sync.Map
-)
-
 type guiState struct {
 	sync.Mutex
 	phase              int
@@ -59,6 +45,7 @@ type guiState struct {
 	permissionsHovered bool
 	permissionsOpen    bool
 	frame              int
+	style              desktopui.DialogStyle
 }
 
 type guiUpdate struct{}
@@ -81,8 +68,8 @@ func runGUI(capsule bootstrap.Capsule) {
 			defer frame.Close()
 		}
 
-		state := &guiState{status: "Ready to install"}
-		icon := renderIcon(capsule.Metadata.IconSVG, capsule.Metadata.Name, 108)
+		state := &guiState{status: "Ready to install", style: desktopui.CurrentDialogStyle()}
+		icon := renderIcon(capsule.Metadata.IconSVG, capsule.Metadata.Name, 108, state.style)
 		var dimensions size.Event
 		button := buttonRect(width, height)
 		for {
@@ -202,51 +189,7 @@ func renderGUI(s screen.Screen, window screen.Window, dimensions size.Event, but
 	if width <= 0 || height <= 0 {
 		return
 	}
-	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(card), image.Point{}, draw.Src)
-	drawRectOutline(canvas, canvas.Bounds(), cardLine)
-
-	draw.Draw(canvas, image.Rect(width/2-54, 52, width/2+54, 160), icon, image.Point{}, draw.Over)
-	drawCentered(canvas, metadata.Name, width/2, 208, 28, true, textMain)
-	drawWrapped(canvas, metadata.Description, image.Rect(48, 232, width-48, 300), 16, textMuted)
-	drawCentered(canvas, metadata.Origin, width/2, 332, 13, false, textMuted)
-
-	state.Lock()
-	phase, status, hovered, closeHovered, permissionsHovered, permissionsOpen, frame := state.phase, state.status, state.hovered, state.closeHovered, state.permissionsHovered, state.permissionsOpen, state.frame
-	state.Unlock()
-	drawCloseButton(canvas, closeRect(width), closeHovered)
-	if len(metadata.Permissions) > 0 {
-		drawPermissions(canvas, width, metadata.Permissions, permissionsHovered, permissionsOpen)
-	}
-	statusColor := textMuted
-	if phase == phaseDone {
-		statusColor = good
-	} else if phase == phaseFailed {
-		statusColor = bad
-	}
-	drawCenteredFitted(canvas, status, width/2, button.Min.Y-38, width-72, 14, false, statusColor)
-	if phase == phaseInstalling {
-		drawProgress(canvas, image.Rect(button.Min.X, button.Min.Y-20, button.Max.X, button.Min.Y-14), frame)
-	}
-
-	buttonColor := primary
-	if hovered && phase != phaseInstalling {
-		buttonColor = primaryHot
-	}
-	if phase == phaseInstalling {
-		buttonColor = color.RGBA{0x2a, 0x47, 0x7f, 0xff}
-	}
-	drawRounded(canvas, button, 14, buttonColor)
-	label := "Install"
-	if phase == phaseInstalling {
-		label = "Installing..."
-	} else if phase == phaseDone {
-		label = "Close"
-	} else if phase == phaseFailed {
-		label = "Try again"
-	}
-	drawCentered(canvas, label, width/2, button.Min.Y+33, 16, true, textMain)
-
+	canvas := renderGUICanvas(width, height, button, metadata, icon, state)
 	buffer, err := s.NewBuffer(image.Pt(width, height))
 	if err != nil {
 		return
@@ -255,6 +198,50 @@ func renderGUI(s screen.Screen, window screen.Window, dimensions size.Event, but
 	draw.Draw(buffer.RGBA(), buffer.Bounds(), canvas, image.Point{}, draw.Src)
 	window.Upload(image.Point{}, buffer, buffer.Bounds())
 	window.Publish()
+}
+
+func renderGUICanvas(width, height int, button image.Rectangle, metadata bootstrap.Metadata, icon image.Image, state *guiState) *image.RGBA {
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	style := state.style
+	desktopui.PaintDialogBackdrop(canvas, style)
+	drawRectOutline(canvas, canvas.Bounds(), style.Line)
+	desktopui.PaintDialogBrand(canvas, style)
+
+	draw.Draw(canvas, image.Rect(width/2-54, 52, width/2+54, 160), icon, image.Point{}, draw.Over)
+	drawCentered(canvas, metadata.Name, width/2, 208, 28, true, style.Text)
+	drawWrapped(canvas, metadata.Description, image.Rect(48, 232, width-48, 300), 16, style.Muted)
+	drawCentered(canvas, metadata.Origin, width/2, 332, 13, false, style.Muted)
+
+	state.Lock()
+	phase, status, hovered, closeHovered, permissionsHovered, permissionsOpen, frame := state.phase, state.status, state.hovered, state.closeHovered, state.permissionsHovered, state.permissionsOpen, state.frame
+	state.Unlock()
+	drawCloseButton(canvas, closeRect(width), closeHovered, style)
+	if len(metadata.Permissions) > 0 {
+		drawPermissions(canvas, width, metadata.Permissions, permissionsHovered, permissionsOpen, style)
+	}
+	statusColor := style.Muted
+	if phase == phaseDone {
+		statusColor = style.Positive
+	} else if phase == phaseFailed {
+		statusColor = style.Negative
+	}
+	drawCenteredFitted(canvas, status, width/2, button.Min.Y-38, width-72, 14, false, statusColor)
+	if phase == phaseInstalling {
+		drawProgress(canvas, image.Rect(button.Min.X, button.Min.Y-20, button.Max.X, button.Min.Y-14), frame, style)
+	}
+
+	buttonColor, buttonText := style.ActionColors(phase != phaseDone, hovered, phase != phaseInstalling)
+	drawRounded(canvas, button, button.Dy()/2, buttonColor)
+	label := "Install"
+	if phase == phaseInstalling {
+		label = "Installing..."
+	} else if phase == phaseDone {
+		label = "Close"
+	} else if phase == phaseFailed {
+		label = "Try again"
+	}
+	drawCentered(canvas, label, width/2, button.Min.Y+34, 18, true, buttonText)
+	return canvas
 }
 
 func buttonRect(width, height int) image.Rectangle {
@@ -275,16 +262,16 @@ func expandedWindowHeight(permissionCount int) int {
 	return 540 + ((permissionCount+1)/2)*46
 }
 
-func drawPermissions(target *image.RGBA, width int, permissions []bootstrap.Permission, hovered, open bool) {
+func drawPermissions(target *image.RGBA, width int, permissions []bootstrap.Permission, hovered, open bool, style desktopui.DialogStyle) {
 	bounds := permissionsRect(width)
-	fill := color.RGBA{0x11, 0x1a, 0x2b, 0xff}
+	fill := style.Surface
 	if hovered {
-		fill = color.RGBA{0x1d, 0x2a, 0x43, 0xff}
+		fill = style.SurfaceHover
 	}
 	drawRounded(target, bounds, 12, fill)
-	drawText(target, "Permissions", bounds.Min.X+16, bounds.Min.Y+29, 14, true, textMain)
-	drawText(target, fmt.Sprintf("%d", len(permissions)), bounds.Max.X-54, bounds.Min.Y+29, 13, false, textMuted)
-	drawChevron(target, image.Pt(bounds.Max.X-23, bounds.Min.Y+24), open)
+	drawText(target, "Permissions", bounds.Min.X+16, bounds.Min.Y+29, 14, true, style.Text)
+	drawText(target, fmt.Sprintf("%d", len(permissions)), bounds.Max.X-54, bounds.Min.Y+29, 13, false, style.Muted)
+	drawChevron(target, image.Pt(bounds.Max.X-23, bounds.Min.Y+24), open, style.Muted)
 	if !open {
 		return
 	}
@@ -298,39 +285,39 @@ func drawPermissions(target *image.RGBA, width int, permissions []bootstrap.Perm
 		top := bounds.Max.Y + 10 + row*46
 		item := image.Rect(left, top, left+columnWidth, top+36)
 		drawRounded(target, item, 9, fill)
-		drawTextFitted(target, permission.Name+": "+permission.Detail, item.Min.X+11, item.Min.Y+23, item.Dx()-22, 12, false, textMuted)
+		drawTextFitted(target, permission.Name+": "+permission.Detail, item.Min.X+11, item.Min.Y+23, item.Dx()-22, 12, false, style.Muted)
 	}
 }
 
-func drawChevron(target *image.RGBA, center image.Point, open bool) {
+func drawChevron(target *image.RGBA, center image.Point, open bool, fill color.RGBA) {
 	for offset := -1; offset <= 1; offset++ {
 		for i := 0; i < 6; i++ {
 			if open {
-				target.Set(center.X-5+i, center.Y+3-i+offset, textMuted)
-				target.Set(center.X+i, center.Y-2+i+offset, textMuted)
+				target.Set(center.X-5+i, center.Y+3-i+offset, fill)
+				target.Set(center.X+i, center.Y-2+i+offset, fill)
 			} else {
-				target.Set(center.X-2+i+offset, center.Y-5+i, textMuted)
-				target.Set(center.X+3-i+offset, center.Y+i, textMuted)
+				target.Set(center.X-2+i+offset, center.Y-5+i, fill)
+				target.Set(center.X+3-i+offset, center.Y+i, fill)
 			}
 		}
 	}
 }
 
-func drawCloseButton(target *image.RGBA, bounds image.Rectangle, hovered bool) {
-	fill := color.RGBA{0x1d, 0x2a, 0x43, 0xff}
+func drawCloseButton(target *image.RGBA, bounds image.Rectangle, hovered bool, style desktopui.DialogStyle) {
+	fill := style.SurfaceHover
 	if hovered {
-		fill = color.RGBA{0x2a, 0x3b, 0x5c, 0xff}
+		fill = style.ButtonHover
 	}
 	drawRounded(target, bounds, bounds.Dx()/2, fill)
 	for offset := -1; offset <= 1; offset++ {
 		for i := 0; i < 10; i++ {
-			target.Set(bounds.Min.X+11+i, bounds.Min.Y+11+i+offset, textMain)
-			target.Set(bounds.Max.X-12-i, bounds.Min.Y+11+i+offset, textMain)
+			target.Set(bounds.Min.X+11+i, bounds.Min.Y+11+i+offset, style.Text)
+			target.Set(bounds.Max.X-12-i, bounds.Min.Y+11+i+offset, style.Text)
 		}
 	}
 }
 
-func renderIcon(encoded, name string, size int) image.Image {
+func renderIcon(encoded, name string, size int, style desktopui.DialogStyle) image.Image {
 	iconImage := image.NewRGBA(image.Rect(0, 0, size, size))
 	if encoded != "" {
 		icon, err := oksvg.ReadIconStream(strings.NewReader(encoded), oksvg.IgnoreErrorMode)
@@ -342,22 +329,22 @@ func renderIcon(encoded, name string, size int) image.Image {
 			return iconImage
 		}
 	}
-	drawRounded(iconImage, iconImage.Bounds(), 24, primary)
+	drawRounded(iconImage, iconImage.Bounds(), 24, style.Accent)
 	letter := "?"
 	if runes := []rune(name); len(runes) > 0 {
 		letter = strings.ToUpper(string(runes[0]))
 	}
-	drawCentered(iconImage, letter, size/2, size/2+19, 48, true, textMain)
+	drawCentered(iconImage, letter, size/2, size/2+19, 48, true, style.OnAccent)
 	return iconImage
 }
 
-func drawProgress(target *image.RGBA, bounds image.Rectangle, frame int) {
-	drawRounded(target, bounds, 3, cardLine)
+func drawProgress(target *image.RGBA, bounds image.Rectangle, frame int, style desktopui.DialogStyle) {
+	drawRounded(target, bounds, 3, style.Line)
 	span := bounds.Dx() / 3
 	travel := bounds.Dx() + span
 	left := bounds.Min.X + (frame*7)%travel - span
 	active := image.Rect(left, bounds.Min.Y, left+span, bounds.Max.Y).Intersect(bounds)
-	drawRounded(target, active, 3, primary)
+	drawRounded(target, active, 3, style.Accent)
 }
 
 func drawRounded(target *image.RGBA, bounds image.Rectangle, radius int, fill color.Color) {
@@ -442,21 +429,7 @@ func drawWrapped(target draw.Image, value string, bounds image.Rectangle, size i
 }
 
 func fontFace(size int, bold bool) font.Face {
-	key := struct {
-		size int
-		bold bool
-	}{size: size, bold: bold}
-	if cached, ok := faceCache.Load(key); ok {
-		return cached.(font.Face)
-	}
-	data := goregular.TTF
-	if bold {
-		data = gobold.TTF
-	}
-	parsed, _ := opentype.Parse(data)
-	face, _ := opentype.NewFace(parsed, &opentype.FaceOptions{Size: float64(size), DPI: 96, Hinting: font.HintingFull})
-	faceCache.Store(key, face)
-	return face
+	return desktopui.DialogFont(size, bold)
 }
 
 func guiProgressLabel(message, name string) string {

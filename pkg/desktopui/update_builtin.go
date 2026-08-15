@@ -10,6 +10,8 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,9 @@ var (
 	updateGood       = color.RGBA{0x3d, 0xd6, 0x91, 0xff}
 	updateBad        = color.RGBA{0xff, 0x6b, 0x7b, 0xff}
 	updateFaces      sync.Map
+	interFontsOnce   sync.Once
+	interRegular     []byte
+	interSemibold    []byte
 )
 
 type updateState struct {
@@ -55,6 +60,7 @@ type updateState struct {
 	hovered      bool
 	closeHovered bool
 	frame        int
+	palette      desktopPalette
 }
 
 type updateEvent struct{}
@@ -77,7 +83,7 @@ func updateBuiltin(request UpdateRequest, action func(func(string)) error) error
 		if frame != nil {
 			defer frame.Close()
 		}
-		state := &updateState{status: "Ready to update"}
+		state := &updateState{status: "Ready to update", palette: currentDesktopPalette()}
 		if request.Managed {
 			state.status = "Managed by your package manager"
 		}
@@ -182,11 +188,13 @@ func renderUpdate(display screen.Screen, window screen.Window, dimensions size.E
 		return
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(updateBackground), image.Point{}, draw.Src)
-	drawUpdateOutline(canvas, canvas.Bounds(), updateLine)
-	draw.Draw(canvas, image.Rect(width/2-52, 56, width/2+52, 160), icon, image.Point{}, draw.Over)
-	drawUpdateCentered(canvas, "cpak "+request.Version, width/2, 204, 24, true, updateText)
-	drawUpdateCentered(canvas, "A new version is available", width/2, 234, 15, false, updateMuted)
+	palette := state.palette
+	drawGrantBackdrop(canvas, palette)
+	drawUpdateOutline(canvas, canvas.Bounds(), palette.line)
+	drawGrantBrand(canvas, palette, brandIconPNG)
+	draw.Draw(canvas, image.Rect(width/2-52, 64, width/2+52, 168), icon, image.Point{}, draw.Over)
+	drawUpdateCentered(canvas, "cpak "+request.Version, width/2, 212, 24, true, palette.text)
+	drawUpdateCentered(canvas, "A new version is available", width/2, 242, 15, false, palette.muted)
 
 	notes := summarizeNotes(request.Notes, 360)
 	if request.Managed {
@@ -195,30 +203,26 @@ func renderUpdate(display screen.Screen, window screen.Window, dimensions size.E
 	if notes == "" {
 		notes = "Installed version: " + request.CurrentVersion
 	}
-	drawUpdateWrapped(canvas, notes, image.Rect(72, 274, width-72, 410), 13, updateMuted)
+	drawUpdateWrapped(canvas, notes, image.Rect(72, 274, width-72, 410), 13, palette.muted)
 
 	state.Lock()
 	phase, status, hovered, closeHovered, frame := state.phase, state.status, state.hovered, state.closeHovered, state.frame
 	state.Unlock()
-	drawUpdateClose(canvas, updateClose(width), closeHovered)
-	statusColor := updateMuted
+	drawGrantClose(canvas, updateClose(width), closeHovered, palette)
+	statusColor := palette.muted
 	if phase == updateDone {
-		statusColor = updateGood
+		statusColor = palette.positive
 	} else if phase == updateFailed {
 		statusColor = updateBad
 	}
 	drawUpdateCenteredFitted(canvas, status, width/2, button.Min.Y-36, width-72, 14, false, statusColor)
 	if phase == updateInstalling {
-		drawUpdateProgress(canvas, image.Rect(button.Min.X, button.Min.Y-20, button.Max.X, button.Min.Y-14), frame)
+		drawUpdateProgressColor(canvas, image.Rect(button.Min.X, button.Min.Y-20, button.Max.X, button.Min.Y-14), frame, palette.line, palette.accent)
 	}
-	buttonColor := updatePrimary
-	if hovered && phase != updateInstalling {
-		buttonColor = updatePrimaryHot
-	}
-	if phase == updateInstalling {
-		buttonColor = color.RGBA{0x2a, 0x47, 0x7f, 0xff}
-	}
-	drawUpdateRounded(canvas, button, 14, buttonColor)
+	style := dialogStyleFromPalette(palette)
+	recommended := !request.Managed && phase != updateDone
+	buttonColor, buttonText := style.ActionColors(recommended, hovered, phase != updateInstalling)
+	drawUpdateRounded(canvas, button, button.Dy()/2, buttonColor)
 	label := "Update"
 	if request.Managed {
 		label = "Close"
@@ -229,7 +233,7 @@ func renderUpdate(display screen.Screen, window screen.Window, dimensions size.E
 	} else if phase == updateFailed {
 		label = "Try again"
 	}
-	drawUpdateCentered(canvas, label, width/2, button.Min.Y+33, 16, true, updateText)
+	drawUpdateCentered(canvas, label, width/2, button.Min.Y+34, 18, true, buttonText)
 
 	buffer, err := display.NewBuffer(image.Pt(width, height))
 	if err != nil {
@@ -273,25 +277,15 @@ func updateClose(width int) image.Rectangle {
 	return image.Rect(width-48, 16, width-16, 48)
 }
 
-func drawUpdateClose(target *image.RGBA, bounds image.Rectangle, hovered bool) {
-	fill := color.RGBA{0x1d, 0x2a, 0x43, 0xff}
-	if hovered {
-		fill = updateLine
-	}
-	drawUpdateRounded(target, bounds, bounds.Dx()/2, fill)
-	for offset := -1; offset <= 1; offset++ {
-		for index := 0; index < 10; index++ {
-			target.Set(bounds.Min.X+11+index, bounds.Min.Y+11+index+offset, updateText)
-			target.Set(bounds.Max.X-12-index, bounds.Min.Y+11+index+offset, updateText)
-		}
-	}
+func drawUpdateProgress(target *image.RGBA, bounds image.Rectangle, frame int) {
+	drawUpdateProgressColor(target, bounds, frame, updateLine, updatePrimary)
 }
 
-func drawUpdateProgress(target *image.RGBA, bounds image.Rectangle, frame int) {
-	drawUpdateRounded(target, bounds, 3, updateLine)
+func drawUpdateProgressColor(target *image.RGBA, bounds image.Rectangle, frame int, track, active color.RGBA) {
+	drawUpdateRounded(target, bounds, 3, track)
 	span := bounds.Dx() / 3
 	left := bounds.Min.X + (frame*7)%(bounds.Dx()+span) - span
-	drawUpdateRounded(target, image.Rect(left, bounds.Min.Y, left+span, bounds.Max.Y).Intersect(bounds), 3, updatePrimary)
+	drawUpdateRounded(target, image.Rect(left, bounds.Min.Y, left+span, bounds.Max.Y).Intersect(bounds), 3, active)
 }
 
 func drawUpdateRounded(target *image.RGBA, bounds image.Rectangle, radius int, fill color.Color) {
@@ -317,6 +311,12 @@ func drawUpdateCentered(target draw.Image, value string, centerX, baseline, size
 	face := updateFont(size, bold)
 	width := font.MeasureString(face, value).Round()
 	drawer := font.Drawer{Dst: target, Src: image.NewUniform(fill), Face: face, Dot: fixed.P(centerX-width/2, baseline)}
+	drawer.DrawString(value)
+}
+
+func drawUpdateText(target draw.Image, value string, x, baseline, size int, bold bool, fill color.Color) {
+	face := updateFont(size, bold)
+	drawer := font.Drawer{Dst: target, Src: image.NewUniform(fill), Face: face, Dot: fixed.P(x, baseline)}
 	drawer.DrawString(value)
 }
 
@@ -370,12 +370,52 @@ func updateFont(size int, bold bool) font.Face {
 	if cached, ok := updateFaces.Load(key); ok {
 		return cached.(font.Face)
 	}
-	data := goregular.TTF
-	if bold {
-		data = gobold.TTF
+	data := desktopFontData(bold)
+	parsed, err := opentype.Parse(data)
+	if err != nil {
+		data = goregular.TTF
+		if bold {
+			data = gobold.TTF
+		}
+		parsed, _ = opentype.Parse(data)
 	}
-	parsed, _ := opentype.Parse(data)
-	face, _ := opentype.NewFace(parsed, &opentype.FaceOptions{Size: float64(size), DPI: 96, Hinting: font.HintingFull})
+	face, _ := opentype.NewFace(parsed, &opentype.FaceOptions{Size: float64(size), DPI: 72, Hinting: font.HintingFull})
 	updateFaces.Store(key, face)
 	return face
+}
+
+func desktopFontData(semibold bool) []byte {
+	interFontsOnce.Do(func() {
+		home, _ := os.UserHomeDir()
+		interRegular = readDesktopFont([]string{
+			filepath.Join(home, ".local", "share", "fonts", "inter", "Inter-Regular.ttf"),
+			"/usr/share/fonts/TTF/Inter-Regular.ttf",
+			"/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+		})
+		interSemibold = readDesktopFont([]string{
+			filepath.Join(home, ".local", "share", "fonts", "inter", "Inter-SemiBold.ttf"),
+			"/usr/share/fonts/TTF/Inter-SemiBold.ttf",
+			"/usr/share/fonts/truetype/inter/Inter-SemiBold.ttf",
+		})
+	})
+	if semibold && len(interSemibold) > 0 {
+		return interSemibold
+	}
+	if !semibold && len(interRegular) > 0 {
+		return interRegular
+	}
+	if semibold {
+		return gobold.TTF
+	}
+	return goregular.TTF
+}
+
+func readDesktopFont(paths []string) []byte {
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data
+		}
+	}
+	return nil
 }

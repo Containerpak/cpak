@@ -21,14 +21,20 @@ import (
 )
 
 type Policy struct {
-	AllowNotify           bool                 `json:"allow_notify,omitempty"`
-	AllowOpenURI          bool                 `json:"allow_open_uri,omitempty"`
-	AllowHostApplications bool                 `json:"allow_host_applications,omitempty"`
-	Applications          map[string]string    `json:"applications,omitempty"`
-	RuntimeDirectory      string               `json:"runtime_directory,omitempty"`
-	ContainerOwner        string               `json:"container_owner,omitempty"`
-	ContainerCapabilities map[string]bool      `json:"container_capabilities,omitempty"`
-	ContainerPaths        []ContainerPathGrant `json:"container_paths,omitempty"`
+	AllowNotify           bool                  `json:"allow_notify,omitempty"`
+	AllowOpenURI          bool                  `json:"allow_open_uri,omitempty"`
+	AllowHostApplications bool                  `json:"allow_host_applications,omitempty"`
+	Applications          map[string]string     `json:"applications,omitempty"`
+	RuntimeDirectory      string                `json:"runtime_directory,omitempty"`
+	ContainerOwner        string                `json:"container_owner,omitempty"`
+	ContainerCapabilities map[string]bool       `json:"container_capabilities,omitempty"`
+	ContainerPaths        []ContainerPathGrant  `json:"container_paths,omitempty"`
+	FilePicker            FilePickerPolicy      `json:"file_picker,omitempty"`
+	FilePickerPaths       []FilePickerPathGrant `json:"file_picker_paths,omitempty"`
+	FilePickerApplication string                `json:"file_picker_application,omitempty"`
+	FilePickerOrigin      string                `json:"file_picker_origin,omitempty"`
+	FileGrantSocketPath   string                `json:"file_grant_socket_path,omitempty"`
+	FileGrantStorePath    string                `json:"file_grant_store_path,omitempty"`
 }
 
 func PolicyPath(directory, token string) (string, error) {
@@ -138,6 +144,12 @@ func resolveCatalogPolicy(socketPath, directory string, request Request) (Option
 		ContainerOwner:        policy.ContainerOwner,
 		ContainerCapabilities: policy.ContainerCapabilities,
 		ContainerPaths:        policy.ContainerPaths,
+		FilePicker:            policy.FilePicker,
+		FilePickerPaths:       policy.FilePickerPaths,
+		FilePickerApplication: policy.FilePickerApplication,
+		FilePickerOrigin:      policy.FilePickerOrigin,
+		FileGrantSocketPath:   policy.FileGrantSocketPath,
+		FileGrantStorePath:    policy.FileGrantStorePath,
 	}, nil
 }
 

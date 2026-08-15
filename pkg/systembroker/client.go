@@ -5,6 +5,7 @@
 package systembroker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,22 @@ func (c Client) OpenURI(ctx context.Context, request OpenURIRequest) error {
 
 func (c Client) LaunchApplication(ctx context.Context, request LaunchApplicationRequest) error {
 	return c.call(ctx, ActionLaunchApplication, request)
+}
+
+func (c Client) FilePicker(ctx context.Context, request FilePickerRequest) (FilePickerResult, error) {
+	var output bytes.Buffer
+	client := c
+	client.Stdout = &output
+	if err := client.call(ctx, ActionFilePicker, request); err != nil {
+		return FilePickerResult{}, err
+	}
+	var result FilePickerResult
+	decoder := json.NewDecoder(&output)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return FilePickerResult{}, fmt.Errorf("decode file picker result: %w", err)
+	}
+	return result, nil
 }
 
 func (c Client) Containers(ctx context.Context, request ContainerRequest) error {

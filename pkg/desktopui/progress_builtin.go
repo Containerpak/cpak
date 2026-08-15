@@ -19,10 +19,11 @@ import (
 
 type progressState struct {
 	sync.Mutex
-	update ProgressUpdate
-	frame  int
-	done   bool
-	err    error
+	update  ProgressUpdate
+	frame   int
+	done    bool
+	err     error
+	palette desktopPalette
 }
 
 type progressEvent struct{}
@@ -44,7 +45,7 @@ func progressBuiltin(request ProgressRequest, updates <-chan ProgressUpdate, don
 		if frame != nil {
 			defer frame.Close()
 		}
-		state := &progressState{update: ProgressUpdate{Message: request.Detail}}
+		state := &progressState{update: ProgressUpdate{Message: request.Detail}, palette: currentDesktopPalette()}
 		stop := make(chan struct{})
 		defer close(stop)
 		go monitorBuiltinProgress(window, state, updates, done, stop)
@@ -120,27 +121,29 @@ func renderBuiltinProgress(display screen.Screen, window screen.Window, dimensio
 		return
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(updateBackground), image.Point{}, draw.Src)
-	drawUpdateOutline(canvas, canvas.Bounds(), updateLine)
+	palette := state.palette
+	drawGrantBackdrop(canvas, palette)
+	drawUpdateOutline(canvas, canvas.Bounds(), palette.line)
+	drawGrantBrand(canvas, palette, brandIconPNG)
 	icon := renderUpdateIcon(request.IconPNG, 64)
-	draw.Draw(canvas, image.Rect(width/2-32, 36, width/2+32, 100), icon, image.Point{}, draw.Over)
-	drawUpdateCentered(canvas, request.Heading, width/2, 140, 22, true, updateText)
-	drawUpdateCenteredFitted(canvas, request.Detail, width/2, 170, width-80, 14, false, updateMuted)
+	draw.Draw(canvas, image.Rect(width/2-32, 54, width/2+32, 118), icon, image.Point{}, draw.Over)
+	drawUpdateCentered(canvas, request.Heading, width/2, 158, 22, true, palette.text)
+	drawUpdateCenteredFitted(canvas, request.Detail, width/2, 186, width-80, 14, false, palette.muted)
 
 	state.Lock()
 	update, frame := state.update, state.frame
 	state.Unlock()
-	drawUpdateCenteredFitted(canvas, update.Message, width/2, 218, width-80, 13, false, updateText)
-	bar := image.Rect(64, 246, width-64, 254)
-	drawUpdateRounded(canvas, bar, 4, updateLine)
+	drawUpdateCenteredFitted(canvas, update.Message, width/2, 230, width-80, 13, false, palette.text)
+	bar := image.Rect(64, 256, width-64, 264)
+	drawUpdateRounded(canvas, bar, 4, palette.line)
 	if update.Total > 0 {
 		span := int(int64(bar.Dx()) * update.Current / update.Total)
 		if span > bar.Dx() {
 			span = bar.Dx()
 		}
-		drawUpdateRounded(canvas, image.Rect(bar.Min.X, bar.Min.Y, bar.Min.X+span, bar.Max.Y), 4, updatePrimary)
+		drawUpdateRounded(canvas, image.Rect(bar.Min.X, bar.Min.Y, bar.Min.X+span, bar.Max.Y), 4, palette.accent)
 	} else {
-		drawUpdateProgress(canvas, bar, frame)
+		drawUpdateProgressColor(canvas, bar, frame, palette.line, palette.accent)
 	}
 
 	buffer, err := display.NewBuffer(image.Pt(width, height))

@@ -40,6 +40,13 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 				Provider:     types.HostActionProviderContainers,
 				Capabilities: []string{types.HostActionContainersRead, types.HostActionContainersExecOwned},
 			}},
+			FilePicker: types.FilePickerGrant{
+				OpenFile:         true,
+				OpenFolder:       true,
+				SaveFile:         true,
+				Persistent:       true,
+				ContainingFolder: true,
+			},
 		},
 	}
 	parent := types.Application{
@@ -70,6 +77,13 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 				Provider:     types.HostActionProviderContainers,
 				Capabilities: []string{types.HostActionContainersRead, types.HostActionContainersManageOwned},
 			}},
+			FilePicker: types.FilePickerGrant{
+				OpenFile:         true,
+				OpenFolder:       true,
+				SaveFile:         false,
+				Persistent:       true,
+				ContainingFolder: true,
+			},
 		},
 	}
 	store, err := NewStore(storePath)
@@ -182,6 +196,9 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 	}
 	if len(authorized.override.Env) != 1 || authorized.override.Env[0] != "SHARED=1" {
 		t.Fatalf("environment intersection: %v", authorized.override.Env)
+	}
+	if !authorized.override.FilePicker.OpenFile || !authorized.override.FilePicker.OpenFolder || authorized.override.FilePicker.SaveFile || !authorized.override.FilePicker.Persistent || !authorized.override.FilePicker.ContainingFolder {
+		t.Fatalf("file picker intersection: %+v", authorized.override.FilePicker)
 	}
 	capabilities := types.HostActionCapabilities(authorized.override.HostActions, types.HostActionProviderContainers)
 	if len(capabilities) != 1 || !capabilities[types.HostActionContainersRead] {

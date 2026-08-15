@@ -15,7 +15,7 @@ case "$SHIM" in
             exit 127
         fi
         ;;
-    notify-send|xdg-open|cpak-launch-app|podman|docker) ;;
+    notify-send|xdg-open|cpak-launch-app|cpak-file-picker|podman|docker) ;;
     *) echo "CPAK SYSTEM BROKER ERROR: unsupported shim." >&2; exit 1 ;;
 esac
 

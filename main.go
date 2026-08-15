@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/cmd"
+	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"github.com/mirkobrombin/cpak/pkg/selfupdate"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
@@ -52,6 +53,7 @@ type CLI struct {
 	Doctor             cmd.DoctorCmd             `cmd:"doctor" help:"Check host support for the cpak runtime"`
 	MigrateManifest    cmd.MigrateManifestCmd    `cmd:"migrate-manifest" help:"Migrate a manifest to version 2"`
 	SystemBrokerServer cmd.SystemBrokerServerCmd `cmd:"system-broker-server" help:"Start the system integration broker"`
+	DesktopBusProxy    cmd.DesktopBusProxyCmd    `cmd:"desktop-bus-proxy" help:"Start the policy-gated desktop bus proxy"`
 	HostAction         cmd.HostActionCmd         `cmd:"host-action" help:"Run a typed host action"`
 	System             cmd.SystemCmd             `cmd:"system" help:"Manage privileged system integration"`
 	SystemAuthority    cmd.SystemAuthorityCmd    `cmd:"system-authority" help:"Start the privileged system authority"`
@@ -59,6 +61,7 @@ type CLI struct {
 	Auth               cmd.AuthCmd               `cmd:"auth" help:"Manage package registry access"`
 	SelfUpdate         cmd.SelfUpdateCmd         `cmd:"self-update" help:"Update the cpak binary"`
 	Storage            cmd.StorageCmd            `cmd:"storage" help:"Manage application storage"`
+	Grant              cmd.GrantCmd              `cmd:"grant" help:"Manage persistent file grants"`
 
 	cli.Base
 }
@@ -70,6 +73,7 @@ var selfUpdateMode = "enabled"
 var cpakIcon []byte
 
 func main() {
+	desktopui.SetBrandIcon(cpakIcon)
 	root := &CLI{}
 	root.Run.Configure(cpakIcon)
 	root.SelfUpdate.Configure(version, selfUpdateMode, cpakIcon)
@@ -139,7 +143,7 @@ func skipUpdateCheck(args []string) bool {
 		return true
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" {
 			return true
 		}
 	}

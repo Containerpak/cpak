@@ -12,6 +12,7 @@ const (
 	ActionNotify            = "desktop.notify"
 	ActionOpenURI           = "desktop.open-uri"
 	ActionLaunchApplication = "desktop.launch-application"
+	ActionFilePicker        = "desktop.file-picker"
 	ActionContainers        = "containers"
 
 	FrameStdout = "stdout"
@@ -54,6 +55,50 @@ type LaunchApplicationRequest struct {
 	ApplicationToken string            `json:"application_token"`
 	URIs             []string          `json:"uris,omitempty"`
 	Environment      map[string]string `json:"environment,omitempty"`
+}
+
+type FilePickerPolicy struct {
+	OpenFile         bool `json:"open_file,omitempty"`
+	OpenFolder       bool `json:"open_folder,omitempty"`
+	SaveFile         bool `json:"save_file,omitempty"`
+	Persistent       bool `json:"persistent,omitempty"`
+	ContainingFolder bool `json:"containing_folder,omitempty"`
+}
+
+type FilePickerPathGrant struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+}
+
+func (p FilePickerPolicy) Enabled() bool {
+	return p.OpenFile || p.OpenFolder || p.SaveFile
+}
+
+type FilePickerRequest struct {
+	Mode          string             `json:"mode"`
+	ParentWindow  string             `json:"parent_window,omitempty"`
+	Title         string             `json:"title"`
+	AcceptLabel   string             `json:"accept_label,omitempty"`
+	SuggestedName string             `json:"suggested_name,omitempty"`
+	CurrentFolder string             `json:"current_folder,omitempty"`
+	Multiple      bool               `json:"multiple,omitempty"`
+	Filters       []FilePickerFilter `json:"filters,omitempty"`
+}
+
+type FilePickerFilter struct {
+	Name      string   `json:"name"`
+	Patterns  []string `json:"patterns,omitempty"`
+	MIMETypes []string `json:"mime_types,omitempty"`
+}
+
+type FilePickerResult struct {
+	Path             string   `json:"path"`
+	Paths            []string `json:"paths,omitempty"`
+	Kind             string   `json:"kind"`
+	Access           string   `json:"access"`
+	Lifetime         string   `json:"lifetime"`
+	ContainingFolder bool     `json:"containing_folder,omitempty"`
 }
 
 type ContainerRequest struct {

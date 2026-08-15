@@ -16,6 +16,7 @@ func main() {
 	installerPath := flag.String("installer", "", "path to the installer binary")
 	cpakPath := flag.String("cpak", "", "path to the cpak binary")
 	companionPath := flag.String("storaged", "", "path to the cpak storage service binary")
+	brandIconPath := flag.String("brand-icon", "", "path to the cpak brand icon")
 	outputPath := flag.String("output", "", "output path")
 	flag.Parse()
 	if *installerPath == "" || *cpakPath == "" || *outputPath == "" {
@@ -38,7 +39,14 @@ func main() {
 			fail(err)
 		}
 	}
-	packed, err := bootstrap.PackInstallerWithCompanion(installer, payload, companion)
+	var brandIcon []byte
+	if *brandIconPath != "" {
+		brandIcon, err = os.ReadFile(*brandIconPath)
+		if err != nil {
+			fail(err)
+		}
+	}
+	packed, err := bootstrap.PackInstallerWithAssets(installer, payload, companion, brandIcon)
 	if err != nil {
 		fail(err)
 	}

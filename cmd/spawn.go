@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/filegrant"
+	"github.com/mirkobrombin/cpak/pkg/grantproto"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/tools"
@@ -69,6 +71,8 @@ type SpawnCmd struct {
 	DesktopRuntime string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
 	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
+	GrantSocket    string   `cli:"grant-socket" help:"file grant mount socket"`
+	PrivateHome    string   `cli:"private-home" help:"persistent private application home"`
 	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
 	MountHostRoot  bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
 	Nvidia         bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
@@ -174,6 +178,21 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	defer listener.Close()
+	grantListener, err := c.createGrantListener()
+	if err != nil {
+		return err
+	}
+	defer grantListener.Close()
+	grantRoot, err := c.setupGrantRoot(c.Rootfs)
+	if err != nil {
+		return err
+	}
+	grants = append(grants, grantRoot)
+	grantMounts, err := startGrantMountWorker()
+	if err != nil {
+		return err
+	}
+	defer grantMounts.Close()
 
 	err = c.pivotRoot(c.Rootfs)
 	if err != nil {
@@ -185,7 +204,7 @@ func (c *SpawnCmd) Run() error {
 		layersPath = c.LowerDir
 	}
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, layersPath, c.Layers)
-	err = c.serveInit(listener, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute, refreshDynamicLinker)
+	err = c.serveInit(listener, grantListener, grantMounts, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute, refreshDynamicLinker)
 	if err != nil {
 		return err
 	}
@@ -396,6 +415,13 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		return nil, err
 	}
 	grants = append(grants, deviceGrants...)
+	if c.PrivateHome != "" {
+		privateHomeGrant, mountErr := c.mountPrivateHome(rootFs, c.PrivateHome)
+		if mountErr != nil {
+			return nil, mountErr
+		}
+		grants = append(grants, privateHomeGrant)
+	}
 
 	procPath, err := prepareRootfsDirectory(rootFs, "/proc")
 	if err != nil {
@@ -478,6 +504,28 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, sandbox.PathGrant{Path: cpakSockTarget})
 	}
 	return grants, nil
+}
+
+func (c *SpawnCmd) mountPrivateHome(rootFs, source string) (sandbox.PathGrant, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) || filepath.Clean(home) != home || home == "/" {
+		return sandbox.PathGrant{}, errors.New("resolve private application home")
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("inspect private application home: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return sandbox.PathGrant{}, errors.New("private application home is invalid")
+	}
+	destination, err := prepareRootfsDirectory(rootFs, home)
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("prepare private application home: %w", err)
+	}
+	if err = tools.MountBindPrepared(source, destination); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("mount private application home: %w", err)
+	}
+	return sandbox.PathGrant{Path: home}, nil
 }
 
 func baseSandboxGrants(userNamespaces bool) []sandbox.PathGrant {
@@ -815,7 +863,39 @@ func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration, refreshDynamicLinker bool) error {
+func (c *SpawnCmd) createGrantListener() (net.Listener, error) {
+	if c.GrantSocket == "" {
+		return nil, errors.New("grant socket is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(c.GrantSocket), 0700); err != nil {
+		return nil, fmt.Errorf("create grant socket directory: %w", err)
+	}
+	if err := os.Remove(c.GrantSocket); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("remove stale grant socket: %w", err)
+	}
+	listener, err := net.Listen("unixpacket", c.GrantSocket)
+	if err != nil {
+		return nil, fmt.Errorf("listen on grant socket: %w", err)
+	}
+	if err = os.Chmod(c.GrantSocket, 0600); err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("restrict grant socket: %w", err)
+	}
+	return listener, nil
+}
+
+func (c *SpawnCmd) setupGrantRoot(rootFs string) (sandbox.PathGrant, error) {
+	target, err := prepareRootfsDirectory(rootFs, filegrant.GuestRoot)
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("prepare file grant root: %w", err)
+	}
+	if err = os.Chmod(target, 0555); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("restrict file grant root: %w", err)
+	}
+	return sandbox.PathGrant{Path: filegrant.GuestRoot}, nil
+}
+
+func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Listener, grantMounts *grantMountWorker, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration, refreshDynamicLinker bool) error {
 	if refreshDynamicLinker {
 		c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
 	}
@@ -833,6 +913,7 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grant
 	if err := c.signalReady(); err != nil {
 		return err
 	}
+	go c.serveGrantMounts(grantListener, grantMounts)
 	c.spawnVerbose("Container init is ready")
 	lastActivity := time.Now()
 	var active atomic.Int64
@@ -875,6 +956,111 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, envVars []string, grant
 			c.handleRuntimeConnection(connection, envVars, grants)
 		}()
 	}
+}
+
+func (c *SpawnCmd) serveGrantMounts(listener net.Listener, grantMounts *grantMountWorker) {
+	for {
+		accepted, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		connection, ok := accepted.(*net.UnixConn)
+		if !ok {
+			accepted.Close()
+			continue
+		}
+		go c.handleGrantMount(connection, grantMounts)
+	}
+}
+
+func (c *SpawnCmd) handleGrantMount(connection *net.UnixConn, grantMounts *grantMountWorker) {
+	defer connection.Close()
+	request, sources, err := grantproto.Receive(connection)
+	if err == nil {
+		defer sources.Close()
+		err = mountFileGrant(request.Grant, sources, grantMounts)
+	}
+	response := grantproto.Response{Target: request.Grant.Target}
+	if err != nil {
+		response = grantproto.Response{Error: err.Error()}
+	}
+	_ = grantproto.Reply(connection, response)
+}
+
+func mountFileGrant(grant filegrant.Grant, sources grantproto.Sources, grantMounts *grantMountWorker) error {
+	if err := grant.Validate(); err != nil {
+		return err
+	}
+	if sources.Selected == nil {
+		return errors.New("file grant source descriptor is required")
+	}
+	info, err := sources.Selected.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect file grant descriptor: %w", err)
+	}
+	if grant.Kind == filegrant.KindDirectory && !info.IsDir() || grant.Kind == filegrant.KindFile && !info.Mode().IsRegular() {
+		return errors.New("file grant descriptor type does not match")
+	}
+	parent := filepath.Dir(grant.MountTarget)
+	if err = os.MkdirAll(parent, 0555); err != nil {
+		return fmt.Errorf("create file grant target: %w", err)
+	}
+	if grant.Kind == filegrant.KindDirectory {
+		if err = os.MkdirAll(grant.MountTarget, 0555); err != nil {
+			return fmt.Errorf("create directory grant target: %w", err)
+		}
+	} else {
+		file, createErr := os.OpenFile(grant.MountTarget, os.O_CREATE|os.O_RDONLY, 0400)
+		if createErr != nil {
+			return fmt.Errorf("create file grant target: %w", createErr)
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+	readOnly := grant.Access == filegrant.AccessReadOnly
+	tree, err := grantMounts.Clone(grant, sources)
+	if err != nil {
+		return fmt.Errorf("prepare file grant mount: %w", err)
+	}
+	defer tree.Close()
+	if grant.Kind == filegrant.KindFile {
+		err = mountExactFileGrant(grant, sources, tree, readOnly)
+	} else {
+		err = tools.AttachDescriptorMountPrepared(int(tree.Fd()), grant.MountTarget)
+	}
+	if err != nil {
+		return fmt.Errorf("mount file grant: %w", err)
+	}
+	return nil
+}
+
+func mountExactFileGrant(grant filegrant.Grant, sources grantproto.Sources, tree *os.File, readOnly bool) error {
+	if sources.Mount == nil {
+		return errors.New("file grant parent descriptor is required")
+	}
+	staging, err := os.MkdirTemp("/run/cpak", ".grant-")
+	if err != nil {
+		return fmt.Errorf("create file grant staging directory: %w", err)
+	}
+	defer os.Remove(staging)
+	if err = tools.AttachDescriptorMountPrepared(int(tree.Fd()), staging); err != nil {
+		return fmt.Errorf("mount file grant parent: %w", err)
+	}
+	defer syscall.Unmount(staging, syscall.MNT_DETACH)
+	selected := filepath.Join(staging, filepath.Base(grant.Source))
+	selectedInfo, err := os.Stat(selected)
+	if err != nil {
+		return fmt.Errorf("inspect staged file grant: %w", err)
+	}
+	sourceInfo, err := sources.Selected.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect selected file grant: %w", err)
+	}
+	if !os.SameFile(selectedInfo, sourceInfo) {
+		return errors.New("file grant source changed while mounting")
+	}
+	return tools.MountFileBindPrepared(selected, grant.MountTarget, readOnly, true)
 }
 
 func (c *SpawnCmd) signalReady() error {
@@ -1024,7 +1210,7 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 		return fmt.Errorf("chmod system broker shim: %w", err)
 	}
 	for _, name := range shims {
-		if name != "notify-send" && name != "xdg-open" && name != "gio" && name != "cpak-launch-app" && name != "podman" && name != "docker" {
+		if name != "notify-send" && name != "xdg-open" && name != "gio" && name != "cpak-launch-app" && name != "cpak-file-picker" && name != "podman" && name != "docker" {
 			return fmt.Errorf("invalid system broker shim: %s", name)
 		}
 		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/local/bin", name))

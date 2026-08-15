@@ -5,10 +5,9 @@
 package desktopui
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -19,8 +18,11 @@ type Backend string
 const (
 	BackendAuto    Backend = "auto"
 	BackendBuiltin Backend = "builtin"
-	BackendGNOME   Backend = "gnome"
+	BackendAdwaita Backend = "adwaita"
+	BackendGTK     Backend = "gtk"
 	BackendKDE     Backend = "kde"
+	BackendQt      Backend = "qt"
+	BackendGNOME   Backend = "gnome"
 )
 
 // Config controls desktop integration selected by the user or distribution.
@@ -54,6 +56,9 @@ func LoadConfig() Config {
 // SelectBackend resolves the configured backend and required desktop tools.
 func SelectBackend(preferred Backend) Backend {
 	if preferred == "" {
+		preferred = Backend(os.Getenv("CPAK_UI_ADAPTER"))
+	}
+	if preferred == "" {
 		preferred = LoadConfig().Desktop.DialogBackend
 	}
 	if preferred == "" {
@@ -63,22 +68,22 @@ func SelectBackend(preferred Backend) Backend {
 	case BackendBuiltin:
 		return BackendBuiltin
 	case BackendGNOME:
-		if available(BackendGNOME) {
-			return BackendGNOME
-		}
-		return BackendBuiltin
-	case BackendKDE:
-		if available(BackendKDE) {
-			return BackendKDE
-		}
-		return BackendBuiltin
+		return firstAvailable(BackendAdwaita, BackendBuiltin)
+	case BackendAdwaita, BackendGTK, BackendKDE, BackendQt:
+		return firstAvailable(preferred, BackendBuiltin)
 	case BackendAuto:
 		desktop := strings.ToLower(os.Getenv("XDG_CURRENT_DESKTOP"))
-		if strings.Contains(desktop, "kde") && available(BackendKDE) {
-			return BackendKDE
+		if strings.Contains(desktop, "kde") || strings.Contains(desktop, "plasma") {
+			return firstAvailable(BackendKDE, BackendQt, BackendBuiltin)
 		}
-		if (strings.Contains(desktop, "gnome") || strings.Contains(desktop, "unity") || strings.Contains(desktop, "cinnamon")) && available(BackendGNOME) {
-			return BackendGNOME
+		if strings.Contains(desktop, "gnome") {
+			return firstAvailable(BackendAdwaita, BackendBuiltin)
+		}
+		if strings.Contains(desktop, "mate") || strings.Contains(desktop, "xfce") || strings.Contains(desktop, "cinnamon") || strings.Contains(desktop, "unity") {
+			return firstAvailable(BackendGTK, BackendBuiltin)
+		}
+		if strings.Contains(desktop, "lxqt") {
+			return firstAvailable(BackendQt, BackendBuiltin)
 		}
 		return BackendBuiltin
 	default:
@@ -95,10 +100,22 @@ func Install(backend Backend, name, description, origin string, action func(func
 	}
 	var err error
 	switch backend {
-	case BackendGNOME:
-		err = installGNOME(name, description, origin, wrapped)
-	case BackendKDE:
-		err = installKDE(name, description, origin, wrapped)
+	case BackendAdwaita, BackendGTK, BackendKDE, BackendQt:
+		result, promptErr := runAdapterPrompt(context.Background(), backend, adapterPrompt{
+			Title: "Install " + name, Heading: name, Body: description + "\n\n" + origin,
+			AcceptLabel: "Install", CancelLabel: "Cancel", Recommended: true,
+		})
+		if promptErr != nil {
+			return false, nil
+		}
+		if !result.Accepted {
+			return true, nil
+		}
+		err = Progress(backend, ProgressRequest{Title: "Installing " + name, Heading: "Installing " + name, Detail: "Preparing cpak"}, func(progress func(ProgressUpdate)) error {
+			return wrapped(func(message string) {
+				progress(ProgressUpdate{Message: message})
+			})
+		})
 	default:
 		return false, nil
 	}
@@ -108,80 +125,16 @@ func Install(backend Backend, name, description, origin string, action func(func
 	return true, err
 }
 
-func installGNOME(name, description, origin string, action func(func(string)) error) error {
-	path, err := exec.LookPath("zenity")
-	if err != nil {
-		return err
-	}
-	message := fmt.Sprintf("<b>%s</b>\n\n%s\n\n%s", escapeMarkup(name), escapeMarkup(description), escapeMarkup(origin))
-	confirm := exec.Command(path, "--question", "--title=Install "+name, "--text="+message, "--ok-label=Install", "--cancel-label=Cancel", "--width=480")
-	if err = confirm.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
-			return nil
+func firstAvailable(backends ...Backend) Backend {
+	for _, backend := range backends {
+		if backend == BackendBuiltin {
+			return BackendBuiltin
 		}
-		return err
-	}
-	progress := exec.Command(path, "--progress", "--pulsate", "--auto-close", "--no-cancel", "--title=Installing "+name, "--text=Preparing cpak", "--width=480")
-	input, err := progress.StdinPipe()
-	if err != nil {
-		return err
-	}
-	if err = progress.Start(); err != nil {
-		return err
-	}
-	actionErr := action(func(message string) {
-		_, _ = fmt.Fprintf(input, "# %s\n", strings.ReplaceAll(message, "\n", " "))
-	})
-	_ = input.Close()
-	progressErr := progress.Wait()
-	if actionErr != nil {
-		showGNOMEError(path, name, actionErr)
-		return actionErr
-	}
-	return progressErr
-}
-
-func installKDE(name, description, origin string, action func(func(string)) error) error {
-	path, err := exec.LookPath("kdialog")
-	if err != nil {
-		return err
-	}
-	message := name + "\n\n" + description + "\n\n" + origin
-	confirm := exec.Command(path, "--title", "Install "+name, "--yesno", message, "--yes-label", "Install", "--no-label", "Cancel")
-	if err = confirm.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
-			return nil
+		if _, err := adapterExecutable(backend); err == nil {
+			return backend
 		}
-		return err
 	}
-	progress := exec.Command(path, "--title", "Installing "+name, "--passivepopup", "Preparing cpak", "300")
-	if err = progress.Start(); err != nil {
-		return err
-	}
-	actionErr := action(func(string) {})
-	_ = progress.Process.Kill()
-	_, _ = progress.Process.Wait()
-	if actionErr != nil {
-		_ = exec.Command(path, "--title", name, "--error", actionErr.Error()).Run()
-		return actionErr
-	}
-	return exec.Command(path, "--title", name, "--msgbox", name+" is installed").Run()
-}
-
-func showGNOMEError(path, name string, err error) {
-	_ = exec.Command(path, "--error", "--title="+name, "--text="+err.Error(), "--width=480").Run()
-}
-
-func available(backend Backend) bool {
-	name := ""
-	switch backend {
-	case BackendGNOME:
-		name = "zenity"
-	case BackendKDE:
-		name = "kdialog"
-	}
-	_, err := exec.LookPath(name)
-	return name != "" && err == nil
+	return BackendBuiltin
 }
 
 func configPaths() []string {

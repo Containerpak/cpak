@@ -50,8 +50,17 @@ type Container struct {
 	// SystemBrokerPolicyPath is the policy registered for this container.
 	SystemBrokerPolicyPath string `json:"system_broker_policy_path"`
 
+	// DesktopBusProxyPid is the PID of the policy-gated session bus proxy.
+	DesktopBusProxyPid int `json:"desktop_bus_proxy_pid"`
+
+	// DesktopBusSocketPath is the private session bus socket mounted into the container.
+	DesktopBusSocketPath string `json:"desktop_bus_socket_path"`
+
 	// ExecSocketPath is the host path used to submit commands to the container init.
 	ExecSocketPath string `json:"exec_socket_path"`
+
+	// GrantSocketPath is the host path used to mount user-selected files.
+	GrantSocketPath string `json:"grant_socket_path"`
 
 	// PolicyHash identifies the effective permissions used to create the namespaces.
 	PolicyHash string `json:"policy_hash"`

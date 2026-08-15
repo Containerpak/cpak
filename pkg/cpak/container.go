@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +22,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mirkobrombin/cpak/pkg/filegrant"
+	"github.com/mirkobrombin/cpak/pkg/grantproto"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
@@ -115,10 +118,10 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !c.containerLayerMountAlive(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !c.containerLayerMountAlive(container) {
 			container.Pid, err = getPidFromEnvContainerId(container.CpakId)
 		}
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !c.containerLayerMountAlive(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !c.containerLayerMountAlive(container) {
 			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
 			if containerProcessRunning(container) {
 				terminateContainerProcess(container)
@@ -166,6 +169,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	}
 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
+	container.GrantSocketPath = filepath.Join(container.StatePath, "grant.sock")
 	layers := composedLayers(app, components, addons)
 	container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath, err = c.prepareLayerMount(container.StatePath, layers)
 	if err != nil {
@@ -205,7 +209,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 				return types.Container{}, err
 			}
 		}
-		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, override, container.StatePath)
+		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, app.Name, app.Origin, override, container.StatePath, container.GrantSocketPath)
 		if err != nil {
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
@@ -216,9 +220,21 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 		container.SystemBrokerSocketPath = ""
 		container.SystemBrokerTokenPath = ""
 	}
+	if override.FilePicker.Enabled() {
+		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "desktop-bus.sock")
+		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, override.SocketSessionBus)
+		if err != nil {
+			cleanupDesktopBusProxy(container)
+			cleanupSystemBrokerRuntime(container)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
+	}
 
 	err = store.NewContainer(container)
 	if err != nil {
+		cleanupDesktopBusProxy(container)
 		stopSystemBroker(container.SystemBrokerPid)
 		cleanupSystemBrokerRuntime(container)
 		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
@@ -232,6 +248,13 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	store = nil
 
 	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, components, addons, config, override)
+	if err != nil {
+		c.CleanupContainer(container)
+		return types.Container{}, err
+	}
+	if override.FilePicker.Enabled() {
+		err = c.mountPersistentFileGrants(app.Origin, container)
+	}
 	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
@@ -278,7 +301,7 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 5
+const containerRuntimePolicyVersion = 6
 
 const openURIMimeApps = `[Default Applications]
 x-scheme-handler/http=cpak-open-uri.desktop;
@@ -336,6 +359,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
 	overrideMounts, _ := GetOverrideMounts(override)
+	if container.DesktopBusSocketPath != "" {
+		overrideMounts = withoutMount(overrideMounts, hostSessionBusPath())
+	}
 	filesystemArgs := []string{}
 	for _, permission := range override.Filesystem {
 		encoded, encodeErr := types.EncodeFilesystemPermission(permission)
@@ -365,6 +391,18 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--lower-dir", container.FVSLayerMountPath)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
+	grantSocketPath := container.GrantSocketPath
+	if grantSocketPath == "" {
+		grantSocketPath = filepath.Join(container.StatePath, "grant.sock")
+	}
+	cmds = append(cmds, "--grant-socket", grantSocketPath)
+	if !filesystemIncludesHostHome(override.Filesystem) {
+		privateHome, homeErr := c.privateApplicationHome(app.CpakId)
+		if homeErr != nil {
+			return "", 0, "", homeErr
+		}
+		cmds = append(cmds, "--private-home", privateHome)
+	}
 	cmds = append(cmds, "--idle-time", strconv.Itoa(app.IdleTime))
 	if override.FsHost {
 		cmds = append(cmds, "--mount-host-root")
@@ -408,6 +446,10 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 			cmds = append(cmds, "--env", "CPAK_DESKTOP_RUNTIME="+desktopRuntimeTarget)
 		}
 	}
+	if container.DesktopBusSocketPath != "" {
+		guestBusPath := hostSessionBusPath()
+		cmds = append(cmds, "--extra-links", container.DesktopBusSocketPath+":"+guestBusPath)
+	}
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
 	containerEnv = inheritHostTimezone(containerEnv)
@@ -423,6 +465,10 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	if override.SocketWayland {
 		containerEnv = append(containerEnv, "WAYLAND_DISPLAY="+waylandDisplay(strconv.Itoa(os.Getuid())))
+	}
+	if container.DesktopBusSocketPath != "" {
+		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
+		containerEnv = setEnvironmentValue(containerEnv, "GTK_USE_PORTAL", "1")
 	}
 	containerEnv = append(containerEnv, "CPAK_SERVICE_SOCKET="+defaultCpakSocketPath)
 	for _, envVar := range containerEnv {
@@ -717,6 +763,10 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 		envVars = append(envVars, "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
 		envVars = append(envVars, "CPAK_SYSTEM_BROKER_TOKEN_FILE="+systemBrokerTokenTarget)
 	}
+	if container.DesktopBusSocketPath != "" {
+		envVars = setEnvironmentValue(envVars, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
+		envVars = setEnvironmentValue(envVars, "GTK_USE_PORTAL", "1")
+	}
 	return envVars, nil
 }
 
@@ -975,8 +1025,16 @@ func containerProcessRunning(container types.Container) bool {
 	return socketIsLive(execSocketPath)
 }
 
+func containerDesktopBusAlive(container types.Container) bool {
+	if container.DesktopBusSocketPath == "" {
+		return true
+	}
+	return container.DesktopBusProxyPid > 0 && syscall.Kill(container.DesktopBusProxyPid, 0) == nil && socketIsLive(container.DesktopBusSocketPath)
+}
+
 // CleanupContainer removes the container with the given id.
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
+	cleanupDesktopBusProxy(container)
 	stopLegacyHostExecServer(container.HostExecPid)
 	stopSystemBroker(container.SystemBrokerPid)
 	cleanupSystemBrokerRuntime(container)
@@ -1003,6 +1061,90 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 		return
 	}
 	return
+}
+
+func startDesktopBusProxy(container types.Container, allowSessionBus bool) (int, error) {
+	cpakBinary, err := getCpakBinary()
+	if err != nil {
+		return 0, err
+	}
+	upstream := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+	if upstream == "" {
+		upstream = "unix:path=" + hostSessionBusPath()
+	}
+	arguments := []string{
+		"desktop-bus-proxy",
+		"--socket-path", container.DesktopBusSocketPath,
+		"--upstream-address", upstream,
+		"--broker-socket-path", container.SystemBrokerSocketPath,
+		"--token-file", container.SystemBrokerTokenPath,
+	}
+	if allowSessionBus {
+		arguments = append(arguments, "--allow-session-bus")
+	}
+	command := exec.Command(cpakBinary, arguments...)
+	logFile, err := os.OpenFile(container.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return 0, fmt.Errorf("open desktop bus log: %w", err)
+	}
+	defer logFile.Close()
+	command.Stdin = nil
+	command.Stdout = logFile
+	command.Stderr = logFile
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err = command.Start(); err != nil {
+		return 0, fmt.Errorf("start desktop bus proxy: %w", err)
+	}
+	pid := command.Process.Pid
+	_ = command.Process.Release()
+	if err = waitForSocket(container.DesktopBusSocketPath, 3*time.Second); err != nil {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+		return 0, fmt.Errorf("start desktop bus proxy: %w", err)
+	}
+	return pid, nil
+}
+
+func cleanupDesktopBusProxy(container types.Container) {
+	if container.DesktopBusProxyPid > 0 {
+		_ = syscall.Kill(container.DesktopBusProxyPid, syscall.SIGTERM)
+	}
+	if container.DesktopBusSocketPath != "" {
+		_ = os.Remove(container.DesktopBusSocketPath)
+	}
+}
+
+func hostSessionBusPath() string {
+	return filepath.Join("/run/user", strconv.Itoa(os.Getuid()), "bus")
+}
+
+func withoutMount(mounts []string, excluded string) []string {
+	result := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		if filepath.Clean(mount) != filepath.Clean(excluded) {
+			result = append(result, mount)
+		}
+	}
+	return result
+}
+
+func (c *Cpak) privateApplicationHome(applicationID string) (string, error) {
+	if strings.TrimSpace(applicationID) == "" || strings.ContainsAny(applicationID, "/\\\x00") {
+		return "", errors.New("application ID is invalid")
+	}
+	path := c.GetInStoreDir("application-data", applicationID, "home")
+	if err := securePrivateDirectory(path); err != nil {
+		return "", fmt.Errorf("prepare private application home: %w", err)
+	}
+	return path, nil
+}
+
+func filesystemIncludesHostHome(permissions []types.FilesystemPermission) bool {
+	for _, permission := range permissions {
+		if permission.Path == "home" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Cpak) cleanupNestedContainer(container types.Container) {
@@ -1183,7 +1325,7 @@ func systemBrokerPolicyDirectory() (string, error) {
 	return directory, nil
 }
 
-func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner string, override types.Override, statePath string) (string, error) {
+func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, filePickerApplication, filePickerOrigin string, override types.Override, statePath, grantSocketPath string) (string, error) {
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return "", fmt.Errorf("read system broker token: %w", err)
@@ -1204,6 +1346,13 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner strin
 			return "", err
 		}
 	}
+	filePickerPaths := []systembroker.FilePickerPathGrant(nil)
+	if override.FilePicker.Enabled() {
+		filePickerPaths, err = systemBrokerFilePickerPaths(override.Filesystem)
+		if err != nil {
+			return "", err
+		}
+	}
 	policy := systembroker.Policy{
 		AllowNotify:           override.Notification,
 		AllowOpenURI:          override.OpenURI,
@@ -1213,6 +1362,18 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner strin
 		ContainerOwner:        owner,
 		ContainerCapabilities: capabilities,
 		ContainerPaths:        paths,
+		FilePicker: systembroker.FilePickerPolicy{
+			OpenFile:         override.FilePicker.OpenFile,
+			OpenFolder:       override.FilePicker.OpenFolder,
+			SaveFile:         override.FilePicker.SaveFile,
+			Persistent:       override.FilePicker.Persistent,
+			ContainingFolder: override.FilePicker.ContainingFolder,
+		},
+		FilePickerPaths:       filePickerPaths,
+		FilePickerApplication: filePickerApplication,
+		FilePickerOrigin:      filePickerOrigin,
+		FileGrantSocketPath:   grantSocketPath,
+		FileGrantStorePath:    filepath.Join(c.Options.StorePath, "grants"),
 	}
 	directory, err := systemBrokerPolicyDirectory()
 	if err != nil {
@@ -1222,6 +1383,72 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner strin
 		return "", err
 	}
 	return systembroker.PolicyPath(directory, string(token))
+}
+
+func systemBrokerFilePickerPaths(permissions []types.FilesystemPermission) ([]systembroker.FilePickerPathGrant, error) {
+	paths := make([]systembroker.FilePickerPathGrant, 0, len(permissions))
+	for _, permission := range permissions {
+		source, target, err := types.ResolveFilesystemPermission(permission)
+		if errors.Is(err, types.ErrXDGUserDirectoryUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		resolved, err := filepath.EvalSymlinks(source)
+		if os.IsNotExist(err) && strings.HasPrefix(permission.Path, "xdg-") {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve file picker path: %w", err)
+		}
+		paths = append(paths, systembroker.FilePickerPathGrant{
+			Source:   resolved,
+			Target:   target,
+			ReadOnly: permission.Access == "read-only",
+		})
+	}
+	return paths, nil
+}
+
+func (c *Cpak) mountPersistentFileGrants(origin string, container types.Container) error {
+	store := filegrant.Store{Directory: filepath.Join(c.Options.StorePath, "grants")}
+	grants, err := store.Load(origin)
+	if err != nil {
+		return err
+	}
+	grantSocketPath := container.GrantSocketPath
+	if grantSocketPath == "" {
+		grantSocketPath = filepath.Join(container.StatePath, "grant.sock")
+	}
+	for _, grant := range grants {
+		source, openErr := filegrant.OpenSource(grant)
+		if errors.Is(openErr, os.ErrNotExist) {
+			continue
+		}
+		if openErr != nil {
+			return openErr
+		}
+		mountSource, mountOpenErr := filegrant.OpenMountSource(grant)
+		if mountOpenErr != nil {
+			_ = source.Close()
+			return mountOpenErr
+		}
+		_, sendErr := grantproto.Send(grantSocketPath, grant, source, mountSource)
+		closeErr := source.Close()
+		if mountSource != nil {
+			if err = mountSource.Close(); closeErr == nil {
+				closeErr = err
+			}
+		}
+		if sendErr != nil {
+			return sendErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
 }
 
 func systemBrokerContainerPaths(permissions []types.FilesystemPermission) ([]systembroker.ContainerPathGrant, error) {

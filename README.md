@@ -38,7 +38,38 @@ make all
 ```
 
 The build produces one `cpak` binary and does not embed a second container
-runtime.
+runtime. It embeds the Adwaita, GTK, KDE and Qt dialog adapters by default. Each
+adapter is a small host process linked to the matching system toolkit; cpak
+extracts only the selected adapter and falls back to its built-in interface if
+the toolkit or adapter is unavailable.
+
+Distributions can limit the embedded adapters without changing runtime code:
+
+```sh
+make all UI_ADAPTERS=adwaita DIALOG_BACKEND=adwaita
+make all UI_ADAPTERS=kde,qt
+make all UI_ADAPTERS=builtin
+```
+
+The matching Go build tags are `cpak_ui_adwaita`, `cpak_ui_gtk`, `cpak_ui_kde`,
+`cpak_ui_qt` and `cpak_ui_builtin`. The Makefile compiles and embeds only the
+selected adapter binaries before invoking `go build` with those tags. A package
+that invokes Go directly can use the same tags and install its matching
+`cpak-ui-*` executables below `/usr/libexec/cpak/ui` instead of embedding them.
+
+At runtime, `CPAK_UI_ADAPTER` selects `auto`, `builtin`, `adwaita`, `gtk`, `kde`
+or `qt`. A persistent system or user choice uses the same value in `cpak.json`:
+
+```json
+{
+  "desktop": {
+    "dialog_backend": "adwaita"
+  }
+}
+```
+
+The environment overrides configuration, configuration overrides the build
+default, and an unavailable selection always falls back to the built-in dialog.
 
 Store application pages also provide a signed graphical installer. Each
 download contains the matching cpak binary and the selected package identity.
@@ -215,6 +246,65 @@ which lets browser sandboxes create their inner boundary.
 Desktop notifications and external URIs use the system broker instead. It is
 enabled with the `notification` and `openURI` permissions and exposes only the
 matching shim. The application never receives the host D-Bus socket or command.
+
+### File selection
+
+Applications keep a private persistent home unless the manifest explicitly
+mounts the host home. Packages can let users select host files without granting
+a directory in advance:
+
+```json
+"filePicker": {
+  "openFile": true,
+  "openFolder": true,
+  "saveFile": true,
+  "persistent": true,
+  "containingFolder": true
+}
+```
+
+The desktop adapter uses the native file chooser. A selected file is mounted
+read-only below `/run/cpak/grants` and the application receives that path. The
+user can explicitly grant its containing folder when the package permits this
+choice. Folder selections are read-only. Save destinations mount the selected
+parent directory read-write. If the desktop chooser cannot show the scope and
+lifetime choices, cpak uses the configured desktop dialog backend or its
+built-in dialog.
+
+Paths already exposed by `filesystem` keep their normal in-container location
+and do not trigger another confirmation. The built-in confirmation follows the
+host light or dark preference and accent color through
+`org.freedesktop.appearance`.
+
+Use `home/path` when an application only needs one portable path below the
+user's home instead of the complete `home` scope:
+
+```json
+"filesystem": [
+  {"path": "home/.local/share/example", "access": "read-write"}
+]
+```
+
+Session grants disappear with the running environment. Persistent grants are
+restored on later launches and can be inspected or revoked:
+
+```sh
+cpak grant list github.com/example/app
+cpak grant manage github.com/example/app
+cpak grant revoke github.com/example/app GRANT_ID
+```
+
+GTK applications use the same mechanism through their normal file chooser.
+Other applications can call the policy-gated `cpak-file-picker` shim. The core
+grant protocol uses a private Unix socket and does not depend on a desktop bus.
+The broker authenticates the package token, validates the requested capability
+and passes an opened file descriptor to the existing container namespace. The
+runtime verifies that the selected object did not change before attaching a
+restricted mount. It does not trust a host path supplied by the application.
+
+File selection fails closed when no desktop session is available. Headless
+packages must use paths declared in `filesystem` or receive data through a
+separate typed integration instead of starting an interactive picker.
 
 The same broker can expose a typed container provider without granting a host
 shell:

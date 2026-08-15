@@ -40,11 +40,42 @@
         "origin"
       ]
     },
+    "FilePickerGrant": {
+      "properties": {
+        "openFile": {
+          "type": "boolean",
+          "description": "Select an existing host file",
+          "default": false
+        },
+        "openFolder": {
+          "type": "boolean",
+          "description": "Select an existing host folder",
+          "default": false
+        },
+        "saveFile": {
+          "type": "boolean",
+          "description": "Select a host destination for a new file",
+          "default": false
+        },
+        "persistent": {
+          "type": "boolean",
+          "description": "Offer persistent grants",
+          "default": false
+        },
+        "containingFolder": {
+          "type": "boolean",
+          "description": "Offer the containing folder as context",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "FilesystemPermission": {
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^(?:home|host|xdg-(?:desktop|documents|download|music|pictures|public-share|templates|videos)|/.*)$",
+          "pattern": "^(?:home(?:/.*)?|host|xdg-(?:desktop|documents|download|music|pictures|public-share|templates|videos)|/.*)$",
           "description": "Host path or portable home host and XDG scope"
         },
         "access": {
@@ -216,6 +247,10 @@
           },
           "type": "array",
           "description": "Typed host service capabilities"
+        },
+        "filePicker": {
+          "$ref": "#/$defs/FilePickerGrant",
+          "description": "Native file chooser capabilities"
         },
         "filesystem": {
           "items": {

@@ -15,6 +15,7 @@ func TestFilesystemPermissionRoundTrip(t *testing.T) {
 	for _, permission := range []FilesystemPermission{
 		{Path: "/home/user/Games", Access: "read-write"},
 		{Path: "home", Access: "read-write"},
+		{Path: "home/.local/share/example", Access: "read-write"},
 		{Path: "host", Access: "read-only"},
 		{Path: "xdg-documents", Access: "read-write"},
 	} {
@@ -42,6 +43,9 @@ func TestFilesystemPermissionString(t *testing.T) {
 func TestFilesystemPermissionsRejectUnsafePaths(t *testing.T) {
 	for _, permission := range []FilesystemPermission{
 		{Path: "relative", Access: "read-only"},
+		{Path: "home/", Access: "read-only"},
+		{Path: "home/../etc", Access: "read-only"},
+		{Path: "home//example", Access: "read-only"},
 		{Path: "/home/../etc", Access: "read-only"},
 		{Path: "/", Access: "read-only"},
 		{Path: "host", Access: "read-write"},
@@ -66,6 +70,7 @@ func TestFilesystemPermissionsRejectDuplicates(t *testing.T) {
 func TestFilesystemPermissionsAcceptPortableScopes(t *testing.T) {
 	if err := ValidateFilesystemPermissions([]FilesystemPermission{
 		{Path: "home", Access: "read-write"},
+		{Path: "home/.local/share/example", Access: "read-write"},
 		{Path: "host", Access: "read-only"},
 		{Path: "xdg-download", Access: "read-write"},
 	}); err != nil {
@@ -131,6 +136,10 @@ func TestResolveFilesystemPermission(t *testing.T) {
 			permission: FilesystemPermission{Path: "home", Access: "read-write"},
 		},
 		{
+			name:       "home subpath",
+			permission: FilesystemPermission{Path: "home/.local/share/example", Access: "read-write"},
+		},
+		{
 			name:       "explicit path",
 			permission: FilesystemPermission{Path: "/var/cache/demo", Access: "read-write"},
 			source:     "/var/cache/demo",
@@ -144,12 +153,17 @@ func TestResolveFilesystemPermission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.name == "home" {
+			if test.name == "home" || test.name == "home subpath" {
 				home, err := os.UserHomeDir()
 				if err != nil {
 					t.Fatal(err)
 				}
-				test.source, test.target = home, home
+				if test.name == "home" {
+					test.source, test.target = home, home
+				} else {
+					test.source = filepath.Join(home, ".local/share/example")
+					test.target = test.source
+				}
 			}
 			if source != test.source || target != test.target {
 				t.Fatalf("got %q -> %q, want %q -> %q", source, target, test.source, test.target)

@@ -66,6 +66,31 @@ func TestCapsuleCarriesFVSCompanion(t *testing.T) {
 	}
 }
 
+func TestCapsuleCarriesBrandIcon(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := PackInstallerWithAssets([]byte("installer"), []byte("cpak"), []byte("fvs2d"), []byte("cpak icon"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	packed, err := SignCapsule(base, testMetadata(), privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsule, err := ReadCapsule(bytes.NewReader(packed), int64(len(packed)), publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(capsule.BrandIcon) != "cpak icon" {
+		t.Fatalf("brand icon: %q", capsule.BrandIcon)
+	}
+	if string(capsule.Payload) != "cpak" || string(capsule.Companion) != "fvs2d" {
+		t.Fatalf("capsule payloads: cpak %q, companion %q", capsule.Payload, capsule.Companion)
+	}
+}
+
 func TestMetadataRejectsInvalidPermissions(t *testing.T) {
 	metadata := testMetadata()
 	metadata.Permissions = []Permission{{Name: "Files", Detail: "home\nread-write"}}

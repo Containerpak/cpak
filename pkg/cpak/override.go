@@ -223,6 +223,9 @@ func systemBrokerShims(o types.Override) []string {
 	if o.HostApplications {
 		shims = append(shims, "cpak-launch-app")
 	}
+	if o.FilePicker.Enabled() {
+		shims = append(shims, "cpak-file-picker")
+	}
 	if len(types.HostActionCapabilities(o.HostActions, types.HostActionProviderContainers)) > 0 {
 		shims = append(shims, "podman", "docker")
 	}

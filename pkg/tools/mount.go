@@ -136,6 +136,91 @@ func MountBindReadOnlyPrepared(src, dest string, noExec bool) error {
 	return restrictBindMount(dest, noExec)
 }
 
+func MountFileBindPrepared(src, dest string, readOnly, noExec bool) error {
+	if err := MountPrepared(src, dest, syscall.MS_BIND); err != nil {
+		return err
+	}
+	if readOnly {
+		return restrictBindMount(dest, noExec)
+	}
+	return RestrictWritableBindMount(dest)
+}
+
+func MountDescriptorPrepared(sourceFD int, dest string, readOnly, noExec, recursive bool) error {
+	destination, err := os.Lstat(dest)
+	if err != nil {
+		return err
+	}
+	if destination.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("mount destination is a symlink: %s", dest)
+	}
+	targetFD, err := unix.Open(dest, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open mount destination %s: %w", dest, err)
+	}
+	defer unix.Close(targetFD)
+	treeFD, err := unix.OpenTree(sourceFD, "", unix.OPEN_TREE_CLONE|unix.OPEN_TREE_CLOEXEC|unix.AT_EMPTY_PATH)
+	if err != nil {
+		return fmt.Errorf("clone descriptor mount: %w", err)
+	}
+	defer unix.Close(treeFD)
+	attributes := uint64(unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NODEV)
+	if readOnly {
+		attributes |= unix.MOUNT_ATTR_RDONLY
+	}
+	if noExec {
+		attributes |= unix.MOUNT_ATTR_NOEXEC
+	}
+	flags := uint(unix.AT_EMPTY_PATH)
+	if recursive {
+		flags |= uint(unix.AT_RECURSIVE)
+	}
+	if err = unix.MountSetattr(treeFD, "", flags, &unix.MountAttr{Attr_set: attributes}); err != nil {
+		return fmt.Errorf("restrict descriptor mount: %w", err)
+	}
+	if err = unix.MoveMount(treeFD, "", targetFD, "", unix.MOVE_MOUNT_F_EMPTY_PATH|unix.MOVE_MOUNT_T_EMPTY_PATH); err != nil {
+		return fmt.Errorf("attach descriptor mount: %w", err)
+	}
+	return nil
+}
+
+func AttachDescriptorMountPrepared(treeFD int, dest string) error {
+	destination, err := os.Lstat(dest)
+	if err != nil {
+		return err
+	}
+	if destination.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("mount destination is a symlink: %s", dest)
+	}
+	targetFD, err := unix.Open(dest, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open mount destination %s: %w", dest, err)
+	}
+	defer unix.Close(targetFD)
+	if err = unix.MoveMount(treeFD, "", targetFD, "", unix.MOVE_MOUNT_F_EMPTY_PATH|unix.MOVE_MOUNT_T_EMPTY_PATH); err != nil {
+		return fmt.Errorf("attach descriptor mount: %w", err)
+	}
+	return nil
+}
+
+// RestrictWritableBindMount removes executable, device and set-user-ID
+// semantics from a writable bind mount.
+func RestrictWritableBindMount(dest string) error {
+	attributes := uint64(unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NODEV | unix.MOUNT_ATTR_NOEXEC)
+	err := unix.MountSetattr(unix.AT_FDCWD, dest, unix.AT_RECURSIVE, &unix.MountAttr{Attr_set: attributes})
+	if err == nil {
+		return nil
+	}
+	if err != unix.ENOSYS && err != unix.EINVAL && err != unix.EOPNOTSUPP {
+		return fmt.Errorf("restrict writable bind mount %s: %w", dest, err)
+	}
+	flags := uintptr(syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC)
+	if err = syscall.Mount("", dest, "", flags, ""); err != nil {
+		return fmt.Errorf("remount %s restricted: %w", dest, err)
+	}
+	return nil
+}
+
 func restrictBindMount(dest string, noExec bool) error {
 
 	attributes := uint64(unix.MOUNT_ATTR_RDONLY | unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NODEV)

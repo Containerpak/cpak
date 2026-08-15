@@ -135,6 +135,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		OpenURI:             parent.OpenURI && child.OpenURI,
 		HostApplications:    parent.HostApplications && child.HostApplications,
 		HostActions:         types.IntersectHostActions(parent.HostActions, child.HostActions),
+		FilePicker:          intersectFilePicker(parent.FilePicker, child.FilePicker),
 		Filesystem:          intersectFilesystem(parent.Filesystem, child.Filesystem),
 		FsHost:              parent.FsHost && child.FsHost,
 		FsHostEtc:           parent.FsHostEtc && child.FsHostEtc,
@@ -149,6 +150,16 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		PidsMax:             minimumLimit(parent.PidsMax, child.PidsMax),
 		AsRoot:              parent.AsRoot && child.AsRoot,
 		AllowedHostCommands: nil,
+	}
+}
+
+func intersectFilePicker(parent, child types.FilePickerGrant) types.FilePickerGrant {
+	return types.FilePickerGrant{
+		OpenFile:         parent.OpenFile && child.OpenFile,
+		OpenFolder:       parent.OpenFolder && child.OpenFolder,
+		SaveFile:         parent.SaveFile && child.SaveFile,
+		Persistent:       parent.Persistent && child.Persistent,
+		ContainingFolder: parent.ContainingFolder && child.ContainingFolder,
 	}
 }
 

@@ -90,6 +90,18 @@ func (c *OverrideCmd) Run() error {
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
 		return nil
 	}
+	if c.Key == "filePicker" {
+		grant, err := types.DecodeFilePickerGrantJSON([]byte(c.Value))
+		if err != nil {
+			return err
+		}
+		over.FilePicker = grant
+		if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+			return err
+		}
+		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
+		return nil
+	}
 
 	// Initialize the flag binder
 	b, err := binder.NewBinder(&over, os.TempDir(), true)
