@@ -451,6 +451,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--extra-links", container.DesktopBusSocketPath+":"+guestBusPath)
 	}
 	containerEnv := append([]string{}, config.Config.Env...)
+	containerEnv = inheritHostLocale(containerEnv, os.Environ())
 	containerEnv = append(containerEnv, override.Env...)
 	containerEnv = inheritHostTimezone(containerEnv)
 	containerEnv = inheritHostCursor(containerEnv)
@@ -744,6 +745,7 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 	override := resolvedOverride(app)
 	envVars := append([]string{}, os.Environ()...)
 	envVars = append(envVars, config.Config.Env...)
+	envVars = inheritHostLocale(envVars, os.Environ())
 	envVars = append(envVars, override.Env...)
 	envVars = inheritHostCursor(envVars)
 	if override.SocketAtSpiBus && len(atSpiSocketPaths(fmt.Sprintf("%d", os.Getuid()))) == 0 {

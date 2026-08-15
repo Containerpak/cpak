@@ -66,6 +66,7 @@ type updateDeps struct {
 	installDeps    func(origin string, manifest *types.CpakManifest) ([]types.Dependency, error)
 	pull           func(image, cpakImageId, origin string) ([]string, string, string, error)
 	buildRuntime   func(layers []string, sources []types.RuntimeSource) ([]string, error)
+	buildLocale    func(layers []string, image, config string, override types.Override) ([]string, error)
 	prepareStorage func(app types.Application) error
 	stop           func(app types.Application) error
 	createExports  func(app types.Application) error
@@ -84,6 +85,7 @@ func (c *Cpak) newUpdateDeps() updateDeps {
 		installDeps:    c.installDependencies,
 		pull:           c.pull,
 		buildRuntime:   c.BuildRuntimeLayers,
+		buildLocale:    c.BuildLocaleLayer,
 		prepareStorage: c.PrepareApplicationStorage,
 		stop:           c.stopApplicationContainers,
 		createExports:  c.createExports,
@@ -314,6 +316,10 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		return failedUpdate(result, err)
 	}
 	layers, err = deps.buildRuntime(layers, manifest.RuntimeSources)
+	if err != nil {
+		return failedUpdate(result, err)
+	}
+	layers, err = deps.buildLocale(layers, manifest.Image, config, manifest.Override)
 	if err != nil {
 		return failedUpdate(result, err)
 	}

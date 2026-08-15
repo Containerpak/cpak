@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strings"
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
@@ -25,30 +26,118 @@ const (
 )
 
 func unpackLayer(ctx context.Context, compressed io.Reader, mediaType string, writer *fvsrepo.SnapshotWriter) error {
+	_, err := unpackLayerEntries(ctx, compressed, mediaType, writer, nil)
+	return err
+}
+
+func unpackLayerPaths(ctx context.Context, compressed io.Reader, mediaType string, writer *fvsrepo.SnapshotWriter, prefixes []string) (int, error) {
+	cleaned := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		value, err := layerEntryPath(prefix)
+		if err != nil || value == "" {
+			return 0, fmt.Errorf("unpack layer: invalid path prefix %q", prefix)
+		}
+		cleaned = append(cleaned, value)
+	}
+	return unpackLayerEntries(ctx, compressed, mediaType, writer, cleaned)
+}
+
+func layerPathsIncludingLinks(compressed io.Reader, mediaType string, prefixes []string) ([]string, error) {
 	reader, closeReader, err := layerReader(compressed, mediaType)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer closeReader()
 
+	links := make(map[string]string)
+	tarReader := tar.NewReader(reader)
+	for {
+		header, readErr := tarReader.Next()
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("inspect layer links: %w", readErr)
+		}
+		if header.Typeflag != tar.TypeSymlink {
+			continue
+		}
+		name, pathErr := layerEntryPath(header.Name)
+		if pathErr != nil || name == "" {
+			return nil, fmt.Errorf("inspect layer links: invalid path %q", header.Name)
+		}
+		target := strings.ReplaceAll(header.Linkname, "\\", "/")
+		if strings.HasPrefix(target, "/") {
+			target = strings.TrimPrefix(target, "/")
+		} else {
+			target = path.Join(path.Dir(name), target)
+		}
+		target, pathErr = layerEntryPath(target)
+		if pathErr != nil || target == "" {
+			return nil, fmt.Errorf("inspect layer links: invalid target %q", header.Linkname)
+		}
+		links[name] = target
+	}
+
+	selected := make(map[string]bool, len(prefixes))
+	for _, prefix := range prefixes {
+		selected[prefix] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		values := make([]string, 0, len(selected))
+		for value := range selected {
+			values = append(values, value)
+		}
+		for name, target := range links {
+			_, direct := selectedLayerEntry(name, values)
+			if direct && !selected[target] {
+				selected[target] = true
+				changed = true
+			}
+		}
+	}
+	result := make([]string, 0, len(selected))
+	for value := range selected {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func unpackLayerEntries(ctx context.Context, compressed io.Reader, mediaType string, writer *fvsrepo.SnapshotWriter, prefixes []string) (int, error) {
+	reader, closeReader, err := layerReader(compressed, mediaType)
+	if err != nil {
+		return 0, err
+	}
+	defer closeReader()
+
+	selected := 0
 	tarReader := tar.NewReader(reader)
 	for {
 		if err = ctx.Err(); err != nil {
-			return err
+			return 0, err
 		}
 		header, readErr := tarReader.Next()
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			return fmt.Errorf("unpack layer: read tar header: %w", readErr)
+			return 0, fmt.Errorf("unpack layer: read tar header: %w", readErr)
 		}
 		name, pathErr := layerEntryPath(header.Name)
 		if pathErr != nil {
-			return pathErr
+			return 0, pathErr
 		}
 		if name == "" {
 			continue
+		}
+		include, direct := selectedLayerEntry(name, prefixes)
+		if !include {
+			continue
+		}
+		if direct {
+			selected++
 		}
 		entry := fvsrepo.Entry{
 			Path:    name,
@@ -70,7 +159,7 @@ func unpackLayer(ctx context.Context, compressed io.Reader, mediaType string, wr
 		case tar.TypeLink:
 			target, targetErr := layerEntryPath(header.Linkname)
 			if targetErr != nil || target == "" {
-				return fmt.Errorf("unpack layer: invalid hardlink target %q", header.Linkname)
+				return 0, fmt.Errorf("unpack layer: invalid hardlink target %q", header.Linkname)
 			}
 			entry.Kind = fvsrepo.EntryHardlink
 			entry.Link = target
@@ -81,16 +170,31 @@ func unpackLayer(ctx context.Context, compressed io.Reader, mediaType string, wr
 		case tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		default:
-			return fmt.Errorf("unpack layer: unsupported tar entry %q with type %d", header.Name, header.Typeflag)
+			return 0, fmt.Errorf("unpack layer: unsupported tar entry %q with type %d", header.Name, header.Typeflag)
 		}
 		if err != nil {
-			return fmt.Errorf("unpack layer: import %s: %w", header.Name, err)
+			return 0, fmt.Errorf("unpack layer: import %s: %w", header.Name, err)
 		}
 	}
 	if _, err = io.Copy(io.Discard, reader); err != nil {
-		return fmt.Errorf("unpack layer: finish compressed stream: %w", err)
+		return 0, fmt.Errorf("unpack layer: finish compressed stream: %w", err)
 	}
-	return nil
+	return selected, nil
+}
+
+func selectedLayerEntry(name string, prefixes []string) (include, direct bool) {
+	if len(prefixes) == 0 {
+		return true, true
+	}
+	for _, prefix := range prefixes {
+		if name == prefix || strings.HasPrefix(name, prefix+"/") {
+			return true, true
+		}
+		if strings.HasPrefix(prefix, name+"/") {
+			include = true
+		}
+	}
+	return include, false
 }
 
 func layerReader(reader io.Reader, mediaType string) (io.Reader, func() error, error) {

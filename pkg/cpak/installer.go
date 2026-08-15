@@ -152,6 +152,10 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 	if err != nil {
 		return
 	}
+	layers, err = c.BuildLocaleLayer(layers, manifest.Image, config, manifest.Override)
+	if err != nil {
+		return
+	}
 
 	app := types.Application{
 		CpakId:               cpakImageId,

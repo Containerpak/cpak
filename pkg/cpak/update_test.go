@@ -122,6 +122,9 @@ func (s *updateStub) deps() updateDeps {
 		buildRuntime: func(layers []string, sources []types.RuntimeSource) ([]string, error) {
 			return layers, nil
 		},
+		buildLocale: func(layers []string, image, config string, override types.Override) ([]string, error) {
+			return layers, nil
+		},
 		stop: func(app types.Application) error {
 			s.stopped++
 			return s.stopErr

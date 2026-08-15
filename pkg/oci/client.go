@@ -85,11 +85,12 @@ type ConfigFile struct {
 
 // ImageConfig contains process defaults from an OCI image.
 type ImageConfig struct {
-	Env        []string `json:"Env,omitempty"`
-	Entrypoint []string `json:"Entrypoint,omitempty"`
-	Cmd        []string `json:"Cmd,omitempty"`
-	WorkingDir string   `json:"WorkingDir,omitempty"`
-	User       string   `json:"User,omitempty"`
+	Env        []string          `json:"Env,omitempty"`
+	Entrypoint []string          `json:"Entrypoint,omitempty"`
+	Cmd        []string          `json:"Cmd,omitempty"`
+	WorkingDir string            `json:"WorkingDir,omitempty"`
+	User       string            `json:"User,omitempty"`
+	Labels     map[string]string `json:"Labels,omitempty"`
 }
 
 // Image is a resolved OCI image and its verified configuration.

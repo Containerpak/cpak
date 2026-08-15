@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,6 +61,61 @@ func TestUnpackLayerReadsZstd(t *testing.T) {
 	}
 	if value.Path == "" || value.Mode != 0o755 || value.Size != 4 {
 		t.Fatalf("files = %+v", files)
+	}
+}
+
+func TestUnpackLayerPathsKeepsSelectedTree(t *testing.T) {
+	layer := testLayer(t, mediaOCILayerGzip, []testLayerEntry{
+		{name: "usr", typeflag: tar.TypeDir, mode: 0755},
+		{name: "usr/lib", typeflag: tar.TypeDir, mode: 0755},
+		{name: "usr/lib/locale", typeflag: tar.TypeDir, mode: 0755},
+		{name: "usr/lib/locale/pt_BR.utf8", typeflag: tar.TypeDir, mode: 0755},
+		{name: "usr/lib/locale/pt_BR.utf8/LC_CTYPE", typeflag: tar.TypeReg, mode: 0644, content: []byte("portuguese")},
+		{name: "usr/lib/locale/de_DE.utf8", typeflag: tar.TypeDir, mode: 0755},
+		{name: "usr/lib/locale/de_DE.utf8/LC_CTYPE", typeflag: tar.TypeReg, mode: 0644, content: []byte("german")},
+	})
+	repository := filepath.Join(t.TempDir(), "layer")
+	if _, err := fvsrepo.Init(repository, 0); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := fvsrepo.BeginSnapshot(repository, fvsrepo.SnapshotOptions{ComputeSHA256: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := unpackLayerPaths(context.Background(), bytes.NewReader(layer), mediaOCILayerGzip, writer, []string{"usr/lib/locale/pt_BR.utf8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != 2 {
+		t.Fatalf("selected entries = %d, want 2", selected)
+	}
+	result, err := writer.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := fvsrepo.StateFiles(repository, result.StateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		if strings.Contains(file.Path, "de_DE") {
+			t.Fatalf("unselected locale was imported: %s", file.Path)
+		}
+	}
+}
+
+func TestLayerPathsIncludingLinksAddsTargets(t *testing.T) {
+	layer := testLayer(t, mediaOCILayerGzip, []testLayerEntry{
+		{name: "usr/lib/locale/C.utf8/LC_CTYPE", typeflag: tar.TypeReg, mode: 0644, content: []byte("ctype")},
+		{name: "usr/lib/locale/pt_BR.utf8/LC_CTYPE", typeflag: tar.TypeSymlink, linkname: "../C.utf8/LC_CTYPE"},
+	})
+	paths, err := layerPathsIncludingLinks(bytes.NewReader(layer), mediaOCILayerGzip, []string{"usr/lib/locale/pt_BR.utf8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"usr/lib/locale/C.utf8/LC_CTYPE", "usr/lib/locale/pt_BR.utf8"}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("locale paths = %v, want %v", paths, want)
 	}
 }
 
