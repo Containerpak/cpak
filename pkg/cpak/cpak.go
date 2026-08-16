@@ -29,6 +29,12 @@ type Cpak struct {
 	storageMigration   StorageMigrationHandler
 	storagePreparation StoragePreparationHandler
 	storageDriver      storage.Handler
+	desktopLaunch      bool
+}
+
+// SetDesktopLaunch enables file grants for exported desktop entries.
+func (c *Cpak) SetDesktopLaunch(enabled bool) {
+	c.desktopLaunch = enabled
 }
 
 // NewCpak creates a new cpak instance.

@@ -130,6 +130,12 @@ func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override t
 	if verbose {
 		logger.Printf("Container creation took %s", time.Since(startTime))
 	}
+	if !nested && c.desktopLaunch {
+		extraArgs, err = c.prepareDesktopLaunchArguments(app.Origin, override.Filesystem, container, extraArgs)
+		if err != nil {
+			return err
+		}
+	}
 
 	if nested {
 		command := append([]string{binary}, extraArgs...)

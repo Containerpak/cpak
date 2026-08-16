@@ -22,6 +22,7 @@ type RunCmd struct {
 	Extra  []string `arg:"extra" help:"Extra arguments for the binary"`
 
 	Verbose       bool   `cli:"verbose,v" help:"Enable verbose output"`
+	DesktopLaunch bool   `cli:"desktop-launch" help:"Grant files opened through a desktop launcher"`
 	Instance      string `cli:"instance,i" help:"Application instance"`
 	Branch        string `cli:"branch,b" help:"Specify a branch"`
 	Commit        string `cli:"commit,c" help:"Specify a commit"`
@@ -45,6 +46,7 @@ func (c *RunCmd) Run() error {
 		return c.runError(cp.RunAuthorized(params, c.Verbose))
 	}
 	c.configureStorageMigration(&cp)
+	cp.SetDesktopLaunch(c.DesktopLaunch)
 
 	remote, err := resolveApplicationOrigin(cp, c.Remote)
 	if err != nil {

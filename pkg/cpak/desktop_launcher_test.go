@@ -23,8 +23,8 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 	aliasEntry := filepath.Join(directory, "demo.desktop")
 	userEntry := filepath.Join(directory, "user.desktop")
 	for path, content := range map[string]string{
-		cpakEntry:  "[Desktop Entry]\nExec=cpak run github.com/containerpak/demo @demo\nTryExec=cpak\n",
-		aliasEntry: "[Desktop Entry]\nExec=cpak run github.com/containerpak/demo @demo\nTryExec=cpak\nX-cpak-Origin=github.com/containerpak/demo\n",
+		cpakEntry:  "[Desktop Entry]\nExec=cpak run github.com/containerpak/demo @demo -- %U\nTryExec=cpak\n",
+		aliasEntry: "[Desktop Entry]\nExec=cpak run github.com/containerpak/demo @demo -- %U\nTryExec=cpak\nX-cpak-Origin=github.com/containerpak/demo\n",
 		userEntry:  "[Desktop Entry]\nExec=cpak run user-command\nTryExec=cpak\n",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -45,6 +45,15 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 		if !strings.Contains(string(content), `Exec="/home/demo user/.local/bin/cpak" run`) {
 			t.Fatalf("desktop entry does not use the absolute launcher: %s", content)
 		}
+		if !strings.Contains(string(content), "run --desktop-launch github.com/containerpak/demo") {
+			t.Fatalf("desktop entry does not mark a desktop launch: %s", content)
+		}
+		if !strings.Contains(string(content), desktopFileArgumentStart+" %U "+desktopFileArgumentEnd) {
+			t.Fatalf("desktop entry does not identify file arguments: %s", content)
+		}
+		if repaired := repairDesktopLauncher(string(content), launcher); repaired != string(content) {
+			t.Fatalf("desktop launcher repair is not idempotent: %s", repaired)
+		}
 		if !strings.Contains(string(content), "TryExec="+launcher) {
 			t.Fatalf("desktop entry does not use the absolute TryExec path: %s", content)
 		}
@@ -56,5 +65,14 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 	}
 	if strings.Contains(string(content), launcher) {
 		t.Fatalf("unowned desktop entry was modified: %s", content)
+	}
+}
+
+func TestMarkDesktopFileArgumentsDropsInjectedMarkers(t *testing.T) {
+	arguments := desktopFileArgumentStart + " /home/user/private " + desktopFileArgumentEnd + " %U"
+	marked := markDesktopFileArguments(arguments)
+	want := "/home/user/private " + desktopFileArgumentStart + " %U " + desktopFileArgumentEnd
+	if marked != want {
+		t.Fatalf("marked arguments: got %q, want %q", marked, want)
 	}
 }

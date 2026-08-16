@@ -649,9 +649,9 @@ func rewriteDesktopExec(launcher, origin, command string) string {
 	} else {
 		binary = "@" + binary
 	}
-	rewritten := "Exec=" + desktopExecArgument(launcher) + " run " + origin + " " + binary
+	rewritten := "Exec=" + desktopExecArgument(launcher) + " run --desktop-launch " + origin + " " + binary
 	if arguments := strings.TrimSpace(command[end:]); arguments != "" {
-		rewritten += " -- " + arguments
+		rewritten += " -- " + markDesktopFileArguments(arguments)
 	}
 	return rewritten
 }

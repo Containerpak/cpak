@@ -11,7 +11,11 @@ import (
 	"strings"
 )
 
-const desktopLauncherMigration = "desktop-launcher-v1"
+const (
+	desktopLauncherMigration = "desktop-launcher-v3"
+	desktopFileArgumentStart = "@@cpak:file-grant:start@@"
+	desktopFileArgumentEnd   = "@@cpak:file-grant:end@@"
+)
 
 func desktopLauncherPath() (string, error) {
 	path, err := os.Executable()
@@ -115,8 +119,59 @@ func repairDesktopLauncher(content, launcher string) string {
 		case line == "TryExec=cpak":
 			lines[i] = "TryExec=" + launcher
 		}
+		prefix := "Exec=" + desktopExecArgument(launcher) + " run "
+		if strings.HasPrefix(lines[i], prefix) && !strings.HasPrefix(lines[i], prefix+"--desktop-launch ") {
+			lines[i] = prefix + "--desktop-launch " + strings.TrimPrefix(lines[i], prefix)
+		}
+		if strings.HasPrefix(lines[i], prefix+"--desktop-launch ") {
+			lines[i] = markDesktopFileArguments(lines[i])
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func markDesktopFileArguments(value string) string {
+	tokens := make([]string, 0, strings.Count(value, " ")+1)
+	start := 0
+	quoted := false
+	escaped := false
+	writeToken := func(token string) {
+		if token == "" {
+			return
+		}
+		field := token
+		if len(field) >= 2 && field[0] == '"' && field[len(field)-1] == '"' {
+			field = field[1 : len(field)-1]
+		}
+		switch {
+		case field == desktopFileArgumentStart, field == desktopFileArgumentEnd:
+			return
+		case field == "%f" || field == "%F" || field == "%u" || field == "%U":
+			tokens = append(tokens, desktopFileArgumentStart, token, desktopFileArgumentEnd)
+		default:
+			tokens = append(tokens, token)
+		}
+	}
+	for index := 0; index < len(value); index++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch value[index] {
+		case '\\':
+			escaped = true
+		case '"':
+			quoted = !quoted
+		case ' ', '\t':
+			if quoted {
+				continue
+			}
+			writeToken(value[start:index])
+			start = index + 1
+		}
+	}
+	writeToken(value[start:])
+	return strings.Join(tokens, " ")
 }
 
 func writeDesktopLauncher(path string, content []byte, mode os.FileMode) (err error) {
