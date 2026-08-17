@@ -79,6 +79,7 @@ type SpawnCmd struct {
 	UserNamespaces bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
 	AllowPtrace    bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
 	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
+	AllowRoot      bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
 	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
 
@@ -106,8 +107,7 @@ func (c *SpawnCmd) Run() error {
 		return fmt.Errorf("mount: an error occurred while spawning the namespace: %s", err)
 	}
 
-	layersAsList := parseLayers(c.Layers)
-	err = mountLayers(c.Rootfs, c.LayersDir, c.LowerDir, c.StateDir, layersAsList)
+	err = mountLayers(c.Rootfs, c.LowerDir, c.StateDir)
 	if err != nil {
 		return err
 	}
@@ -300,32 +300,16 @@ func (c *SpawnCmd) createCpakFile(appId string, rootFs string) error {
 	return nil
 }
 
-func parseLayers(layers string) []string {
-	layersAsList := []string{}
-	if layers != "" {
-		for _, layer := range strings.Split(layers, "|") {
-			if layer != "" {
-				layersAsList = append(layersAsList, layer)
-			}
-		}
+// mountLayers refuses to compose a root out of anything but the directories it
+// was handed. Rebuilding them here from a caller supplied directory would mount
+// whatever that argument points at.
+func mountLayers(rootFs, lowerDir, stateDir string) error {
+	if lowerDir == "" {
+		return fmt.Errorf("mount:layers: no prepared layer directories")
 	}
-	return layersAsList
-}
-
-func mountLayers(rootFs, layersDir, lowerDir, stateDir string, layersList []string) error {
-	if lowerDir == "" && len(layersList) == 0 {
-		return fmt.Errorf("mount:layers: no layers specified")
-	}
-
-	layersDirs := lowerDir
-	if layersDirs == "" {
-		layerDirs := layerDirectories(layersDir, layersList)
-		layersDirs = strings.Join(layerDirs, ":")
-	}
-
-	err := tools.MountOverlay(rootFs, layersDirs, filepath.Join(stateDir, "up"), filepath.Join(stateDir, "work"))
+	err := tools.MountOverlay(rootFs, lowerDir, filepath.Join(stateDir, "up"), filepath.Join(stateDir, "work"))
 	if err != nil {
-		return fmt.Errorf("mount:layers %s: an error occurred while spawning the namespace: %s", layersDirs, err)
+		return fmt.Errorf("mount:layers %s: an error occurred while spawning the namespace: %s", lowerDir, err)
 	}
 	return nil
 }
@@ -361,14 +345,6 @@ func prepareRootfsBindTarget(rootFs, target, source string) (string, bool, error
 	}
 	destination, err := prepareRootfsMountTarget(rootFs, target, source)
 	return destination, true, err
-}
-
-func layerDirectories(layersDir string, layers []string) []string {
-	directories := make([]string, 0, len(layers))
-	for i := len(layers) - 1; i >= 0; i-- {
-		directories = append(directories, filepath.Join(layersDir, layers[i]))
-	}
-	return directories
 }
 
 func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
@@ -660,7 +636,67 @@ func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.Fil
 	} else if err := tools.MountBindPrepared(source, destination); err != nil {
 		return sandbox.PathGrant{}, false, fmt.Errorf("mount filesystem %s: %w", source, err)
 	}
+	if err := c.maskCpakState(rootFs, target); err != nil {
+		return sandbox.PathGrant{}, false, err
+	}
 	return sandbox.PathGrant{Path: target, ReadOnly: permission.Access == "read-only"}, true, nil
+}
+
+// maskCpakState hides cpak's own state from a grant that happens to contain it.
+// The store, the policies, the exported launchers and the cpak binaries are not
+// application data: reaching them from inside one application means reaching
+// every other one, and the process that would have checked them.
+func (c *SpawnCmd) maskCpakState(rootFs, target string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	for _, directory := range []string{
+		filepath.Join(home, ".local", "share", "cpak"),
+		filepath.Join(home, ".config", "cpak"),
+		filepath.Join(home, ".local", "share", "applications"),
+	} {
+		if !pathWithin(target, directory) {
+			continue
+		}
+		destination, prepareErr := prepareRootfsDirectory(rootFs, directory)
+		if prepareErr != nil {
+			return fmt.Errorf("prepare masked directory %s: %w", directory, prepareErr)
+		}
+		c.spawnVerbose("(filesystem) Masking: ", directory)
+		if err := tools.MountTmpfsPrepared(destination); err != nil {
+			return fmt.Errorf("mask %s: %w", directory, err)
+		}
+	}
+	binaries, err := filepath.Glob(filepath.Join(home, ".local", "bin", "cpak*"))
+	if err != nil || len(binaries) == 0 {
+		return nil
+	}
+	empty := filepath.Join(c.StateDir, "masked")
+	if err := os.WriteFile(empty, nil, 0444); err != nil {
+		return fmt.Errorf("prepare mask source: %w", err)
+	}
+	for _, binary := range binaries {
+		if !pathWithin(target, binary) {
+			continue
+		}
+		destination, prepareErr := prepareRootfsFile(rootFs, binary)
+		if prepareErr != nil {
+			return fmt.Errorf("prepare masked file %s: %w", binary, prepareErr)
+		}
+		c.spawnVerbose("(filesystem) Masking: ", binary)
+		if err := tools.MountFileBindPrepared(empty, destination, true, true); err != nil {
+			return fmt.Errorf("mask %s: %w", binary, err)
+		}
+	}
+	return nil
+}
+
+func pathWithin(parent, candidate string) bool {
+	if parent == candidate {
+		return true
+	}
+	return strings.HasPrefix(candidate, strings.TrimSuffix(parent, string(os.PathSeparator))+string(os.PathSeparator))
 }
 
 func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) {
@@ -1184,7 +1220,10 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	command := exec.Command(cpakInContainerPath, args...)
 	command.Env = append(append([]string{}, baseEnv...), request.Env...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if !request.AsRoot {
+	// Whether a nested command may run as root is a property of the container,
+	// decided when it was created. Taking it from the request would let anyone
+	// who can reach the socket ask for it.
+	if !c.AllowRoot {
 		command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
 		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
 		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}

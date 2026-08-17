@@ -63,8 +63,11 @@ func (c *Cpak) prepareLayerMount(statePath string, layers []string) (string, str
 	}
 	if c.storageDriver == nil {
 		if _, _, serviceErr := findStorageDriverService(); errors.Is(serviceErr, errStorageServiceMissing) {
-			if _, legacyErr := c.legacyLayerDirectories(layers); legacyErr == nil {
-				return "", "", "", nil
+			// The directories have to travel to the caller: leaving them out
+			// made the spawn side rebuild the paths itself from an argument it
+			// was given, which nothing had checked.
+			if legacyDirs, legacyErr := c.legacyLayerDirectories(layers); legacyErr == nil {
+				return "", strings.Join(legacyDirs, ":"), "", nil
 			}
 			if _, legacyErr := findStorageService(); legacyErr == nil {
 				return c.prepareFVSMount(statePath, layers)

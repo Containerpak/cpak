@@ -39,14 +39,6 @@ func TestWriteNvidiaLoaderConfigurationUsesSoname(t *testing.T) {
 	}
 }
 
-func TestLayerDirectoriesUseOverlayPriority(t *testing.T) {
-	got := layerDirectories("/layers", []string{"base", "top", "runtime"})
-	want := []string{"/layers/runtime", "/layers/top", "/layers/base"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected overlay order: got %v, want %v", got, want)
-	}
-}
-
 func TestBaseSandboxGrantsLimitProcWritesToNestedSandboxes(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -278,5 +270,23 @@ func TestX11SocketPathsKeepsDisplaySockets(t *testing.T) {
 	want := []string{filepath.Join(directory, "X0"), filepath.Join(directory, "X12")}
 	if !reflect.DeepEqual(sockets, want) {
 		t.Fatalf("X11 sockets: got %v, want %v", sockets, want)
+	}
+}
+
+func TestPathWithinBoundsAGrant(t *testing.T) {
+	for _, test := range []struct {
+		parent    string
+		candidate string
+		want      bool
+	}{
+		{"/home/user", "/home/user/.config/cpak", true},
+		{"/home/user", "/home/user", true},
+		{"/home/user/", "/home/user/.local/bin/cpak", true},
+		{"/home/user", "/home/username/.config/cpak", false},
+		{"/home/user/.local/share/bottles", "/home/user/.config/cpak", false},
+	} {
+		if got := pathWithin(test.parent, test.candidate); got != test.want {
+			t.Fatalf("pathWithin(%q, %q) = %v, want %v", test.parent, test.candidate, got, test.want)
+		}
 	}
 }
