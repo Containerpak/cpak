@@ -276,7 +276,9 @@ func removeManagedBlock(path string) error {
 		}
 		return nil
 	}
-	if err := writeSystemFile(path, []byte(kept)); err != nil {
+	// The file is already in place, so it is rewritten where it stands rather
+	// than through the directory checks used when creating one.
+	if err := writeAtomic(path, []byte(kept), 0644); err != nil {
 		return fmt.Errorf("rewrite session environment: %w", err)
 	}
 	return nil
