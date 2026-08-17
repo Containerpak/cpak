@@ -11,6 +11,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -171,4 +174,53 @@ func TestBuildLocaleLayerExtractsOnlyHostLocale(t *testing.T) {
 func testDigest(content []byte) string {
 	hash := sha256.Sum256(content)
 	return "sha256:" + hex.EncodeToString(hash[:])
+}
+
+func TestInheritHostLocaleKeepsApplicationValuesWithoutHostLocale(t *testing.T) {
+	application := []string{"PATH=/usr/bin", "LANG=C.UTF-8"}
+	got := inheritHostLocale(application, []string{"PATH=/bin", "HOME=/root"})
+	if !slices.Equal(got, application) {
+		t.Fatalf("the environment changed while the host declared no locale: %v", got)
+	}
+}
+
+func TestHostLocaleWinsOverAManifestDeclaration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	app := types.Application{
+		Origin:         "github.com/containerpak/bottles",
+		Version:        "66.1",
+		ParsedOverride: types.Override{Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}},
+	}
+	if !hostLocaleWins(app) {
+		t.Fatal("a locale declared by the manifest was read as a deliberate user choice")
+	}
+	environment := append([]string{"PATH=/usr/bin"}, app.ParsedOverride.Env...)
+	joined := strings.Join(inheritHostLocale(environment, []string{"LANG=pt_BR.UTF-8"}), "\n")
+	if !strings.Contains(joined, "LANG=pt_BR.UTF-8") {
+		t.Fatalf("the host locale did not reach the application: %s", joined)
+	}
+	if strings.Contains(joined, "C.UTF-8") {
+		t.Fatalf("the manifest locale survived the host one: %s", joined)
+	}
+}
+
+func TestLocaleChosenByTheUserBeatsTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	app := types.Application{
+		Origin:         "github.com/containerpak/bottles",
+		Version:        "66.1",
+		ParsedOverride: types.Override{Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}},
+	}
+	directory := filepath.Join(home, ".config/cpak/overrides", "github.com", "containerpak", "bottles", app.Version)
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`{"env":["LANG=ja_JP.UTF-8","LC_ALL=ja_JP.UTF-8"]}`)
+	if err := os.WriteFile(filepath.Join(directory, "cpak.json"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if hostLocaleWins(app) {
+		t.Fatal("a locale set by the user was replaced by the host one")
+	}
 }

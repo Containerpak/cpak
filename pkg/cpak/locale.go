@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -299,6 +300,11 @@ func inheritHostLocale(environment, host []string) []string {
 			values[name] = value
 		}
 	}
+	// A host without a locale has nothing to inherit, and stripping the
+	// application values would leave the container with no locale at all.
+	if len(values) == 0 {
+		return environment
+	}
 	result := make([]string, 0, len(environment)+len(values))
 	for _, entry := range environment {
 		name, _, found := strings.Cut(entry, "=")
@@ -320,4 +326,27 @@ func inheritHostLocale(environment, host []string) []string {
 
 func localeEnvironmentVariable(name string) bool {
 	return name == "LANG" || name == "LANGUAGE" || name == "LC_ALL" || strings.HasPrefix(name, "LC_")
+}
+
+// hostLocaleWins reports whether the host locale may replace the one declared
+// by the application. A user override is seeded from the manifest and keeps its
+// values, so only a locale the user actually changed counts as deliberate.
+func hostLocaleWins(app types.Application) bool {
+	user, err := LoadOverride(app.Origin, app.Version)
+	if err != nil {
+		return true
+	}
+	return slices.Equal(localeAssignments(user.Env), localeAssignments(app.ParsedOverride.Env))
+}
+
+func localeAssignments(environment []string) []string {
+	assignments := []string{}
+	for _, entry := range environment {
+		name, _, found := strings.Cut(entry, "=")
+		if found && localeEnvironmentVariable(name) {
+			assignments = append(assignments, entry)
+		}
+	}
+	sort.Strings(assignments)
+	return assignments
 }

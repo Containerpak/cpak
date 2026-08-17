@@ -451,8 +451,10 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--extra-links", container.DesktopBusSocketPath+":"+guestBusPath)
 	}
 	containerEnv := append([]string{}, config.Config.Env...)
-	containerEnv = inheritHostLocale(containerEnv, os.Environ())
 	containerEnv = append(containerEnv, override.Env...)
+	if hostLocaleWins(app) {
+		containerEnv = inheritHostLocale(containerEnv, os.Environ())
+	}
 	containerEnv = inheritHostTimezone(containerEnv)
 	containerEnv = inheritHostCursor(containerEnv)
 	if override.OpenURI {
@@ -745,8 +747,10 @@ func containerEnvironment(app types.Application, container types.Container) ([]s
 	override := resolvedOverride(app)
 	envVars := append([]string{}, os.Environ()...)
 	envVars = append(envVars, config.Config.Env...)
-	envVars = inheritHostLocale(envVars, os.Environ())
 	envVars = append(envVars, override.Env...)
+	if hostLocaleWins(app) {
+		envVars = inheritHostLocale(envVars, os.Environ())
+	}
 	envVars = inheritHostCursor(envVars)
 	if override.SocketAtSpiBus && len(atSpiSocketPaths(fmt.Sprintf("%d", os.Getuid()))) == 0 {
 		envVars = setEnvironmentValue(envVars, "NO_AT_BRIDGE", "1")

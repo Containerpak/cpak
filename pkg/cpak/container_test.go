@@ -588,3 +588,24 @@ func slicesContain(entries []string, want string) bool {
 	}
 	return false
 }
+
+func TestContainerEnvironmentAppliesTheHostLocaleOverTheManifest(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LANG", "pt_BR.UTF-8")
+	app := types.Application{
+		Origin:         "github.com/containerpak/bottles",
+		Version:        "66.1",
+		Config:         `{"config":{"Env":["PATH=/usr/bin"]}}`,
+		ParsedOverride: types.Override{Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}},
+	}
+	environment, err := containerEnvironment(app, types.Container{CpakId: "container-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slicesContain(environment, "LANG=pt_BR.UTF-8") {
+		t.Fatalf("the host locale did not reach the application: %v", environment)
+	}
+	if slicesContain(environment, "LANG=C.UTF-8") || slicesContain(environment, "LC_ALL=C.UTF-8") {
+		t.Fatalf("the locale pinned by the manifest survived: %v", environment)
+	}
+}
