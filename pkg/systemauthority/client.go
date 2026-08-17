@@ -12,6 +12,10 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
+// ErrNoAuthority reports that no transport could carry the request, which lets
+// the caller escalate the single privileged step instead of failing.
+var ErrNoAuthority = errors.New("no system authority is reachable")
+
 func Register(session Session) error {
 	if err := session.Validate(); err != nil {
 		return err
@@ -50,7 +54,7 @@ func dispatch(message socketRequest) error {
 	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
 		return err
 	}
-	return errors.New("no system authority is reachable: start cpak system-authority, or run this command as root")
+	return ErrNoAuthority
 }
 
 func applyLocally(message socketRequest) error {

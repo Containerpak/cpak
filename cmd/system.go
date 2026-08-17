@@ -7,7 +7,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
@@ -15,7 +14,12 @@ import (
 )
 
 type SystemCmd struct {
-	Action string `arg:"action" help:"Action: setup, remove or status"`
+	Action      string `arg:"action" help:"Action: setup, remove, status, register-session or remove-session"`
+	ID          string `cli:"id" help:"Session identifier for the session actions"`
+	Origin      string `cli:"origin" help:"Package origin for the session actions"`
+	Name        string `cli:"name" help:"Session name for register-session"`
+	Description string `cli:"description" help:"Session description for register-session"`
+	Kind        string `cli:"kind" help:"Session kind for register-session"`
 
 	cli.Base
 }
@@ -41,25 +45,33 @@ func (c *SystemCmd) Run() error {
 			return err
 		}
 		return systemauthority.Uninstall()
+	case "register-session", "remove-session":
+		// These carry a step already validated against the store of the user
+		// who asked for it, so they only ever run through the escalation.
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("%s requires root", action)
+		}
+		if action == "register-session" {
+			return systemauthority.Register(systemauthority.Session{
+				ID:          c.ID,
+				Origin:      c.Origin,
+				Name:        c.Name,
+				Description: c.Description,
+				Kind:        c.Kind,
+			})
+		}
+		registered, err := systemauthority.DefaultRegistry().Load(c.ID)
+		if err != nil {
+			return err
+		}
+		return systemauthority.Remove(registered.ID, registered.Origin)
 	default:
 		return fmt.Errorf("unsupported system action %q", c.Action)
 	}
 }
 
 func runSystemSetup(action string) error {
-	executable, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve cpak executable: %w", err)
-	}
-	path, err := exec.LookPath("pkexec")
-	if err != nil {
-		return fmt.Errorf("Polkit authentication is unavailable: %w", err)
-	}
-	command := exec.Command(path, executable, "system", action)
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	if err := command.Run(); err != nil {
+	if err := runPrivileged("system", action); err != nil {
 		return fmt.Errorf("system integration %s failed: %w", action, err)
 	}
 	return nil

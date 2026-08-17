@@ -29,7 +29,7 @@ const (
 	requestLimit      = 8 << 10
 )
 
-var errTransportUnavailable = errors.New("system authority is not reachable")
+var errTransportUnavailable = errors.New("system authority transport is unavailable")
 
 type socketRequest struct {
 	Action      string `json:"action"`

@@ -5,10 +5,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
@@ -49,6 +51,9 @@ func (c *SessionCmd) Run() error {
 		tools.ShowTable([]string{"ID", "Name", "Kind"}, rows)
 		return nil
 	case "enable":
+		if err := refuseSudoedStore(); err != nil {
+			return err
+		}
 		if c.Origin == "" || c.Session == "" {
 			return fmt.Errorf("package origin and session identifier are required for enable")
 		}
@@ -77,7 +82,17 @@ func (c *SessionCmd) Run() error {
 			return nil
 		}
 		if err := cp.EnableSession(origin, c.Session); err != nil {
-			return err
+			if !errors.Is(err, systemauthority.ErrNoAuthority) {
+				return err
+			}
+			if err := runPrivileged("system", "register-session",
+				"--id", selected.ID,
+				"--origin", origin,
+				"--name", selected.Name,
+				"--description", selected.Description,
+				"--kind", selected.Kind); err != nil {
+				return err
+			}
 		}
 		c.Logger.Success("Session %s enabled", c.Session)
 		return nil
@@ -93,7 +108,12 @@ func (c *SessionCmd) Run() error {
 			return nil
 		}
 		if err := cp.DisableSession(id); err != nil {
-			return err
+			if !errors.Is(err, systemauthority.ErrNoAuthority) {
+				return err
+			}
+			if err := runPrivileged("system", "remove-session", "--id", id); err != nil {
+				return err
+			}
 		}
 		c.Logger.Success("Session %s disabled", id)
 		return nil
