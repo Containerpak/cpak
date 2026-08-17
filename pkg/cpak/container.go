@@ -388,6 +388,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", c.GetInStoreDir("layers"))
+	if override.AsRoot {
+		cmds = append(cmds, "--allow-root")
+	}
 	cmds = append(cmds, "--lower-dir", container.FVSLayerMountPath)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)

@@ -743,7 +743,13 @@ func (c *Cpak) exportBinary(app types.Application, binary string) error {
 		return err
 	}
 
-	scriptContent := fmt.Sprintf("#!/bin/sh\ncpak run %s @%s -- \"$@\"\n", app.Origin, binary)
+	// A bare name here is resolved through PATH, which any writer of the home
+	// can rearrange. The launcher is named outright.
+	launcher, err := getCpakBinary()
+	if err != nil {
+		return err
+	}
+	scriptContent := fmt.Sprintf("#!/bin/sh\nexec %s run %s @%s -- \"$@\"\n", launcher, app.Origin, binary)
 	err = os.WriteFile(destinationPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return err
