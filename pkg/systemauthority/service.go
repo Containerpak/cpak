@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 
 type Service struct {
 	Registry   Registry
+	Anchors    AnchorLedger
 	Authorizer Authorizer
 }
 
@@ -62,6 +65,57 @@ func (s *Service) RemoveSession(sender dbus.Sender, id, origin string) *dbus.Err
 		return denied(err)
 	}
 	if err := s.Registry.Remove(id, origin); err != nil {
+		return failed(err)
+	}
+	return nil
+}
+
+// EnrollAnchor takes the anchor apart on the wire because the bus carries plain
+// values, and puts it back together here so the ledger sees the same record a
+// local enrolment would hand it.
+func (s *Service) EnrollAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, packageRoot, policyRoot, launchRoot string) *dbus.Error {
+	anchor := integrity.Anchor{
+		ABI:         int(abi),
+		UID:         uid,
+		Origin:      origin,
+		Generation:  generation,
+		PackageRoot: packageRoot,
+		PolicyRoot:  policyRoot,
+		LaunchRoot:  launchRoot,
+	}
+	if err := validateAnchor(anchor); err != nil {
+		return invalidRequest(err)
+	}
+	if s.Authorizer == nil {
+		return denied(errors.New("authorization service is unavailable"))
+	}
+	if err := s.Authorizer.Authorize(sender, ActionEnrollAnchor, map[string]string{
+		"package-origin": anchor.Origin,
+		"target-uid":     strconv.FormatUint(uint64(anchor.UID), 10),
+		"generation":     strconv.FormatUint(anchor.Generation, 10),
+	}); err != nil {
+		return denied(err)
+	}
+	if err := s.Anchors.Store(anchor); err != nil {
+		return failed(err)
+	}
+	return nil
+}
+
+func (s *Service) ForgetAnchor(sender dbus.Sender, uid uint32, origin string) *dbus.Error {
+	if err := validateOrigin(origin); err != nil {
+		return invalidRequest(err)
+	}
+	if s.Authorizer == nil {
+		return denied(errors.New("authorization service is unavailable"))
+	}
+	if err := s.Authorizer.Authorize(sender, ActionForgetAnchor, map[string]string{
+		"package-origin": origin,
+		"target-uid":     strconv.FormatUint(uint64(uid), 10),
+	}); err != nil {
+		return denied(err)
+	}
+	if err := s.Anchors.Forget(uid, origin); err != nil {
 		return failed(err)
 	}
 	return nil
@@ -110,6 +164,7 @@ func serveBus(ctx context.Context) error {
 	defer connection.Close()
 	service := &Service{
 		Registry:   DefaultRegistry(),
+		Anchors:    DefaultAnchorLedger(),
 		Authorizer: PolkitAuthorizer{Connection: connection},
 	}
 	if err := connection.Export(service, ObjectPath, InterfaceName); err != nil {

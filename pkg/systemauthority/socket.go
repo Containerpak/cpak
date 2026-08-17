@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,12 +33,14 @@ const (
 var errTransportUnavailable = errors.New("system authority transport is unavailable")
 
 type socketRequest struct {
-	Action      string `json:"action"`
-	ID          string `json:"id"`
-	Origin      string `json:"origin"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Kind        string `json:"kind,omitempty"`
+	Action      string            `json:"action"`
+	ID          string            `json:"id"`
+	Origin      string            `json:"origin"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	UID         uint32            `json:"uid,omitempty"`
+	Anchor      *integrity.Anchor `json:"anchor,omitempty"`
 }
 
 type socketResponse struct {
@@ -46,11 +49,16 @@ type socketResponse struct {
 
 type socketService struct {
 	Registry  Registry
+	Anchors   AnchorLedger
 	Authorize func(*unix.Ucred) error
 }
 
 func ServeSocket(ctx context.Context, path string) error {
-	service := socketService{Registry: DefaultRegistry(), Authorize: authorizePeerCredentials}
+	service := socketService{
+		Registry:  DefaultRegistry(),
+		Anchors:   DefaultAnchorLedger(),
+		Authorize: authorizePeerCredentials,
+	}
 	return service.serve(ctx, path)
 }
 
@@ -148,6 +156,8 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 			return err
 		}
 		return s.Registry.Remove(message.ID, message.Origin)
+	case anchorEnrollAction, anchorForgetAction:
+		return applyAnchor(s.Anchors, message)
 	default:
 		return errors.New("unsupported system authority action")
 	}
@@ -161,7 +171,7 @@ func authorizePeerCredentials(credentials *unix.Ucred) error {
 		return errors.New("system authority could not identify the caller")
 	}
 	if credentials.Uid != 0 {
-		return errors.New("changing login sessions over the authority socket requires root")
+		return errors.New("changing what the system authority records over its socket requires root")
 	}
 	return nil
 }

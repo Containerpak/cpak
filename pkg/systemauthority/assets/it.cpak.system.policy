@@ -24,4 +24,24 @@
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
   </action>
+
+  <action id="it.cpak.system.enroll-anchor">
+    <description>Enroll a cpak application in the integrity ledger</description>
+    <message>Authentication is required to enroll this cpak application in the integrity ledger</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="it.cpak.system.forget-anchor">
+    <description>Remove a cpak application from the integrity ledger</description>
+    <message>Authentication is required to remove this cpak application from the integrity ledger</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
 </policyconfig>

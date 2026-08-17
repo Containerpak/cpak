@@ -372,11 +372,16 @@ func SaveOverride(override types.Override, name, version string) (err error) {
 		return
 	}
 
-	file, err := os.Create(filepath.Join(overridePath, "cpak.json"))
+	// The mode is set outright rather than left to the umask, because the load
+	// path refuses a file other users can write and the two have to agree.
+	file, err := os.OpenFile(filepath.Join(overridePath, "cpak.json"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return
 	}
 	defer file.Close()
+	if err = file.Chmod(0600); err != nil {
+		return
+	}
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
