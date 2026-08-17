@@ -5,7 +5,9 @@
 package systemauthority
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -14,24 +16,14 @@ func Register(session Session) error {
 	if err := session.Validate(); err != nil {
 		return err
 	}
-	connection, err := dbus.ConnectSystemBus()
-	if err != nil {
-		return fmt.Errorf("connect system bus: %w", err)
-	}
-	defer connection.Close()
-	call := connection.Object(BusName, ObjectPath).Call(
-		InterfaceName+".RegisterSession",
-		0,
-		session.ID,
-		session.Origin,
-		session.Name,
-		session.Description,
-		session.Kind,
-	)
-	if call.Err != nil {
-		return fmt.Errorf("register login session: %w", call.Err)
-	}
-	return nil
+	return dispatch(socketRequest{
+		Action:      "register",
+		ID:          session.ID,
+		Origin:      session.Origin,
+		Name:        session.Name,
+		Description: session.Description,
+		Kind:        session.Kind,
+	})
 }
 
 func Remove(id, origin string) error {
@@ -41,14 +33,86 @@ func Remove(id, origin string) error {
 	if err := validateOrigin(origin); err != nil {
 		return err
 	}
+	return dispatch(socketRequest{Action: "remove", ID: id, Origin: origin})
+}
+
+// dispatch walks the transports in order of how much they demand from the host.
+// Root already holds the privilege the authority exists to lend, so it changes
+// the registry itself and needs neither a bus nor a running daemon. A transport
+// that answered is final: a denial is never retried on another one.
+func dispatch(message socketRequest) error {
+	if os.Geteuid() == 0 {
+		return applyLocally(message)
+	}
+	if err := requestOverBus(message); !errors.Is(err, errTransportUnavailable) {
+		return err
+	}
+	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
+		return err
+	}
+	return errors.New("no system authority is reachable: start cpak system-authority, or run this command as root")
+}
+
+func applyLocally(message socketRequest) error {
+	registry := DefaultRegistry()
+	switch message.Action {
+	case "register":
+		return registry.Register(Session{
+			ID:          message.ID,
+			Origin:      message.Origin,
+			Name:        message.Name,
+			Description: message.Description,
+			Kind:        message.Kind,
+		})
+	case "remove":
+		return registry.Remove(message.ID, message.Origin)
+	default:
+		return errors.New("unsupported system authority action")
+	}
+}
+
+func requestOverBus(message socketRequest) error {
 	connection, err := dbus.ConnectSystemBus()
 	if err != nil {
-		return fmt.Errorf("connect system bus: %w", err)
+		return errTransportUnavailable
 	}
 	defer connection.Close()
-	call := connection.Object(BusName, ObjectPath).Call(InterfaceName+".RemoveSession", 0, id, origin)
-	if call.Err != nil {
-		return fmt.Errorf("remove login session: %w", call.Err)
+	object := connection.Object(BusName, ObjectPath)
+	var call *dbus.Call
+	switch message.Action {
+	case "register":
+		call = object.Call(InterfaceName+".RegisterSession", 0,
+			message.ID, message.Origin, message.Name, message.Description, message.Kind)
+	case "remove":
+		call = object.Call(InterfaceName+".RemoveSession", 0, message.ID, message.Origin)
+	default:
+		return errors.New("unsupported system authority action")
 	}
-	return nil
+	if call.Err == nil {
+		return nil
+	}
+	// A bus that cannot produce the authority is a transport that failed, not a
+	// refusal, so the caller is free to try the socket.
+	if unreachableOnBus(call.Err) {
+		return errTransportUnavailable
+	}
+	if message.Action == "register" {
+		return fmt.Errorf("register login session: %w", call.Err)
+	}
+	return fmt.Errorf("remove login session: %w", call.Err)
+}
+
+func unreachableOnBus(err error) bool {
+	var busErr dbus.Error
+	if !errors.As(err, &busErr) {
+		return false
+	}
+	switch busErr.Name {
+	case "org.freedesktop.DBus.Error.ServiceUnknown",
+		"org.freedesktop.DBus.Error.NameHasNoOwner",
+		"org.freedesktop.DBus.Error.Spawn.ExecFailed",
+		"org.freedesktop.DBus.Error.NoReply":
+		return true
+	}
+	return false
 }

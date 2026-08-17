@@ -13,6 +13,8 @@ import (
 )
 
 type SystemAuthorityCmd struct {
+	Socket string `cli:"socket" help:"path of the authority socket"`
+
 	cli.Base
 }
 
@@ -22,5 +24,5 @@ func (c *SystemAuthorityCmd) Run() error {
 	}
 	ctx, stop := signalContext()
 	defer stop()
-	return systemauthority.Serve(ctx)
+	return systemauthority.Serve(ctx, c.Socket)
 }
