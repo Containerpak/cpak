@@ -45,9 +45,6 @@ func NewCpak() (cpak Cpak, err error) {
 	}
 
 	cpak.Ctx = context.Background()
-	if err = cpak.RecoverUpdateTransactions(); err != nil {
-		return cpak, err
-	}
 	if migrationErr := cpak.migrateDesktopLaunchers(); migrationErr != nil {
 		logger.Printf("Warning: could not update desktop launchers: %v", migrationErr)
 	}

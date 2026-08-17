@@ -111,6 +111,11 @@ func (c *Cpak) UpdateWithOptions(origin string, options UpdateOptions) (results 
 }
 
 func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateOptions) (results []types.UpdateResult, err error) {
+	// An interrupted update is finished here, where an update is what the
+	// caller asked for, instead of on every invocation of every command.
+	if err = c.RecoverUpdateTransactions(); err != nil {
+		return nil, err
+	}
 	apps, err := c.GetInstalledApps()
 	if err != nil {
 		return nil, err
