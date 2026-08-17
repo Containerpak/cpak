@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/logger"
@@ -33,6 +34,7 @@ var (
 	errLaunchUnenrolled   = errors.New("the application is not enrolled for verified launch")
 	errLaunchUnbound      = errors.New("a layer of the application is not bound to a store state")
 	errLaunchUnrecognised = errors.New("the application does not match the integrity anchor it was enrolled with")
+	errLaunchTampered     = errors.New("the store no longer holds what it recorded for a layer of the application")
 )
 
 // LaunchVerdict is what comparing a launch against the ledger concluded. The
@@ -54,6 +56,13 @@ const (
 
 	LaunchRecognised
 	LaunchUnrecognised
+
+	// LaunchTampered means the store and what the store recorded about itself
+	// do not agree. It is deliberately not LaunchUnrecognised: that one says
+	// the launch is not the one an anchor names, this one says the store
+	// contradicts itself, and the second is true whether or not anything was
+	// ever enrolled.
+	LaunchTampered
 )
 
 func (v LaunchVerdict) String() string {
@@ -68,6 +77,8 @@ func (v LaunchVerdict) String() string {
 		return "recognised"
 	case LaunchUnrecognised:
 		return "not recognised"
+	case LaunchTampered:
+		return "store contents changed"
 	}
 	return "not verified"
 }
@@ -87,12 +98,26 @@ type LaunchIdentity struct {
 	// Reason carries what stopped the ledger from answering, and is set only
 	// for LaunchUnverifiable.
 	Reason error
+
+	// Disagreements names what the store no longer holds as it recorded it,
+	// one line per layer, and is set only for LaunchTampered.
+	Disagreements []string
+
+	// Unmeasured names the layers this launch could not re-derive from the
+	// store at all. It is filled whatever the verdict, so that a launch
+	// nothing contradicted is never mistaken for a launch that was checked.
+	Unmeasured []string
 }
 
 // verifyLaunch derives what this launch is and compares it with the anchor
 // recorded for the account asking for it. A ledger that cannot answer is a
 // verdict and not a failure, because the caller needs the same decision it
 // needs for an application nobody enrolled.
+//
+// The derivation is done twice on purpose. The roots are built out of what the
+// store recorded, because that is what an anchor was taken over. The
+// measurement rebuilds the same values from the store as it stands, because a
+// record read back proves only that a record exists.
 func (c *Cpak) verifyLaunch(app types.Application, override types.Override, components, addons []types.Application) (LaunchIdentity, error) {
 	identity := LaunchIdentity{UID: uint32(os.Getuid()), Origin: app.Origin}
 
@@ -111,6 +136,22 @@ func (c *Cpak) verifyLaunch(app types.Application, override types.Override, comp
 		identity.LaunchRoot = integrity.LaunchRoot(packageRoot, policyRoot)
 	}
 
+	measurement, err := c.measureLaunch(composedLayers(app, components, addons))
+	if err != nil {
+		return identity, err
+	}
+	identity.Unmeasured = findingReasons(measurement.Unmeasured)
+
+	// A store that contradicts itself is not a question for the ledger, so it
+	// is answered before the ledger is asked. Being unenrolled means nobody
+	// said what the launch should be; it does not mean the store may disagree
+	// with what it wrote down about itself.
+	if len(measurement.Disagreements) > 0 {
+		identity.Verdict = LaunchTampered
+		identity.Disagreements = findingReasons(measurement.Disagreements)
+		return identity, nil
+	}
+
 	anchor, enrolled, err := launchAnchors.Load(identity.UID, app.Origin)
 	if err != nil {
 		identity.Verdict = LaunchUnverifiable
@@ -124,7 +165,7 @@ func (c *Cpak) verifyLaunch(app types.Application, override types.Override, comp
 	switch {
 	case !enrolled:
 		identity.Verdict = LaunchUnenrolled
-	case unbound:
+	case unbound || len(measurement.Unrecorded) > 0:
 		identity.Verdict = LaunchUnbound
 	case identity.LaunchRoot == anchor.LaunchRoot:
 		identity.Verdict = LaunchRecognised
@@ -142,9 +183,17 @@ func (c *Cpak) gateLaunch(app types.Application, override types.Override, compon
 	if err != nil {
 		return identity, err
 	}
+	if isVerbose && len(identity.Unmeasured) > 0 {
+		logger.Printf("The launch of %s holds layers the store cannot re-derive: %s", app.Origin, strings.Join(identity.Unmeasured, "; "))
+	}
 	switch identity.Verdict {
 	case LaunchRecognised:
 		return identity, nil
+	case LaunchTampered:
+		// This one is not behind the unenrolled switch: nothing has to have
+		// claimed what the launch should be for the store to be wrong about
+		// what it holds.
+		return identity, fmt.Errorf("%w: %s: %s", errLaunchTampered, app.Origin, strings.Join(identity.Disagreements, "; "))
 	case LaunchUnenrolled, LaunchUnverifiable:
 		if refuseUnenrolledLaunch {
 			return identity, fmt.Errorf("%w: %s is %s", errLaunchUnenrolled, app.Origin, identity.Verdict)

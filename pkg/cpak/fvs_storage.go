@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	dabadee "github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"golang.org/x/sys/unix"
@@ -273,6 +274,15 @@ func (c *Cpak) migrateLegacyLayer(digest, legacy string, progress func(int64)) e
 	}
 	if err := publishFVSLayer(temporary, c.fvsLayerPath(digest)); err != nil {
 		return err
+	}
+	// A migration reads bytes that were already on this machine, so the binding
+	// it records is trust on first use and not a measurement of what the
+	// registry served. It is recorded anyway, because the alternative is a
+	// layer no launch can describe. A binding that cannot be written leaves the
+	// layer unbound instead of failing a migration that already succeeded, and
+	// an unbound layer is what the launch gate refuses.
+	if err := c.recordLayerBinding(digest); err != nil {
+		logger.Printf("Warning: the migrated layer %s was not bound: %v", digest, err)
 	}
 	return c.removeLegacyLayer(legacy)
 }

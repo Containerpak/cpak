@@ -60,6 +60,12 @@ func (c *Cpak) preparedLayerDirectories(layers []string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errStoragePreparationRequired, err)
 	}
+	// The index is a user writable map of layer to directory and the
+	// directories it names are user writable too, so what it resolved to is
+	// measured before it is handed out to be mounted.
+	if err := c.recordPreparedCheckouts(layers, paths); err != nil {
+		return nil, err
+	}
 	return paths, nil
 }
 
@@ -98,7 +104,14 @@ func (c *Cpak) prepareStorageDriver(layers []string) ([]string, error) {
 	if err := storageindex.Write(c.storageDriverIndex(name), index); err != nil {
 		return nil, err
 	}
-	return index.Resolve(c.storageDriverRoot(name), layers)
+	paths, err := index.Resolve(c.storageDriverRoot(name), layers)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.recordPreparedCheckouts(layers, paths); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func (c *Cpak) withStorageDriver(name string, run func(storage.Handler) error) error {

@@ -7,6 +7,8 @@ package cpak
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
@@ -148,11 +151,20 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		}
 		return
 	}
+	pulled := layers
 	layers, err = c.BuildRuntimeLayers(layers, manifest.RuntimeSources)
 	if err != nil {
 		return
 	}
 	layers, err = c.BuildLocaleLayer(layers, manifest.Image, config, manifest.Override)
+	if err != nil {
+		return
+	}
+	if err = c.bindBuiltLayers(pulled, layers); err != nil {
+		return
+	}
+
+	manifestDigest, err := manifestIdentityDigest(manifest)
 	if err != nil {
 		return
 	}
@@ -177,6 +189,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		Config:               config,
 		Image:                image,
 		ImageDigest:          imageDigest,
+		ManifestDigest:       manifestDigest,
 		ParsedOverride:       manifest.Override,
 	}
 	if err = c.PrepareApplicationStorage(app); err != nil {
@@ -196,6 +209,23 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 	}
 
 	return nil
+}
+
+// manifestIdentityDigest names the manifest an installation was made from, as
+// it stands once cpak has validated and migrated it, which is the manifest that
+// was applied and not the one that was published. The decoded manifest is
+// hashed rather than the bytes that were fetched, because an installation
+// resolved from a lock never sees those bytes and both paths must name the same
+// manifest.
+func manifestIdentityDigest(manifest *types.CpakManifest) (string, error) {
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return "", fmt.Errorf("encode the manifest of %s: %w", manifest.Name, err)
+	}
+	hash := sha256.New()
+	fmt.Fprintf(hash, "cpak.manifest.v%d\n", integrity.ABIVersion)
+	hash.Write(encoded)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // installDependencies installs the dependencies declared in the given manifest
