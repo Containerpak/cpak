@@ -19,9 +19,7 @@ import (
 
 const (
 	DefaultRegistryDirectory = "/var/lib/cpak/sessions"
-	DefaultSessionDirectory  = "/usr/local/share/wayland-sessions"
 	DefaultSystemSessions    = "/usr/share/wayland-sessions"
-	DefaultLauncherPath      = "/usr/local/bin/cpak"
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
@@ -94,13 +92,8 @@ type Registry struct {
 }
 
 func DefaultRegistry() Registry {
-	return Registry{
-		RegistryDirectory: DefaultRegistryDirectory,
-		SessionDirectory:  DefaultSessionDirectory,
-		SystemSessions:    DefaultSystemSessions,
-		LauncherPath:      DefaultLauncherPath,
-		OwnerUID:          0,
-	}
+	installed, _ := installedLayout()
+	return installed.registry()
 }
 
 func (r Registry) Register(session Session) error {

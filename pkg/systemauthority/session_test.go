@@ -161,12 +161,17 @@ func TestRegistryPurgeRemovesOnlyRegisteredSessions(t *testing.T) {
 }
 
 func TestDisplayManagerConfigsIncludeLocalSessionDirectory(t *testing.T) {
-	for name, config := range map[string][]byte{"SDDM": sddmConfig, "LightDM": lightdmConfig} {
-		if !strings.Contains(string(config), DefaultSessionDirectory) {
-			t.Fatalf("%s config does not include %s", name, DefaultSessionDirectory)
-		}
+	target := layoutFor(standardPrefix)
+	configs := map[string][]byte{
+		"SDDM":    renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions)),
+		"LightDM": renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions)),
 	}
-	if !strings.Contains(string(lightdmConfig), DefaultSystemSessions) {
-		t.Fatalf("LightDM config does not preserve %s", DefaultSystemSessions)
+	for name, config := range configs {
+		if !strings.Contains(string(config), target.sessions) {
+			t.Fatalf("%s config does not include %s", name, target.sessions)
+		}
+		if !strings.Contains(string(config), DefaultSystemSessions) {
+			t.Fatalf("%s config does not preserve %s", name, DefaultSystemSessions)
+		}
 	}
 }

@@ -1,4 +1,4 @@
 [D-BUS Service]
 Name=it.cpak.SystemAuthority1
-Exec=/usr/local/bin/cpak system-authority
+Exec=@BINARY@ system-authority
 User=root

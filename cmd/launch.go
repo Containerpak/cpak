@@ -33,7 +33,7 @@ func (c *LaunchCmd) Run() error {
 	}
 	grants := c.landlockGrants()
 	if len(grants) == 0 {
-		return fmt.Errorf("landlock grants are required")
+		return fmt.Errorf("landlock grants are required: launch runs a command inside an existing sandbox, use cpak run to start a package")
 	}
 	if _, err := sandbox.ApplyLandlock(grants); err != nil {
 		if errors.Is(err, sandbox.ErrUnavailable) && !c.RequireSandbox {

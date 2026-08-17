@@ -11,16 +11,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
+	"strings"
 )
 
 const (
-	systemBinaryPath  = "/usr/local/bin/cpak"
-	serviceFilePath   = "/usr/local/share/dbus-1/system-services/it.cpak.SystemAuthority1.service"
-	busPolicyPath     = "/etc/dbus-1/system.d/it.cpak.SystemAuthority1.conf"
-	polkitPolicyPath  = "/usr/local/share/polkit-1/actions/it.cpak.system.policy"
 	sddmConfigPath    = "/etc/sddm.conf.d/90-cpak-sessions.conf"
 	lightdmConfigPath = "/etc/lightdm/lightdm.conf.d/90-cpak-sessions.conf"
+)
+
+var (
+	sddmSessions    = []string{filepath.Join(standardPrefix, "share", "wayland-sessions"), DefaultSystemSessions}
+	lightdmSessions = []string{"/usr/share/lightdm/sessions", "/usr/share/xsessions", DefaultSystemSessions}
 )
 
 //go:embed assets/it.cpak.SystemAuthority1.service
@@ -42,7 +43,11 @@ func Install() error {
 	if os.Geteuid() != 0 {
 		return errors.New("system integration installation requires root")
 	}
-	if err := installExecutable(systemBinaryPath); err != nil {
+	target, err := writableLayout()
+	if err != nil {
+		return err
+	}
+	if err := installExecutable(target.binary); err != nil {
 		return err
 	}
 	for _, file := range []struct {
@@ -50,9 +55,9 @@ func Install() error {
 		data []byte
 		mode os.FileMode
 	}{
-		{serviceFilePath, serviceFile, 0644},
-		{busPolicyPath, busPolicy, 0644},
-		{polkitPolicyPath, polkitPolicy, 0644},
+		{target.service, renderAsset(serviceFile, "@BINARY@", target.binary), 0644},
+		{busPolicyPath, renderAsset(busPolicy, "@SERVICEDIR@", servicedirElement(target)), 0644},
+		{target.polkit, polkitPolicy, 0644},
 	} {
 		if err := ensureDirectory(filepath.Dir(file.path), 0); err != nil {
 			return fmt.Errorf("create system integration directory: %w", err)
@@ -61,14 +66,15 @@ func Install() error {
 			return fmt.Errorf("write system integration file: %w", err)
 		}
 	}
-	if err := DefaultRegistry().Prepare(); err != nil {
+	if err := target.registry().Prepare(); err != nil {
 		return fmt.Errorf("prepare login session directory: %w", err)
 	}
 	if displayManagerExists("/usr/bin/sddm", "/usr/local/bin/sddm") {
 		if err := ensureDirectory(filepath.Dir(sddmConfigPath), 0); err != nil {
 			return fmt.Errorf("create SDDM configuration directory: %w", err)
 		}
-		if err := writeAtomic(sddmConfigPath, sddmConfig, 0644); err != nil {
+		config := renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions))
+		if err := writeAtomic(sddmConfigPath, config, 0644); err != nil {
 			return fmt.Errorf("write SDDM session configuration: %w", err)
 		}
 	}
@@ -76,7 +82,8 @@ func Install() error {
 		if err := ensureDirectory(filepath.Dir(lightdmConfigPath), 0); err != nil {
 			return fmt.Errorf("create LightDM configuration directory: %w", err)
 		}
-		if err := writeAtomic(lightdmConfigPath, lightdmConfig, 0644); err != nil {
+		config := renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions))
+		if err := writeAtomic(lightdmConfigPath, config, 0644); err != nil {
 			return fmt.Errorf("write LightDM session configuration: %w", err)
 		}
 	}
@@ -87,10 +94,21 @@ func Uninstall() error {
 	if os.Geteuid() != 0 {
 		return errors.New("system integration removal requires root")
 	}
-	if err := DefaultRegistry().Purge(); err != nil {
+	installed, _ := installedLayout()
+	if err := installed.registry().Purge(); err != nil {
 		return fmt.Errorf("remove registered login sessions: %w", err)
 	}
-	for _, path := range []string{serviceFilePath, busPolicyPath, polkitPolicyPath, sddmConfigPath, lightdmConfigPath, systemBinaryPath} {
+	paths := []string{busPolicyPath, sddmConfigPath, lightdmConfigPath}
+	for _, prefix := range installPrefixes {
+		candidate := layoutFor(prefix)
+		paths = append(paths, candidate.service, candidate.polkit, candidate.binary)
+	}
+	for _, path := range paths {
+		// A read-only prefix answers EROFS even for a missing file, so the
+		// candidates that were never used must be skipped before unlinking.
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
+			continue
+		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove system integration file: %w", err)
 		}
@@ -108,17 +126,28 @@ func displayManagerExists(paths ...string) bool {
 }
 
 func Installed() bool {
-	for _, path := range []string{systemBinaryPath, serviceFilePath, busPolicyPath, polkitPolicyPath} {
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
-			return false
-		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != 0 {
+	target, ok := installedLayout()
+	if !ok {
+		return false
+	}
+	for _, path := range []string{target.binary, target.service, busPolicyPath, target.polkit} {
+		if !trustedFile(path) {
 			return false
 		}
 	}
 	return true
+}
+
+func renderAsset(asset []byte, pairs ...string) []byte {
+	return []byte(strings.NewReplacer(pairs...).Replace(string(asset)))
+}
+
+func servicedirElement(target layout) string {
+	directory := target.serviceDirectory()
+	if directory == "" {
+		return ""
+	}
+	return "  <servicedir>" + directory + "</servicedir>\n"
 }
 
 func installExecutable(destination string) error {

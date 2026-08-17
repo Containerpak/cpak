@@ -33,7 +33,7 @@ type CLI struct {
 	Logs               cmd.LogsCmd               `cmd:"logs" help:"Show output from a running application"`
 	Orchestrate        cmd.OrchestrateCmd        `cmd:"orchestrate" help:"Run multiple cpak applications"`
 	Spawn              cmd.SpawnCmd              `cmd:"spawn" help:"Spawn a container for a package"`
-	Launch             cmd.LaunchCmd             `cmd:"launch" help:"Launch a command inside a package container"`
+	Launch             cmd.LaunchCmd             `cmd:"launch" help:"Run a command inside an existing container sandbox"`
 	ChromiumLaunch     cmd.ChromiumLaunchCmd     `cmd:"chromium-launch" help:"Launch or forward a Chromium command"`
 	Service            cmd.ServiceCmd            `cmd:"service" help:"Manage cpak services"`
 	Stop               cmd.StopCmd               `cmd:"stop" help:"Stop a running container"`
