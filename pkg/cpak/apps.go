@@ -320,12 +320,19 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 	if err != nil {
 		return failedUpdate(result, err)
 	}
+	pulled := layers
 	layers, err = deps.buildRuntime(layers, manifest.RuntimeSources)
 	if err != nil {
 		return failedUpdate(result, err)
 	}
 	layers, err = deps.buildLocale(layers, manifest.Image, config, manifest.Override)
 	if err != nil {
+		return failedUpdate(result, err)
+	}
+	// A layer cpak built is never downloaded under the digest it is stored as,
+	// so no pull will ever bind it and an update that skipped this would leave
+	// the application impossible to describe and therefore to enrol.
+	if err = c.bindBuiltLayers(pulled, layers); err != nil {
 		return failedUpdate(result, err)
 	}
 
@@ -366,6 +373,11 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 				return failedUpdate(result, err)
 			}
 		}
+		// An installation that changed nothing still has to be enrolled: it is
+		// how an application installed before enrolment existed gets an anchor
+		// without being reinstalled. An anchor the ledger already holds costs
+		// nothing here.
+		c.EnrolApplication(updated)
 		result.Status = types.UpdateStatusUpToDate
 		return result
 	}
@@ -404,6 +416,9 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 	if err = c.finishUpdateTransaction(transaction); err != nil {
 		return failedUpdate(result, err)
 	}
+	// The update stands: what the application is has changed, so the anchor
+	// that names it has to change with it or the next launch is refused.
+	c.EnrolApplication(updated)
 
 	result.Status = types.UpdateStatusUpdated
 	result.NewVersion = updated.Version

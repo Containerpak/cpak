@@ -72,7 +72,7 @@ func (c *OverrideCmd) Run() error {
 			return err
 		}
 		over.Filesystem = permissions
-		if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
 			return err
 		}
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
@@ -84,7 +84,7 @@ func (c *OverrideCmd) Run() error {
 			return err
 		}
 		over.HostActions = actions
-		if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
 			return err
 		}
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
@@ -96,7 +96,7 @@ func (c *OverrideCmd) Run() error {
 			return err
 		}
 		over.FilePicker = grant
-		if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
 			return err
 		}
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
@@ -120,10 +120,22 @@ func (c *OverrideCmd) Run() error {
 	}
 
 	// Save the override
-	if err := cpak.SaveOverride(over, appOrigin, sel.Version); err != nil {
+	if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
 		return err
 	}
 
 	c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
+	return nil
+}
+
+// saveOverrideAndEnrol keeps the anchor in step with the policy. A saved
+// override changes the root a launch derives, so without re-enrolling here the
+// application keeps working exactly until the next launch, which then finds a
+// root the ledger does not hold and refuses it at every enforcement level.
+func saveOverrideAndEnrol(cpk cpak.Cpak, over types.Override, origin string, app types.Application) error {
+	if err := cpak.SaveOverride(over, origin, app.Version); err != nil {
+		return err
+	}
+	cpk.EnrolApplication(app)
 	return nil
 }

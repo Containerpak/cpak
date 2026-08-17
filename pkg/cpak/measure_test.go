@@ -17,6 +17,7 @@ import (
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/storaged"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -168,9 +169,13 @@ func TestGateLaunchRefusesATamperedStoreThatNothingEnrolled(t *testing.T) {
 		t.Fatalf("the ledger already answers for %s, so this test proves nothing: enrolled=%v err=%v", testOrigin, enrolled, err)
 	}
 
+	// Off is the level a host that has never been told otherwise runs at, and
+	// it is the one where a tampered store still has to be refused.
+	useEnforcement(t, systemauthority.EnforcementOff)
+
 	app := measuredApplication(measuredLayer)
 	identity, err := cp.gateLaunch(app, types.Override{}, nil, nil)
-	if err != nil && !refuseUnenrolledLaunch {
+	if err != nil {
 		t.Fatalf("an unenrolled launch nothing had touched was refused: %v", err)
 	}
 	if identity.Verdict != LaunchUnenrolled {

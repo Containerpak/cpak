@@ -25,23 +25,54 @@
     </defaults>
   </action>
 
-  <action id="it.cpak.system.enroll-anchor">
-    <description>Enroll a cpak application in the integrity ledger</description>
-    <message>Authentication is required to enroll this cpak application in the integrity ledger</message>
+  <!-- Recording what an install just put on disk, for the account doing the
+       installing, with a policy that is no wider than the one already
+       recorded. That is the ordinary course of installing software, so it is
+       allowed at an active local session and nowhere else. -->
+  <action id="it.cpak.system.enrol-anchor">
+    <description>Record a cpak application in the integrity ledger</description>
+    <message>Authentication is required to record this cpak application in the integrity ledger</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
+      <allow_active>yes</allow_active>
     </defaults>
   </action>
 
+  <!-- The same enrolment when it hands the application more than it already
+       has, when it puts it back to a generation it left, or when it is made
+       for another account. Which of the two actions is asked for is decided by
+       the authority against what the ledger holds, never by the caller. -->
+  <action id="it.cpak.system.widen-anchor">
+    <description>Widen what a cpak application is enrolled for</description>
+    <message>Authentication is required to let this cpak application be enrolled with more than it has now</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
+  <!-- Forgetting an anchor leaves the application unenrolled, which is the
+       state enforcement refuses, so it takes away a permission rather than
+       granting one and an active session may do it while removing software. -->
   <action id="it.cpak.system.forget-anchor">
     <description>Remove a cpak application from the integrity ledger</description>
     <message>Authentication is required to remove this cpak application from the integrity ledger</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="it.cpak.system.set-enforcement">
+    <description>Set what cpak does with an application it cannot recognise</description>
+    <message>Authentication is required to change how cpak treats an application it cannot recognise</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
     </defaults>
   </action>
 </policyconfig>

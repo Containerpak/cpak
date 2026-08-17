@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -43,13 +44,25 @@ func (c *AuditCmd) Run() error {
 	return reportErr
 }
 
-// reportIntegrity says what the store records about itself and what it now
-// holds. It changes nothing, with or without --repair: writing a record from
-// the store as it stands is a separate act and it has to be asked for.
+// reportIntegrity says what the store records about itself, what it now holds,
+// and what the anchor ledger claims about either. It changes nothing, with or
+// without --repair: writing a record from the store as it stands is a separate
+// act and it has to be asked for.
 func (c *AuditCmd) reportIntegrity(cp *cpak.Cpak) error {
 	report, err := cp.IntegrityReport()
 	if err != nil {
 		return fmt.Errorf("read what the store records about itself: %w", err)
+	}
+	// The ledger is the one part of this section the store does not own, and it
+	// is read separately for that reason: a store that just failed its audit
+	// has no say in what is recorded about it.
+	anchors, err := cp.AnchorStates()
+	if err != nil {
+		return fmt.Errorf("read what the integrity anchors hold: %w", err)
+	}
+	held := make(map[string]cpak.AnchorState, len(anchors))
+	for _, state := range anchors {
+		held[state.Origin] = state
 	}
 	c.Logger.Info("Integrity records")
 	if len(report.Applications) == 0 {
@@ -57,13 +70,13 @@ func (c *AuditCmd) reportIntegrity(cp *cpak.Cpak) error {
 		return nil
 	}
 	for _, app := range report.Applications {
-		c.reportApplication(app)
+		c.reportApplication(app, held[app.Origin])
 	}
-	c.summariseIntegrity(report)
+	c.summariseIntegrity(report, anchors)
 	return nil
 }
 
-func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity) {
+func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity, anchor cpak.AnchorState) {
 	name := app.Origin
 	if app.Version != "" {
 		name += " " + app.Version
@@ -74,6 +87,7 @@ func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity) {
 	}
 	c.Logger.Info("  %s: %d of %d layers bound to a store state, %d of %d prepared checkouts described by the state they were made from",
 		name, app.BoundLayers, app.Layers, app.DescribedCheckouts, app.PreparedCheckouts)
+	c.reportEnrolment(anchor)
 	for _, disagreement := range app.Disagreements {
 		c.Logger.Error("    the store contradicts itself: %s", disagreement)
 	}
@@ -82,10 +96,29 @@ func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity) {
 	}
 }
 
+// reportEnrolment says what the anchor ledger holds for one application. It is
+// the only line in this section that is not the store speaking about itself,
+// which is exactly why it is here: every other count is a claim the account
+// running the launch could have written.
+func (c *AuditCmd) reportEnrolment(anchor cpak.AnchorState) {
+	switch {
+	case anchor.Unreadable != "":
+		c.Logger.Error("    the integrity anchor could not be read: %s", anchor.Unreadable)
+	case !anchor.Enrolled:
+		c.Logger.Warning("    not enrolled: no integrity anchor says what a launch of it may be")
+	case anchor.Underived != "":
+		c.Logger.Error("    enrolled at generation %d, and nothing can be put next to that anchor: %s", anchor.Generation, anchor.Underived)
+	case anchor.Recognised():
+		c.Logger.Info("    enrolled at generation %d, and a launch derives the root the anchor holds", anchor.Generation)
+	default:
+		c.Logger.Error("    enrolled at generation %d, and a launch derives %s where the anchor holds %s", anchor.Generation, anchor.DerivedRoot, anchor.AnchorRoot)
+	}
+}
+
 // summariseIntegrity closes the section. Every sentence here is written to be
 // read by someone who would like to believe their store was checked, so none of
 // them says it was.
-func (c *AuditCmd) summariseIntegrity(report cpak.StoreIntegrity) {
+func (c *AuditCmd) summariseIntegrity(report cpak.StoreIntegrity, anchors []cpak.AnchorState) {
 	disagreements := report.Disagreements()
 	unbound := report.UnboundLayers()
 	undescribed := report.UndescribedCheckouts()
@@ -104,10 +137,54 @@ func (c *AuditCmd) summariseIntegrity(report cpak.StoreIntegrity) {
 	if disagreements == 0 && unbound == 0 && undescribed == 0 && unreadable == 0 {
 		c.Logger.Success("Every layer is bound to a state the store holds, every prepared checkout has the shape that state describes, and nothing disagrees. That is the store agreeing with itself.")
 	}
+	c.summariseEnrolment(anchors)
 	c.Logger.Info("What no line above says: that the store holds what the publisher shipped. Only the pull that downloaded a layer ties it to the digest a registry named. A binding written at any other moment took whatever the store already held, however it got there, and nothing you can read afterwards tells the two apart.")
+	c.Logger.Info("An anchor adds one thing to that and no more: the application has not changed since it was enrolled. It is written from the installation exactly as it stood at that moment, so nothing here checks a publisher signature either.")
 	if c.Repair {
 		c.Logger.Info("--repair writes none of these. A pull, an update and --backfill-bindings are the only things that do.")
 	}
+}
+
+// summariseEnrolment closes the half of the section the store does not own. It
+// names the enforcement level next to the counts, because unenrolled means
+// nothing on its own: at off it costs the user nothing and at refuse it is the
+// reason an application stopped starting.
+func (c *AuditCmd) summariseEnrolment(anchors []cpak.AnchorState) {
+	unenrolled, mismatched, unreadable := 0, 0, 0
+	for _, anchor := range anchors {
+		switch {
+		case anchor.Unreadable != "":
+			unreadable++
+		case !anchor.Enrolled:
+			unenrolled++
+		case !anchor.Recognised():
+			mismatched++
+		}
+	}
+	level := systemauthority.Enforcement()
+	c.Logger.Info("Verified launch enforcement is %s. cpak system enforcement says what each level does.", level)
+	if mismatched > 0 {
+		c.Logger.Error("%s enrolled and no longer the launch the anchor names. None of those starts at any enforcement level, and cpak system explain ORIGIN says which half moved.", plural(mismatched, "application is"))
+	}
+	if unenrolled > 0 {
+		c.Logger.Warning("%s enrolled by nothing at all. %s", plural(unenrolled, "application is"), enrolmentConsequence(level))
+		c.Logger.Info("Installing or updating an application enrols it, and records the installation exactly as it stands at that moment.")
+	}
+	if unreadable > 0 {
+		c.Logger.Warning("The integrity anchor of %s could not be read, so this pass says nothing about what claims them.", plural(unreadable, "application"))
+	}
+}
+
+// enrolmentConsequence turns the level into the sentence that matters, which is
+// what it costs the user rather than what it is called.
+func enrolmentConsequence(level systemauthority.EnforcementLevel) string {
+	switch level {
+	case systemauthority.EnforcementRefuse:
+		return "At this level an application nothing claims does not start."
+	case systemauthority.EnforcementWarn:
+		return "At this level it starts and every launch says so, and at refuse it would not start at all."
+	}
+	return "At this level it starts and nothing is said. At warn every launch would say so, and at refuse it would not start at all."
 }
 
 // plural counts a noun without the parenthesised s that makes a report read as

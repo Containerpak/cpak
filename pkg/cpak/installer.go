@@ -208,6 +208,10 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		return
 	}
 
+	// The installation stands: what is left is to record what it is, so that a
+	// launch of it can be recognised. It reports and it never fails an install.
+	c.EnrolApplication(app)
+
 	return nil
 }
 
@@ -878,8 +882,14 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err = c.clearRollbackHistory(origin); err != nil {
 		return fmt.Errorf("remove rollback history for %s: %w", appToRemove.Name, err)
 	}
+	if err = c.removeApplicationLayers(appToRemove); err != nil {
+		return err
+	}
 
-	return c.removeApplicationLayers(appToRemove)
+	// The layers are gone, so nothing the anchor names is still on disk.
+	c.forgetEnrolment(appToRemove)
+
+	return nil
 }
 
 func sessionsRemovedByVersionSelection(apps []types.Application, branch, commit, release string) ([]types.Session, int) {

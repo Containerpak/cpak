@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/integrity"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,7 +28,10 @@ import (
 const (
 	DefaultSocketPath = "/run/cpak/authority.sock"
 	socketDeadline    = 10 * time.Second
-	requestLimit      = 8 << 10
+
+	// An enrolment carries the policy its policy root was taken over, so a
+	// request is the size of one anchor plus one policy.
+	requestLimit = 48 << 10
 )
 
 var errTransportUnavailable = errors.New("system authority transport is unavailable")
@@ -41,6 +45,8 @@ type socketRequest struct {
 	Kind        string            `json:"kind,omitempty"`
 	UID         uint32            `json:"uid,omitempty"`
 	Anchor      *integrity.Anchor `json:"anchor,omitempty"`
+	Policy      *types.Override   `json:"policy,omitempty"`
+	Level       string            `json:"level,omitempty"`
 }
 
 type socketResponse struct {
@@ -48,16 +54,18 @@ type socketResponse struct {
 }
 
 type socketService struct {
-	Registry  Registry
-	Anchors   AnchorLedger
-	Authorize func(*unix.Ucred) error
+	Registry    Registry
+	Anchors     AnchorLedger
+	Enforcement EnforcementStore
+	Authorize   func(*unix.Ucred) error
 }
 
 func ServeSocket(ctx context.Context, path string) error {
 	service := socketService{
-		Registry:  DefaultRegistry(),
-		Anchors:   DefaultAnchorLedger(),
-		Authorize: authorizePeerCredentials,
+		Registry:    DefaultRegistry(),
+		Anchors:     DefaultAnchorLedger(),
+		Enforcement: DefaultEnforcementStore(),
+		Authorize:   authorizePeerCredentials,
 	}
 	return service.serve(ctx, path)
 }
@@ -156,8 +164,10 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 			return err
 		}
 		return s.Registry.Remove(message.ID, message.Origin)
-	case anchorEnrollAction, anchorForgetAction:
+	case anchorEnrolAction, anchorForgetAction:
 		return applyAnchor(s.Anchors, message)
+	case enforcementSetAction:
+		return applyEnforcement(s.Enforcement, message)
 	default:
 		return errors.New("unsupported system authority action")
 	}

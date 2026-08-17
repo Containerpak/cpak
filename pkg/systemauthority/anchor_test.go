@@ -7,6 +7,7 @@ package systemauthority
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"io/fs"
 	"os"
@@ -14,10 +15,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 	"golang.org/x/sys/unix"
 
 	"github.com/mirkobrombin/cpak/pkg/integrity"
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 func testAnchorLedger(t *testing.T) AnchorLedger {
@@ -293,14 +296,14 @@ func TestAnchorLedgerRejectsAnUnusableAnchor(t *testing.T) {
 	}
 }
 
-func TestAuthoritySocketEnrollsAnAnchorWithoutABus(t *testing.T) {
+func TestAuthoritySocketEnrolsAnAnchorWithoutABus(t *testing.T) {
 	ledger := testAnchorLedger(t)
 	path := startAuthoritySocket(t, socketService{
 		Anchors:   ledger,
 		Authorize: func(*unix.Ucred) error { return nil },
 	})
 	anchor := testAnchor()
-	request := socketRequest{Action: anchorEnrollAction, Anchor: &anchor}
+	request := socketRequest{Action: anchorEnrolAction, Anchor: &anchor}
 	if err := requestOverSocket(path, request); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +337,7 @@ func TestAuthoritySocketRefusesAnAnchorFromAnUnauthorizedPeer(t *testing.T) {
 	})
 	anchor := testAnchor()
 	err := requestOverSocket(path, socketRequest{
-		Action: anchorEnrollAction, Anchor: &anchor,
+		Action: anchorEnrolAction, Anchor: &anchor,
 	})
 	if err == nil || !strings.Contains(err.Error(), "not allowed here") {
 		t.Fatalf("the refusal did not reach the caller: %v", err)
@@ -349,7 +352,7 @@ func TestAuthoritySocketRejectsAnEnrolmentWithoutAnAnchor(t *testing.T) {
 		Anchors:   testAnchorLedger(t),
 		Authorize: func(*unix.Ucred) error { return nil },
 	})
-	if err := requestOverSocket(path, socketRequest{Action: anchorEnrollAction, Origin: testAnchor().Origin}); err == nil {
+	if err := requestOverSocket(path, socketRequest{Action: anchorEnrolAction, Origin: testAnchor().Origin}); err == nil {
 		t.Fatal("an enrolment without an anchor was accepted")
 	}
 }
@@ -357,14 +360,14 @@ func TestAuthoritySocketRejectsAnEnrolmentWithoutAnAnchor(t *testing.T) {
 func TestServiceAuthorizesEveryAnchorMutation(t *testing.T) {
 	ledger := testAnchorLedger(t)
 	authorizer := &testAuthorizer{}
-	service := Service{Anchors: ledger, Authorizer: authorizer}
+	service := testAnchorService(ledger, authorizer)
 	anchor := testAnchor()
-	dbusErr := service.EnrollAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot)
+	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
 	if dbusErr != nil {
 		t.Fatal(dbusErr)
 	}
-	if authorizer.action != ActionEnrollAnchor || authorizer.details["package-origin"] != anchor.Origin {
+	if authorizer.action != ActionEnrolAnchor || authorizer.details["package-origin"] != anchor.Origin {
 		t.Fatalf("unexpected enrolment policy request: %s %#v", authorizer.action, authorizer.details)
 	}
 	if _, found, err := ledger.Load(anchor.UID, anchor.Origin); err != nil || !found {
@@ -383,10 +386,10 @@ func TestServiceAuthorizesEveryAnchorMutation(t *testing.T) {
 
 func TestServiceRejectsAnInvalidAnchorBeforeAuthorization(t *testing.T) {
 	authorizer := &testAuthorizer{}
-	service := Service{Anchors: testAnchorLedger(t), Authorizer: authorizer}
+	service := testAnchorService(testAnchorLedger(t), authorizer)
 	anchor := testAnchor()
-	dbusErr := service.EnrollAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, strings.Repeat("c3", 32))
+	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, strings.Repeat("c3", 32), "")
 	if dbusErr == nil {
 		t.Fatal("an anchor with a launch root of its own was accepted")
 	}
@@ -395,12 +398,12 @@ func TestServiceRejectsAnInvalidAnchorBeforeAuthorization(t *testing.T) {
 	}
 }
 
-func TestServiceDenialDoesNotEnrollAnAnchor(t *testing.T) {
+func TestServiceDenialDoesNotEnrolAnAnchor(t *testing.T) {
 	ledger := testAnchorLedger(t)
-	service := Service{Anchors: ledger, Authorizer: &testAuthorizer{err: errors.New("denied")}}
+	service := testAnchorService(ledger, &testAuthorizer{err: errors.New("denied")})
 	anchor := testAnchor()
-	dbusErr := service.EnrollAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot)
+	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
 	if dbusErr == nil {
 		t.Fatal("authorization denial was ignored")
 	}
@@ -423,7 +426,11 @@ func TestAnchorMethodsAreCarriedByTheBusInterface(t *testing.T) {
 		}
 		arguments[method.Name] = signature
 	}
-	for name, want := range map[string]string{"EnrollAnchor": "iustsss", "ForgetAnchor": "us"} {
+	for name, want := range map[string]string{
+		"EnrolAnchor":    "iustssss",
+		"ForgetAnchor":   "us",
+		"SetEnforcement": "s",
+	} {
 		if arguments[name] != want {
 			t.Fatalf("%s takes %q on the bus, want %q", name, arguments[name], want)
 		}
@@ -431,10 +438,303 @@ func TestAnchorMethodsAreCarriedByTheBusInterface(t *testing.T) {
 }
 
 func TestAnchorActionsAreDeclaredInThePolkitPolicy(t *testing.T) {
-	for _, action := range []string{ActionEnrollAnchor, ActionForgetAnchor} {
+	for _, action := range []string{ActionEnrolAnchor, ActionWidenAnchor, ActionForgetAnchor} {
 		declaration := `<action id="` + action + `">`
 		if !strings.Contains(string(polkitPolicy), declaration) {
 			t.Fatalf("%s is not declared in the polkit policy", action)
 		}
+	}
+}
+
+// testAnchorService is the authority as the bus builds it, with the one thing
+// the bus supplies at runtime: the account behind the caller.
+func testAnchorService(ledger AnchorLedger, authorizer Authorizer) Service {
+	return Service{
+		Anchors:    ledger,
+		Authorizer: authorizer,
+		CallerUID:  func(dbus.Sender) (uint32, error) { return uint32(os.Getuid()), nil },
+	}
+}
+
+// anchorOver builds the anchor an enrolment of this policy would carry, so the
+// policy the authority is handed is the one its policy root was taken over.
+func anchorOver(t *testing.T, policy types.Override, packageRoot string, generation uint64) integrity.Anchor {
+	t.Helper()
+	policyRoot, err := integrity.PolicyRoot(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return integrity.Anchor{
+		ABI:         integrity.ABIVersion,
+		UID:         uint32(os.Getuid()),
+		Origin:      testAnchor().Origin,
+		Generation:  generation,
+		PackageRoot: packageRoot,
+		PolicyRoot:  policyRoot,
+		LaunchRoot:  integrity.LaunchRoot(packageRoot, policyRoot),
+	}
+}
+
+// policyMatches compares two policies the way everything else does, by the root
+// they hash to, because that is the value the mechanism turns on.
+func policyMatches(t *testing.T, got *types.Override, want types.Override) bool {
+	t.Helper()
+	if got == nil {
+		return false
+	}
+	first, err := integrity.PolicyRoot(*got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := integrity.PolicyRoot(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return first == second
+}
+
+func TestEnrolmentRecordsThePolicyItsRootWasTakenOver(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true, Network: true}
+	anchor := anchorOver(t, policy, strings.Repeat("a1", 32), 1)
+	if err := ledger.Record(Enrolment{Anchor: anchor, Policy: &policy}); err != nil {
+		t.Fatal(err)
+	}
+	recorded, found, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("the enrolment was not recorded: %v, %v", found, err)
+	}
+	if !policyMatches(t, recorded.Policy, policy) {
+		t.Fatalf("the recorded policy reads back as %+v", recorded.Policy)
+	}
+	if recorded.Anchor != anchor {
+		t.Fatalf("the recorded anchor reads back as %+v", recorded.Anchor)
+	}
+	// An update that states no policy must not throw away the one already
+	// proven for the same policy root, or the next narrowing becomes a change
+	// nobody can order.
+	update := anchor
+	update.Generation = anchor.Generation + 1
+	update.PackageRoot = strings.Repeat("d4", 32)
+	update.LaunchRoot = integrity.LaunchRoot(update.PackageRoot, update.PolicyRoot)
+	if err := ledger.Store(update); err != nil {
+		t.Fatal(err)
+	}
+	kept, _, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policyMatches(t, kept.Policy, policy) {
+		t.Fatalf("the update dropped the recorded policy: %+v", kept.Policy)
+	}
+}
+
+func TestEnrolmentPolicyMustHashToItsPolicyRoot(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	anchor := anchorOver(t, policy, strings.Repeat("a1", 32), 1)
+	// The wide policy with the narrow root is the whole attack: it would ask
+	// for the ordinary authorization while recording something else.
+	wider := policy
+	wider.FsHostHome = true
+	if err := ledger.Record(Enrolment{Anchor: anchor, Policy: &wider}); err == nil {
+		t.Fatal("a policy that does not hash to its policy root was recorded")
+	}
+	if _, found, err := ledger.Recorded(anchor.UID, anchor.Origin); err != nil || found {
+		t.Fatalf("the refused enrolment reached the ledger: %v, %v", found, err)
+	}
+}
+
+func TestAuthorizationFollowsWhatTheLedgerHolds(t *testing.T) {
+	recordedPolicy := types.Override{SocketWayland: true, Network: true}
+	narrower := types.Override{SocketWayland: true}
+	wider := types.Override{SocketWayland: true, Network: true, FsHostHome: true}
+	firstRoot := strings.Repeat("a1", 32)
+	secondRoot := strings.Repeat("d4", 32)
+
+	for name, offered := range map[string]struct {
+		enrolment Enrolment
+		recorded  bool
+		want      string
+	}{
+		"a first install": {
+			enrolment: Enrolment{Anchor: anchorOver(t, recordedPolicy, firstRoot, 1), Policy: &recordedPolicy},
+			want:      ActionEnrolAnchor,
+		},
+		"an update that leaves the policy alone": {
+			enrolment: Enrolment{Anchor: anchorOver(t, recordedPolicy, secondRoot, 2), Policy: &recordedPolicy},
+			recorded:  true,
+			want:      ActionEnrolAnchor,
+		},
+		"an update that narrows the policy": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrower, secondRoot, 2), Policy: &narrower},
+			recorded:  true,
+			want:      ActionEnrolAnchor,
+		},
+		"an update that widens the policy": {
+			enrolment: Enrolment{Anchor: anchorOver(t, wider, secondRoot, 2), Policy: &wider},
+			recorded:  true,
+			want:      ActionWidenAnchor,
+		},
+		"a narrowing nobody stated the policy of": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrower, secondRoot, 2)},
+			recorded:  true,
+			want:      ActionWidenAnchor,
+		},
+		"a generation that goes backwards": {
+			enrolment: Enrolment{Anchor: anchorOver(t, recordedPolicy, secondRoot, 1), Policy: &recordedPolicy},
+			recorded:  true,
+			want:      ActionWidenAnchor,
+		},
+	} {
+		ledger := testAnchorLedger(t)
+		if offered.recorded {
+			held := Enrolment{Anchor: anchorOver(t, recordedPolicy, firstRoot, 2), Policy: &recordedPolicy}
+			if err := ledger.Record(held); err != nil {
+				t.Fatal(err)
+			}
+		}
+		action, err := ledger.authorizationFor(offered.enrolment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action != offered.want {
+			t.Fatalf("%s asks for %s, want %s", name, action, offered.want)
+		}
+	}
+}
+
+func TestServiceAsksTheOwnerOnlyWhenAnEnrolmentWidens(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	authorizer := &testAuthorizer{}
+	service := testAnchorService(ledger, authorizer)
+	policy := types.Override{SocketWayland: true}
+	anchor := anchorOver(t, policy, strings.Repeat("a1", 32), 1)
+	encoded, err := encodePolicy(&policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, encoded); dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	if authorizer.action != ActionEnrolAnchor {
+		t.Fatalf("a first install asked for %s", authorizer.action)
+	}
+	wider := policy
+	wider.FsHostHome = true
+	widened := anchorOver(t, wider, strings.Repeat("d4", 32), 2)
+	encodedWider, err := encodePolicy(&wider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dbusErr := service.EnrolAnchor(":1.20", int32(widened.ABI), widened.UID, widened.Origin,
+		widened.Generation, widened.PackageRoot, widened.PolicyRoot, widened.LaunchRoot, encodedWider); dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	if authorizer.action != ActionWidenAnchor {
+		t.Fatalf("an update that widens the policy asked for %s", authorizer.action)
+	}
+	recorded, _, err := ledger.Recorded(widened.UID, widened.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policyMatches(t, recorded.Policy, wider) {
+		t.Fatalf("the authorized widening recorded %+v", recorded.Policy)
+	}
+}
+
+func TestServiceTreatsAnEnrolmentForAnotherAccountAsWidening(t *testing.T) {
+	authorizer := &testAuthorizer{}
+	service := testAnchorService(testAnchorLedger(t), authorizer)
+	anchor := testAnchor()
+	anchor.UID++
+	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, ""); dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	if authorizer.action != ActionWidenAnchor {
+		t.Fatalf("enrolling for another account asked for %s", authorizer.action)
+	}
+	service.CallerUID = nil
+	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, ""); dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	if authorizer.action != ActionWidenAnchor {
+		t.Fatalf("a caller nobody can name asked for %s", authorizer.action)
+	}
+}
+
+func TestServiceRejectsAPolicyItCannotDecode(t *testing.T) {
+	authorizer := &testAuthorizer{}
+	service := testAnchorService(testAnchorLedger(t), authorizer)
+	anchor := testAnchor()
+	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "{not a policy"); dbusErr == nil {
+		t.Fatal("a policy that is not JSON was accepted")
+	}
+	if authorizer.action != "" {
+		t.Fatal("invalid request reached the authorization service")
+	}
+}
+
+// policyDefaults reads the shipped polkit actions. What a desktop user is asked
+// is decided here and nowhere in the code, so it is pinned here.
+func policyDefaults(t *testing.T) map[string][3]string {
+	t.Helper()
+	document := struct {
+		Actions []struct {
+			ID       string `xml:"id,attr"`
+			Defaults struct {
+				Any      string `xml:"allow_any"`
+				Inactive string `xml:"allow_inactive"`
+				Active   string `xml:"allow_active"`
+			} `xml:"defaults"`
+		} `xml:"action"`
+	}{}
+	if err := xml.Unmarshal(polkitPolicy, &document); err != nil {
+		t.Fatalf("the shipped polkit policy does not parse: %v", err)
+	}
+	defaults := map[string][3]string{}
+	for _, action := range document.Actions {
+		defaults[action.ID] = [3]string{action.Defaults.Any, action.Defaults.Inactive, action.Defaults.Active}
+	}
+	return defaults
+}
+
+func TestAnchorActionsAskTheDesktopUserTheRightQuestion(t *testing.T) {
+	defaults := policyDefaults(t)
+	// Forgetting an anchor is not a widening: it leaves the application in the
+	// state enforcement refuses, so an active session may do it while removing
+	// software rather than being asked for an administrator password.
+	for action, want := range map[string][3]string{
+		ActionEnrolAnchor:  {"no", "no", "yes"},
+		ActionWidenAnchor:  {"no", "no", "auth_admin"},
+		ActionForgetAnchor: {"no", "no", "yes"},
+	} {
+		if defaults[action] != want {
+			t.Fatalf("%s is declared as %v, want %v", action, defaults[action], want)
+		}
+	}
+}
+
+// The record is flat on purpose: the anchor fields sit at the top level, so a
+// file written when nobody stated a policy is still a whole enrolment and not a
+// record from another format.
+func TestARecordWithoutAPolicyIsStillAnEnrolment(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	encoded, err := json.Marshal(anchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAnchorFile(t, ledger, anchor.UID, anchor.Origin, encoded)
+	recorded, found, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("an anchor with no policy beside it was not read: %v, %v", found, err)
+	}
+	if recorded.Anchor != anchor || recorded.Policy != nil {
+		t.Fatalf("the record reads back as %+v", recorded)
 	}
 }

@@ -22,9 +22,16 @@ const (
 )
 
 type Service struct {
-	Registry   Registry
-	Anchors    AnchorLedger
-	Authorizer Authorizer
+	Registry    Registry
+	Anchors     AnchorLedger
+	Enforcement EnforcementStore
+	Authorizer  Authorizer
+
+	// CallerUID names the account behind a bus name. An enrolment is only the
+	// ordinary course of installing software for the account it is about, so
+	// the authority has to know who is asking before it decides how hard to
+	// ask back.
+	CallerUID func(dbus.Sender) (uint32, error)
 }
 
 func (s *Service) RegisterSession(sender dbus.Sender, id, origin, name, description, kind string) *dbus.Error {
@@ -70,36 +77,104 @@ func (s *Service) RemoveSession(sender dbus.Sender, id, origin string) *dbus.Err
 	return nil
 }
 
-// EnrollAnchor takes the anchor apart on the wire because the bus carries plain
+// EnrolAnchor takes the record apart on the wire because the bus carries plain
 // values, and puts it back together here so the ledger sees the same record a
 // local enrolment would hand it.
-func (s *Service) EnrollAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, packageRoot, policyRoot, launchRoot string) *dbus.Error {
-	anchor := integrity.Anchor{
-		ABI:         int(abi),
-		UID:         uid,
-		Origin:      origin,
-		Generation:  generation,
-		PackageRoot: packageRoot,
-		PolicyRoot:  policyRoot,
-		LaunchRoot:  launchRoot,
+func (s *Service) EnrolAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, packageRoot, policyRoot, launchRoot, policy string) *dbus.Error {
+	decoded, err := decodePolicy(policy)
+	if err != nil {
+		return invalidRequest(err)
 	}
-	if err := validateAnchor(anchor); err != nil {
+	enrolment := Enrolment{
+		Anchor: integrity.Anchor{
+			ABI:         int(abi),
+			UID:         uid,
+			Origin:      origin,
+			Generation:  generation,
+			PackageRoot: packageRoot,
+			PolicyRoot:  policyRoot,
+			LaunchRoot:  launchRoot,
+		},
+		Policy: decoded,
+	}
+	if err := validateEnrolment(enrolment); err != nil {
 		return invalidRequest(err)
 	}
 	if s.Authorizer == nil {
 		return denied(errors.New("authorization service is unavailable"))
 	}
-	if err := s.Authorizer.Authorize(sender, ActionEnrollAnchor, map[string]string{
-		"package-origin": anchor.Origin,
-		"target-uid":     strconv.FormatUint(uint64(anchor.UID), 10),
-		"generation":     strconv.FormatUint(anchor.Generation, 10),
+	action, err := s.enrolmentAction(sender, enrolment)
+	if err != nil {
+		return failed(err)
+	}
+	if err := s.Authorizer.Authorize(sender, action, map[string]string{
+		"package-origin": enrolment.Origin,
+		"target-uid":     strconv.FormatUint(uint64(enrolment.UID), 10),
+		"generation":     strconv.FormatUint(enrolment.Generation, 10),
 	}); err != nil {
 		return denied(err)
 	}
-	if err := s.Anchors.Store(anchor); err != nil {
+	if err := s.Anchors.Record(enrolment); err != nil {
 		return failed(err)
 	}
 	return nil
+}
+
+// enrolmentAction decides how hard to ask. Recording an anchor for somebody
+// else says what their applications are, which is never the ordinary course of
+// installing one's own software, and a caller the bus cannot name is nobody's
+// ordinary course either.
+func (s *Service) enrolmentAction(sender dbus.Sender, enrolment Enrolment) (string, error) {
+	if s.CallerUID == nil {
+		return ActionWidenAnchor, nil
+	}
+	uid, err := s.CallerUID(sender)
+	if err != nil || uid != enrolment.UID {
+		return ActionWidenAnchor, nil
+	}
+	return s.Anchors.authorizationFor(enrolment)
+}
+
+// SetEnforcement turns refusals on for every account on the host, so it is the
+// owner of the machine's decision and it is never taken from anything a caller
+// carries with it.
+func (s *Service) SetEnforcement(sender dbus.Sender, level string) *dbus.Error {
+	wanted := EnforcementLevel(level)
+	if !wanted.valid() {
+		return invalidRequest(errors.New("invalid enforcement level"))
+	}
+	if s.Authorizer == nil {
+		return denied(errors.New("authorization service is unavailable"))
+	}
+	if err := s.Authorizer.Authorize(sender, ActionSetEnforcement, map[string]string{
+		"enforcement-level": level,
+	}); err != nil {
+		return denied(err)
+	}
+	if err := s.Enforcement.Set(wanted); err != nil {
+		return failed(err)
+	}
+	return nil
+}
+
+// busCallerUID asks the bus who owns a name. The bus is the only one that can
+// answer it: the caller must never be asked, because the answer decides whether
+// the caller is asked for a password.
+func busCallerUID(connection *dbus.Conn) func(dbus.Sender) (uint32, error) {
+	return func(sender dbus.Sender) (uint32, error) {
+		if connection == nil || sender == "" {
+			return 0, errors.New("authorization subject is unavailable")
+		}
+		var uid uint32
+		call := connection.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixUser", 0, string(sender))
+		if call.Err != nil {
+			return 0, fmt.Errorf("identify the caller: %w", call.Err)
+		}
+		if err := call.Store(&uid); err != nil {
+			return 0, fmt.Errorf("identify the caller: %w", err)
+		}
+		return uid, nil
+	}
 }
 
 func (s *Service) ForgetAnchor(sender dbus.Sender, uid uint32, origin string) *dbus.Error {
@@ -163,9 +238,11 @@ func serveBus(ctx context.Context) error {
 	}
 	defer connection.Close()
 	service := &Service{
-		Registry:   DefaultRegistry(),
-		Anchors:    DefaultAnchorLedger(),
-		Authorizer: PolkitAuthorizer{Connection: connection},
+		Registry:    DefaultRegistry(),
+		Anchors:     DefaultAnchorLedger(),
+		Enforcement: DefaultEnforcementStore(),
+		Authorizer:  PolkitAuthorizer{Connection: connection},
+		CallerUID:   busCallerUID(connection),
 	}
 	if err := connection.Export(service, ObjectPath, InterfaceName); err != nil {
 		return fmt.Errorf("export system authority: %w", err)
