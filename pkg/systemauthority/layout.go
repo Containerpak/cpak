@@ -52,6 +52,12 @@ func (l layout) standard() bool {
 	return l.prefix == standardPrefix
 }
 
+// dataDirectory is what belongs in XDG_DATA_DIRS: a display manager appends
+// wayland-sessions to every entry itself.
+func (l layout) dataDirectory() string {
+	return filepath.Join(l.prefix, "share")
+}
+
 func (l layout) registry() Registry {
 	return Registry{
 		RegistryDirectory: DefaultRegistryDirectory,

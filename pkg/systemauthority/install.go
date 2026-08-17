@@ -14,16 +14,6 @@ import (
 	"strings"
 )
 
-const (
-	sddmConfigPath    = "/etc/sddm.conf.d/90-cpak-sessions.conf"
-	lightdmConfigPath = "/etc/lightdm/lightdm.conf.d/90-cpak-sessions.conf"
-)
-
-var (
-	sddmSessions    = []string{filepath.Join(standardPrefix, "share", "wayland-sessions"), DefaultSystemSessions}
-	lightdmSessions = []string{"/usr/share/lightdm/sessions", "/usr/share/xsessions", DefaultSystemSessions}
-)
-
 //go:embed assets/it.cpak.SystemAuthority1.service
 var serviceFile []byte
 
@@ -39,16 +29,18 @@ var sddmConfig []byte
 //go:embed assets/90-cpak-lightdm-sessions.conf
 var lightdmConfig []byte
 
-func Install() error {
+// Install returns the display managers that still need a manual step, so the
+// caller can report them instead of leaving a session nobody can reach.
+func Install() ([]string, error) {
 	if os.Geteuid() != 0 {
-		return errors.New("system integration installation requires root")
+		return nil, errors.New("system integration installation requires root")
 	}
 	target, err := writableLayout()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := installExecutable(target.binary); err != nil {
-		return err
+		return nil, err
 	}
 	for _, file := range []struct {
 		path string
@@ -60,34 +52,16 @@ func Install() error {
 		{target.polkit, polkitPolicy, 0644},
 	} {
 		if err := ensureDirectory(filepath.Dir(file.path), 0); err != nil {
-			return fmt.Errorf("create system integration directory: %w", err)
+			return nil, fmt.Errorf("create system integration directory: %w", err)
 		}
 		if err := writeAtomic(file.path, file.data, file.mode); err != nil {
-			return fmt.Errorf("write system integration file: %w", err)
+			return nil, fmt.Errorf("write system integration file: %w", err)
 		}
 	}
 	if err := target.registry().Prepare(); err != nil {
-		return fmt.Errorf("prepare login session directory: %w", err)
+		return nil, fmt.Errorf("prepare login session directory: %w", err)
 	}
-	if displayManagerExists("/usr/bin/sddm", "/usr/local/bin/sddm") {
-		if err := ensureDirectory(filepath.Dir(sddmConfigPath), 0); err != nil {
-			return fmt.Errorf("create SDDM configuration directory: %w", err)
-		}
-		config := renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions))
-		if err := writeAtomic(sddmConfigPath, config, 0644); err != nil {
-			return fmt.Errorf("write SDDM session configuration: %w", err)
-		}
-	}
-	if displayManagerExists("/usr/sbin/lightdm", "/usr/bin/lightdm", "/usr/local/sbin/lightdm", "/usr/local/bin/lightdm") {
-		if err := ensureDirectory(filepath.Dir(lightdmConfigPath), 0); err != nil {
-			return fmt.Errorf("create LightDM configuration directory: %w", err)
-		}
-		config := renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions))
-		if err := writeAtomic(lightdmConfigPath, config, 0644); err != nil {
-			return fmt.Errorf("write LightDM session configuration: %w", err)
-		}
-	}
-	return nil
+	return publishSessions(target)
 }
 
 func Uninstall() error {
@@ -98,7 +72,10 @@ func Uninstall() error {
 	if err := installed.registry().Purge(); err != nil {
 		return fmt.Errorf("remove registered login sessions: %w", err)
 	}
-	paths := []string{busPolicyPath, sddmConfigPath, lightdmConfigPath}
+	if err := unpublishSessions(); err != nil {
+		return err
+	}
+	paths := []string{busPolicyPath}
 	for _, prefix := range installPrefixes {
 		candidate := layoutFor(prefix)
 		paths = append(paths, candidate.service, candidate.polkit, candidate.binary)

@@ -34,7 +34,11 @@ func (c *SystemCmd) Run() error {
 			return runSystemSetup(action)
 		}
 		if action == "setup" {
-			return systemauthority.Install()
+			pending, err := systemauthority.Install()
+			for _, note := range pending {
+				c.Logger.Warning(note)
+			}
+			return err
 		}
 		return systemauthority.Uninstall()
 	default:
