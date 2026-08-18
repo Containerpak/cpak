@@ -813,8 +813,11 @@ func acceptSignaturesOf(t *testing.T, repo string) {
 // authority checks a bundle with pkg/signature and with nothing else, and the
 // real check refuses the bundles these tests are built out of.
 func TestTheAuthorityChecksBundlesWithTheRealVerifier(t *testing.T) {
-	if reflect.ValueOf(verifyBundle).Pointer() != reflect.ValueOf(signature.Verify).Pointer() {
-		t.Fatal("the authority does not verify bundles with pkg/signature")
+	if reflect.ValueOf(verifyBundle).Pointer() != reflect.ValueOf(separatedVerify).Pointer() {
+		t.Fatal("the authority does not put bundles through the separated verifier")
+	}
+	if reflect.ValueOf(verifyDirect).Pointer() != reflect.ValueOf(signature.Verify).Pointer() {
+		t.Fatal("the separated verifier ends at something other than pkg/signature")
 	}
 	ledger := testAnchorLedger(t)
 	anchor := testAnchor()

@@ -13,12 +13,19 @@ import (
 )
 
 type SystemAuthorityCmd struct {
-	Socket string `cli:"socket" help:"path of the authority socket"`
+	Socket       string `cli:"socket" help:"path of the authority socket"`
+	VerifyBundle bool   `cli:"verify-bundle" help:"read one signature verification request from standard input and answer it"`
 
 	cli.Base
 }
 
 func (c *SystemAuthorityCmd) Run() error {
+	// The verifier is this program in its other role, and it is meant to run
+	// with no privileges, so it is answered before the rule that the authority
+	// itself must be root.
+	if c.VerifyBundle {
+		return systemauthority.RunVerifier(os.Stdin, os.Stdout)
+	}
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("system authority must run as root")
 	}
