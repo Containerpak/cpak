@@ -62,11 +62,15 @@ type cachedToken struct {
 
 // Descriptor identifies content in an OCI registry.
 type Descriptor struct {
-	MediaType   string            `json:"mediaType"`
-	Digest      string            `json:"digest"`
-	Size        int64             `json:"size"`
-	Platform    Platform          `json:"platform,omitempty"`
-	Annotations map[string]string `json:"annotations,omitempty"`
+	MediaType string `json:"mediaType"`
+	Digest    string `json:"digest"`
+	Size      int64  `json:"size"`
+
+	// ArtifactType says what a referring manifest is, and is the only thing
+	// that tells one kind of artifact attached to an image from another.
+	ArtifactType string            `json:"artifactType,omitempty"`
+	Platform     Platform          `json:"platform,omitempty"`
+	Annotations  map[string]string `json:"annotations,omitempty"`
 }
 
 // Platform identifies the system supported by an image manifest.

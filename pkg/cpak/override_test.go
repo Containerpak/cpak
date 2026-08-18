@@ -201,6 +201,11 @@ func writeTestOverride(t *testing.T, origin, version, body string, mode os.FileM
 	if err := os.WriteFile(path, []byte(body), mode); err != nil {
 		t.Fatal(err)
 	}
+	// The mode is set again because the umask of the machine running the tests
+	// would otherwise decide what this test is actually testing.
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 

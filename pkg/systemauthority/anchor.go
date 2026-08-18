@@ -16,9 +16,11 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/mirkobrombin/cpak/pkg/integrity"
+	"github.com/mirkobrombin/cpak/pkg/signature"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -38,9 +40,18 @@ const (
 	anchorEnrolAction  = "enrol"
 	anchorForgetAction = "forget"
 
-	// A record carries the policy its policy root was taken over, so the cap is
-	// the anchor plus one policy and not the anchor alone.
-	anchorSizeLimit = 32 << 10
+	// A policy travels beside the anchor its policy root was taken over, so a
+	// request is the size of one anchor plus one policy.
+	policySizeLimit = 32 << 10
+
+	// A signed record carries the bundle as well. A certificate, a signature
+	// and an inclusion proof are nowhere near this, and the cap is what stops
+	// whoever wrote the file from deciding how much a reader reads.
+	signatureBundleLimit = 256 << 10
+
+	// anchorSizeLimit bounds the whole record: the anchor, the policy and the
+	// bundle together.
+	anchorSizeLimit = 512 << 10
 )
 
 var anchorRootPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -50,6 +61,22 @@ var anchorRootPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // because the answer is to look at what is recorded and not to try again.
 var ErrAnchorDowngrade = errors.New("integrity anchor generation would go backwards")
 
+// ErrUnsigned reports an enrolment that carries no publisher signature. It is
+// an answer and not a failure: signing arrives into a world of packages nobody
+// signed, and a host decides for itself whether that is a reason to refuse.
+var ErrUnsigned = errors.New("the enrolment carries no publisher signature")
+
+// ErrSignatureRequired reports an enrolment refused because this host takes
+// only signed packages. The caller has to tell it from a failure too, because
+// the answer is to publish a signature and not to try again.
+var ErrSignatureRequired = errors.New("the host enrols only packages a publisher signed")
+
+// verifyBundle is the offline check a signature is put through. It is a
+// variable so that a test can drive the answer the authority acts on; nothing
+// in cpak replaces it, and the default is pinned by a test that compares it
+// with signature.Verify itself.
+var verifyBundle = signature.Verify
+
 // Enrolment is what the ledger records: the anchor, and the policy its policy
 // root was taken over. The policy is kept because two hashes cannot be ordered
 // against each other. Without it nobody can tell an update that narrows what an
@@ -58,6 +85,45 @@ var ErrAnchorDowngrade = errors.New("integrity anchor generation would go backwa
 type Enrolment struct {
 	integrity.Anchor
 	Policy *types.Override `json:"policy,omitempty"`
+
+	// Signature is the publisher signature the installation was verified
+	// against, and it is the bundle and not a verdict. A verdict would be the
+	// authority's word for something a reader can prove for itself, and
+	// proving it needs no network: an administrator reading this ledger on a
+	// machine with no internet reaches the same answer the authority did.
+	Signature *SignedState `json:"signature,omitempty"`
+}
+
+// SignedState is what a publisher signed and the bundle that proves it.
+type SignedState struct {
+	State  signature.State `json:"state"`
+	Bundle []byte          `json:"bundle"`
+}
+
+// Signer is who signed this enrolment, checked here and now rather than read
+// off the record. It answers ErrUnsigned when there is no signature at all,
+// which is a different fact from a signature that does not stand and from one
+// made by somebody who may not speak for this origin.
+func (e Enrolment) Signer() (signature.Verified, error) {
+	if e.Signature == nil {
+		return signature.Verified{}, ErrUnsigned
+	}
+	return e.Signature.Signer(e.Origin)
+}
+
+// Signer on the state is the same question asked of a signature that is not in
+// the ledger yet, which is how an installer proves one before it offers it.
+// The origin is the caller's, never the payload's: a payload can name any
+// origin it likes and only the certificate says who signed.
+func (s SignedState) Signer(origin string) (signature.Verified, error) {
+	verified, err := verifyBundle(s.Bundle, s.State)
+	if err != nil {
+		return signature.Verified{}, fmt.Errorf("the signature of %s does not stand: %w", origin, err)
+	}
+	if !verified.Identity.MatchesOrigin(origin) {
+		return signature.Verified{}, fmt.Errorf("the signature of %s was made by %q", origin, verified.Identity.Repo)
+	}
+	return verified, nil
 }
 
 // AnchorLedger is where the enrolled applications are recorded. Every launch
@@ -127,6 +193,9 @@ func (l AnchorLedger) Record(enrolment Enrolment) error {
 	if err := validateEnrolment(enrolment); err != nil {
 		return err
 	}
+	if err := l.admitSignature(enrolment); err != nil {
+		return err
+	}
 	path, err := l.anchorPath(enrolment.UID, enrolment.Origin)
 	if err != nil {
 		return err
@@ -174,6 +243,45 @@ func (l AnchorLedger) Forget(uid uint32, origin string) error {
 	return nil
 }
 
+// admitSignature is where a signature stops being the caller's word.
+//
+// A bundle that does not stand is never written down. A record naming a signer
+// nobody can prove would be read as provenance by everything downstream of it,
+// which is worse than a record that names none. And a host that takes only
+// signed packages refuses the enrolment outright: the application stays on
+// disk, unenrolled, which is the state the enforcement level already answers
+// for, so the two settings compose instead of each inventing a refusal.
+func (l AnchorLedger) admitSignature(enrolment Enrolment) error {
+	_, err := enrolment.Signer()
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrUnsigned) {
+		return err
+	}
+	required, err := l.signaturesRequired()
+	if err != nil {
+		return err
+	}
+	if required {
+		return fmt.Errorf("%w: %s", ErrSignatureRequired, enrolment.Origin)
+	}
+	return nil
+}
+
+// signaturesRequired reads the host policy from beside the ledger, which is
+// the only place it is ever read from. A policy that cannot be read is an
+// error rather than a permission: refusing an enrolment costs a user nothing
+// that a reinstall does not give back, and reading a broken file as optional
+// would let whoever broke it decide the answer.
+func (l AnchorLedger) signaturesRequired() (bool, error) {
+	policy, err := EnforcementStore{Directory: l.Directory, OwnerUID: l.OwnerUID}.SignaturePolicy()
+	if err != nil {
+		return false, fmt.Errorf("read the host signature policy: %w", err)
+	}
+	return policy == SignaturesRequired, nil
+}
+
 // authorizationFor says which authorization an enrolment deserves. It is
 // answered from what the ledger already holds against what is offered, so the
 // caller cannot ask for the cheaper one: the request carries no say in this.
@@ -197,13 +305,37 @@ func (l AnchorLedger) authorizationFor(enrolment Enrolment) (string, error) {
 	if enrolment.PolicyRoot == recorded.PolicyRoot {
 		return ActionEnrolAnchor, nil
 	}
-	if recorded.Policy == nil || enrolment.Policy == nil {
-		return ActionWidenAnchor, nil
+	if recorded.Policy != nil && enrolment.Policy != nil && integrity.Restricts(*recorded.Policy, *enrolment.Policy) {
+		return ActionEnrolAnchor, nil
 	}
-	if integrity.Restricts(*recorded.Policy, *enrolment.Policy) {
+	if publisherWidened(recorded, enrolment) {
 		return ActionEnrolAnchor, nil
 	}
 	return ActionWidenAnchor, nil
+}
+
+// publisherWidened reports whether the publisher itself said what changed. An
+// update signed by an identity that may speak for the origin, whose own
+// counter has moved forward, is the publisher stating the new permissions, and
+// that is the whole of what the owner of the machine would be asked to
+// confirm.
+//
+// Both signatures are proven here, so nothing a caller says about either
+// counts. The counter must move forward against one that was proven before,
+// which is what stops an old signed state being replayed to widen an
+// application the publisher has since narrowed; an application nobody signed
+// until now has no counter to order against, so its first signed widening is
+// still put to the owner.
+func publisherWidened(recorded, offered Enrolment) bool {
+	offeredSigner, err := offered.Signer()
+	if err != nil {
+		return false
+	}
+	recordedSigner, err := recorded.Signer()
+	if err != nil {
+		return false
+	}
+	return offeredSigner.State.Generation > recordedSigner.State.Generation
 }
 
 // trustedDirectories proves the ledger root along with the directory holding
@@ -298,6 +430,9 @@ func validateEnrolment(enrolment Enrolment) error {
 	if err := validateAnchor(enrolment.Anchor); err != nil {
 		return err
 	}
+	if err := validateSignedState(enrolment); err != nil {
+		return err
+	}
 	if enrolment.Policy == nil {
 		return nil
 	}
@@ -307,6 +442,35 @@ func validateEnrolment(enrolment Enrolment) error {
 	}
 	if root != enrolment.PolicyRoot {
 		return errors.New("enrolment policy does not hash to its policy root")
+	}
+	return nil
+}
+
+// validateSignedState is the shape of a signature, not its worth. It runs on
+// every read as well as every write, so it must never depend on cryptography:
+// a ledger whose records became unreadable the day a trust root was refreshed
+// would take every launch on the host with it. Whether a signature stands is
+// asked by Signer, where the answer is reported instead of being fatal.
+func validateSignedState(enrolment Enrolment) error {
+	if enrolment.Signature == nil {
+		return nil
+	}
+	if err := enrolment.Signature.State.Validate(); err != nil {
+		return fmt.Errorf("enrolment signed state: %w", err)
+	}
+	// The state names the package it is about, so a bundle covering somebody
+	// else's package can never be filed under this application.
+	if enrolment.Signature.State.Origin != enrolment.Origin {
+		return errors.New("enrolment signed state names another package")
+	}
+	bundle := enrolment.Signature.Bundle
+	if len(bundle) == 0 || len(bundle) > signatureBundleLimit {
+		return errors.New("enrolment signature bundle is not a bundle")
+	}
+	// A bundle is a JSON document and travels the bus as text, so anything
+	// that is not text would fail there instead of here, where it can be named.
+	if !utf8.Valid(bundle) {
+		return errors.New("enrolment signature bundle is not text")
 	}
 	return nil
 }
@@ -324,12 +488,155 @@ func EnrolAnchor(anchor integrity.Anchor) error {
 // that narrows what an application may do from one that widens it, without
 // asking the owner about every install.
 func EnrolAnchorWithPolicy(anchor integrity.Anchor, policy *types.Override) error {
-	if err := validateEnrolment(Enrolment{Anchor: anchor, Policy: policy}); err != nil {
+	return EnrolAnchorWithSignature(anchor, policy, nil)
+}
+
+// EnrolAnchorWithSignature records the anchor, the policy its policy root was
+// taken over, and the publisher signature the installation was verified
+// against.
+//
+// The bundle travels as evidence and never as a verdict: the authority checks
+// it itself, which is what lets it tell an update the publisher stated from
+// one nobody did without believing a word of what the installer says.
+func EnrolAnchorWithSignature(anchor integrity.Anchor, policy *types.Override, signed *SignedState) error {
+	enrolment := Enrolment{Anchor: anchor, Policy: policy, Signature: signed}
+	if err := validateEnrolment(enrolment); err != nil {
 		return err
 	}
-	// The anchor names the application it is about, so the request carries no
-	// second copy of the origin that could disagree with it.
-	return dispatchIntegrity(socketRequest{Action: anchorEnrolAction, Anchor: &anchor, Policy: policy})
+	if signed == nil {
+		// The anchor names the application it is about, so the request carries
+		// no second copy of the origin that could disagree with it.
+		return dispatchIntegrity(socketRequest{Action: anchorEnrolAction, Anchor: &anchor, Policy: policy})
+	}
+	return dispatchSignedEnrolment(enrolment)
+}
+
+// dispatchSignedEnrolment walks the transports a signature can travel. There
+// are two: root writes the ledger it owns, and everybody else goes through the
+// bus, which is what carries an interactive authorization.
+//
+// It does not fall back to the socket. That request carries no signature, and
+// sending the enrolment over it without one would record a signed installation
+// as unsigned, which is the one downgrade this whole design exists to make
+// impossible. A host with no system bus is a host where this is recorded by
+// root, and the caller is told so.
+func dispatchSignedEnrolment(enrolment Enrolment) error {
+	if os.Geteuid() == 0 {
+		return asDowngrade(DefaultAnchorLedger().Record(enrolment))
+	}
+	err := signedEnrolmentOverBus(enrolment)
+	if errors.Is(err, errTransportUnavailable) {
+		return ErrNoAuthority
+	}
+	return asDowngrade(err)
+}
+
+func signedEnrolmentOverBus(enrolment Enrolment) error {
+	connection, err := dbus.ConnectSystemBus()
+	if err != nil {
+		return errTransportUnavailable
+	}
+	defer connection.Close()
+	policy, err := encodePolicy(enrolment.Policy)
+	if err != nil {
+		return err
+	}
+	state, err := json.Marshal(enrolment.Signature.State)
+	if err != nil {
+		return fmt.Errorf("encode the signed state: %w", err)
+	}
+	anchor := enrolment.Anchor
+	call := connection.Object(BusName, ObjectPath).Call(InterfaceName+".EnrolSignedAnchor", 0,
+		int32(anchor.ABI), anchor.UID, anchor.Origin, anchor.Generation,
+		anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, policy,
+		string(state), string(enrolment.Signature.Bundle))
+	if call.Err == nil {
+		return nil
+	}
+	if unreachableOnBus(call.Err) {
+		return errTransportUnavailable
+	}
+	return fmt.Errorf("%s: %w", integritySubject(anchorEnrolAction), call.Err)
+}
+
+// EnrolSignedAnchor is EnrolAnchor with the publisher signature beside it. It
+// is a second method and not more arguments on the first, because what a bus
+// method takes is part of what its callers already speak.
+func (s *Service) EnrolSignedAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, packageRoot, policyRoot, launchRoot, policy, state, bundle string) *dbus.Error {
+	decoded, err := decodePolicy(policy)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	signed, err := decodeSignedState(state, bundle)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	return s.enrolThrough(sender, Enrolment{
+		Anchor: integrity.Anchor{
+			ABI:         int(abi),
+			UID:         uid,
+			Origin:      origin,
+			Generation:  generation,
+			PackageRoot: packageRoot,
+			PolicyRoot:  policyRoot,
+			LaunchRoot:  launchRoot,
+		},
+		Policy:    decoded,
+		Signature: signed,
+	})
+}
+
+// enrolThrough is the enrolment flow once the wire values are back together:
+// prove the request, decide how hard to ask, ask, record.
+func (s *Service) enrolThrough(sender dbus.Sender, enrolment Enrolment) *dbus.Error {
+	if err := validateEnrolment(enrolment); err != nil {
+		return invalidRequest(err)
+	}
+	// A bundle that does not stand is refused before anybody is asked for a
+	// password, because the enrolment cannot be recorded whatever the answer
+	// would have been.
+	if _, err := enrolment.Signer(); err != nil && !errors.Is(err, ErrUnsigned) {
+		return invalidRequest(err)
+	}
+	if s.Authorizer == nil {
+		return denied(errors.New("authorization service is unavailable"))
+	}
+	action, err := s.enrolmentAction(sender, enrolment)
+	if err != nil {
+		return failed(err)
+	}
+	if err := s.Authorizer.Authorize(sender, action, map[string]string{
+		"package-origin": enrolment.Origin,
+		"target-uid":     strconv.FormatUint(uint64(enrolment.UID), 10),
+		"generation":     strconv.FormatUint(enrolment.Generation, 10),
+	}); err != nil {
+		return denied(err)
+	}
+	if err := s.Anchors.Record(enrolment); err != nil {
+		return failed(err)
+	}
+	return nil
+}
+
+// decodeSignedState puts the signature back together from the two plain values
+// the bus carries it as.
+func decodeSignedState(state, bundle string) (*SignedState, error) {
+	if state == "" && bundle == "" {
+		return nil, nil
+	}
+	if len(state) > signatureBundleLimit || len(bundle) > signatureBundleLimit {
+		return nil, errors.New("signed state is too large")
+	}
+	decoder := json.NewDecoder(strings.NewReader(state))
+	decoder.DisallowUnknownFields()
+	decoded := signature.State{}
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("decode the signed state: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("signed state contains multiple JSON values")
+	}
+	return &SignedState{State: decoded, Bundle: []byte(bundle)}, nil
 }
 
 func ForgetAnchor(uid uint32, origin string) error {
@@ -349,6 +656,17 @@ func LoadAnchor(uid uint32, origin string) (integrity.Anchor, bool, error) {
 		return integrity.Anchor{}, false, err
 	}
 	return DefaultAnchorLedger().Load(uid, origin)
+}
+
+// RecordedAnchor answers with the whole record, signature and all, and reads
+// it where it lies for the same reason LoadAnchor does: reading takes no
+// privilege, and what the ledger holds about who published an application has
+// to be readable on a host where nothing is running.
+func RecordedAnchor(uid uint32, origin string) (Enrolment, bool, error) {
+	if err := validateOrigin(origin); err != nil {
+		return Enrolment{}, false, err
+	}
+	return DefaultAnchorLedger().Recorded(uid, origin)
 }
 
 // dispatchIntegrity walks the transports the way the session client does and
@@ -438,7 +756,7 @@ func decodePolicy(encoded string) (*types.Override, error) {
 	if encoded == "" {
 		return nil, nil
 	}
-	if len(encoded) > anchorSizeLimit {
+	if len(encoded) > policySizeLimit {
 		return nil, errors.New("enrolment policy is too large")
 	}
 	decoder := json.NewDecoder(strings.NewReader(encoded))

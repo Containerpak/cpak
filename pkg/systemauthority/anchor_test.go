@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/mirkobrombin/cpak/pkg/integrity"
+	"github.com/mirkobrombin/cpak/pkg/signature"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -418,13 +420,13 @@ func TestServiceDenialDoesNotEnrolAnAnchor(t *testing.T) {
 func TestAnchorMethodsAreCarriedByTheBusInterface(t *testing.T) {
 	arguments := map[string]string{}
 	for _, method := range introspect.Methods(&Service{}) {
-		signature := ""
+		taken := ""
 		for _, argument := range method.Args {
 			if argument.Direction == "in" {
-				signature += argument.Type
+				taken += argument.Type
 			}
 		}
-		arguments[method.Name] = signature
+		arguments[method.Name] = taken
 	}
 	for name, want := range map[string]string{
 		"EnrolAnchor":    "iustssss",
@@ -736,5 +738,542 @@ func TestARecordWithoutAPolicyIsStillAnEnrolment(t *testing.T) {
 	}
 	if recorded.Anchor != anchor || recorded.Policy != nil {
 		t.Fatalf("the record reads back as %+v", recorded)
+	}
+}
+
+// Everything below is the publisher signature: the evidence an enrolment
+// carries, what the authority does with it, and the one prompt it changes.
+//
+// No test here can produce a bundle the shipped trust root accepts, because
+// that needs a certificate Fulcio issued against a real CI token. So the
+// offline check is driven, and two things are pinned separately so that a
+// driven answer can never stand in for no answer at all: that the default
+// checker is the real one, and that the real one refuses what these tests
+// hand it.
+
+func testSignatureIdentity(repo string) signature.Identity {
+	return signature.Identity{
+		Issuer:  "https://token.actions.githubusercontent.com",
+		Subject: "https://" + repo + "/.github/workflows/release.yml@refs/heads/main",
+		Repo:    repo,
+	}
+}
+
+func testSignedState(generation uint64) *SignedState {
+	return &SignedState{
+		State: signature.State{
+			ABI:            signature.ABIVersion,
+			Origin:         testAnchor().Origin,
+			ManifestSHA256: strings.Repeat("ab", 32),
+			ImageDigest:    "sha256:" + strings.Repeat("cd", 32),
+			Generation:     generation,
+		},
+		Bundle: []byte(`{"bundle":"what the publisher attached"}`),
+	}
+}
+
+// useBundleVerifier drives the answer the authority acts on and puts the real
+// one back when the test ends.
+func useBundleVerifier(t *testing.T, verify func([]byte, signature.State) (signature.Verified, error)) {
+	t.Helper()
+
+	saved := verifyBundle
+	t.Cleanup(func() { verifyBundle = saved })
+	verifyBundle = verify
+}
+
+func acceptSignaturesOf(t *testing.T, repo string) {
+	t.Helper()
+
+	useBundleVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+		return signature.Verified{State: state, Identity: testSignatureIdentity(repo)}, nil
+	})
+}
+
+// The test that stops every other test in this file from proving nothing. The
+// authority checks a bundle with pkg/signature and with nothing else, and the
+// real check refuses the bundles these tests are built out of.
+func TestTheAuthorityChecksBundlesWithTheRealVerifier(t *testing.T) {
+	if reflect.ValueOf(verifyBundle).Pointer() != reflect.ValueOf(signature.Verify).Pointer() {
+		t.Fatal("the authority does not verify bundles with pkg/signature")
+	}
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	err := ledger.Record(Enrolment{Anchor: anchor, Signature: testSignedState(1)})
+	if err == nil {
+		t.Fatal("the real verifier accepted a bundle nobody signed")
+	}
+	if errors.Is(err, ErrUnsigned) {
+		t.Fatalf("a bundle that does not stand was reported as no bundle at all: %v", err)
+	}
+	if _, found, err := ledger.Recorded(anchor.UID, anchor.Origin); err != nil || found {
+		t.Fatalf("the refused enrolment reached the ledger: %v, %v", found, err)
+	}
+}
+
+// What a signed enrolment is worth to a reader: the bundle itself, so that
+// whoever reads the ledger afterwards proves it instead of believing the
+// authority, on a machine that may have no network at all.
+func TestASignedEnrolmentRecordsTheBundleAndTheState(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	signed := testSignedState(3)
+	acceptSignaturesOf(t, anchor.Origin)
+
+	if err := ledger.Record(Enrolment{Anchor: anchor, Signature: signed}); err != nil {
+		t.Fatal(err)
+	}
+	recorded, found, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("the signed enrolment was not recorded: %v, %v", found, err)
+	}
+	if recorded.Signature == nil {
+		t.Fatal("the record holds no signature for an enrolment that carried one")
+	}
+	if recorded.Signature.State != signed.State {
+		t.Fatalf("the record holds state %+v, want %+v", recorded.Signature.State, signed.State)
+	}
+	if !bytes.Equal(recorded.Signature.Bundle, signed.Bundle) {
+		t.Fatalf("the record holds bundle %q, want the one that was enrolled", recorded.Signature.Bundle)
+	}
+	signer, err := recorded.Signer()
+	if err != nil {
+		t.Fatalf("the recorded signature does not read back as one: %v", err)
+	}
+	if signer.Identity.Repo != anchor.Origin {
+		t.Fatalf("the recorded signature reads back as made by %q", signer.Identity.Repo)
+	}
+}
+
+// A bundle that does not stand is never written down. A record naming a signer
+// nobody can prove would be read as provenance by everything downstream of it.
+func TestASignatureThatDoesNotStandIsNeverRecorded(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	useBundleVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		return signature.Verified{}, errors.New("no transparency log holds this")
+	})
+
+	if err := ledger.Record(Enrolment{Anchor: anchor, Signature: testSignedState(1)}); err == nil {
+		t.Fatal("a bundle that does not stand was recorded")
+	}
+	if _, found, err := ledger.Recorded(anchor.UID, anchor.Origin); err != nil || found {
+		t.Fatalf("the refused enrolment reached the ledger: %v, %v", found, err)
+	}
+	// The same enrolment, the same bundle, an offline check that accepts it:
+	// the refusal above is about the answer and not about the record.
+	acceptSignaturesOf(t, anchor.Origin)
+	if err := ledger.Record(Enrolment{Anchor: anchor, Signature: testSignedState(1)}); err != nil {
+		t.Fatalf("the same enrolment was refused when its signature stood: %v", err)
+	}
+}
+
+// A signature that checks out and was made by somebody who may not speak for
+// this origin is the one failure that says the artifact is authentic and still
+// not the publisher's. The comparison is the real one.
+func TestASignatureFromAnotherIdentityIsNeverRecorded(t *testing.T) {
+	anchor := testAnchor()
+	for name, identity := range map[string]signature.Identity{
+		"another repository": testSignatureIdentity("github.com/attacker/singularity-desktop"),
+		"a lookalike owner":  testSignatureIdentity("github.com/singularityos-lab-inc/singularity-desktop"),
+		"another issuer":     {Issuer: "https://accounts.google.com", Repo: anchor.Origin},
+		"nobody at all":      {},
+	} {
+		ledger := testAnchorLedger(t)
+		useBundleVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+			return signature.Verified{State: state, Identity: identity}, nil
+		})
+		if err := ledger.Record(Enrolment{Anchor: anchor, Signature: testSignedState(1)}); err == nil {
+			t.Fatalf("%s was recorded as the publisher of %s", name, anchor.Origin)
+		}
+		if _, found, err := ledger.Recorded(anchor.UID, anchor.Origin); err != nil || found {
+			t.Fatalf("%s reached the ledger: %v, %v", name, found, err)
+		}
+	}
+}
+
+// A bundle covering somebody else's package can never be filed under this
+// application, whoever signed it.
+func TestASignedStateMustNameTheApplicationItIsFiledUnder(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	acceptSignaturesOf(t, anchor.Origin)
+	signed := testSignedState(1)
+	signed.State.Origin = "github.com/example/other"
+
+	if err := ledger.Record(Enrolment{Anchor: anchor, Signature: signed}); err == nil {
+		t.Fatal("a signed state about another package was recorded")
+	}
+}
+
+// The host policy. Nothing changes for anybody until an administrator sets it,
+// and once it is set an application no publisher signed is not enrolled at all.
+func TestARequiredSignatureDecidesWhetherAnEnrolmentIsRecorded(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	settings := EnforcementStore{Directory: ledger.Directory, OwnerUID: ledger.OwnerUID}
+	anchor := testAnchor()
+	if err := ledger.Store(anchor); err != nil {
+		t.Fatalf("a host that set no policy refused an unsigned enrolment: %v", err)
+	}
+	if err := ledger.Forget(anchor.UID, anchor.Origin); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := settings.SetSignaturePolicy(SignaturesRequired); err != nil {
+		t.Fatal(err)
+	}
+	err := ledger.Store(anchor)
+	if !errors.Is(err, ErrSignatureRequired) {
+		t.Fatalf("got %v, want a host that requires signatures to refuse an unsigned enrolment", err)
+	}
+	if _, found, err := ledger.Recorded(anchor.UID, anchor.Origin); err != nil || found {
+		t.Fatalf("the refused enrolment reached the ledger: %v, %v", found, err)
+	}
+
+	acceptSignaturesOf(t, anchor.Origin)
+	if err := ledger.Record(Enrolment{Anchor: anchor, Signature: testSignedState(1)}); err != nil {
+		t.Fatalf("a signed enrolment was refused on a host that requires signatures: %v", err)
+	}
+}
+
+// The prompt a signature changes. An update the publisher signed, whose own
+// counter has moved forward, is the publisher saying what changed, so the owner
+// of the machine is not asked to confirm it a second time.
+func TestAPublisherThatSignedAWideningIsNotPutToTheOwner(t *testing.T) {
+	recordedPolicy := types.Override{SocketWayland: true}
+	wider := types.Override{SocketWayland: true, FsHostHome: true}
+	firstRoot := strings.Repeat("a1", 32)
+	secondRoot := strings.Repeat("d4", 32)
+	origin := testAnchor().Origin
+
+	for name, offered := range map[string]struct {
+		held      *SignedState
+		signature *SignedState
+		identity  signature.Identity
+		want      string
+	}{
+		"a widening the publisher signed after the one on record": {
+			held:      testSignedState(4),
+			signature: testSignedState(5),
+			identity:  testSignatureIdentity(origin),
+			want:      ActionEnrolAnchor,
+		},
+		"a widening signed no later than the one on record": {
+			held:      testSignedState(5),
+			signature: testSignedState(5),
+			identity:  testSignatureIdentity(origin),
+			want:      ActionWidenAnchor,
+		},
+		"a widening signed before the one on record": {
+			held:      testSignedState(6),
+			signature: testSignedState(5),
+			identity:  testSignatureIdentity(origin),
+			want:      ActionWidenAnchor,
+		},
+		"a widening nobody signed": {
+			held:     testSignedState(4),
+			identity: testSignatureIdentity(origin),
+			want:     ActionWidenAnchor,
+		},
+		"a signed widening of an application nobody had signed": {
+			signature: testSignedState(5),
+			identity:  testSignatureIdentity(origin),
+			want:      ActionWidenAnchor,
+		},
+		"a widening signed by somebody else": {
+			held:      testSignedState(4),
+			signature: testSignedState(5),
+			identity:  testSignatureIdentity("github.com/attacker/singularity-desktop"),
+			want:      ActionWidenAnchor,
+		},
+	} {
+		ledger := testAnchorLedger(t)
+		// The record is written while every signature stands, so what the
+		// case is about is the offer and never the ability to record.
+		acceptSignaturesOf(t, origin)
+		held := Enrolment{Anchor: anchorOver(t, recordedPolicy, firstRoot, 2), Policy: &recordedPolicy, Signature: offered.held}
+		if err := ledger.Record(held); err != nil {
+			t.Fatal(err)
+		}
+		useBundleVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+			if offered.signature != nil && state == offered.signature.State {
+				return signature.Verified{State: state, Identity: offered.identity}, nil
+			}
+			return signature.Verified{State: state, Identity: testSignatureIdentity(origin)}, nil
+		})
+		widening := Enrolment{Anchor: anchorOver(t, wider, secondRoot, 3), Policy: &wider, Signature: offered.signature}
+		action, err := ledger.authorizationFor(widening)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action != offered.want {
+			t.Fatalf("%s asks for %s, want %s", name, action, offered.want)
+		}
+	}
+}
+
+// A widening whose bundle does not stand is a widening nobody signed, whatever
+// the state inside it says.
+func TestAWideningWhoseSignatureDoesNotStandIsPutToTheOwner(t *testing.T) {
+	policy := types.Override{SocketWayland: true}
+	wider := types.Override{SocketWayland: true, FsHostHome: true}
+	origin := testAnchor().Origin
+	ledger := testAnchorLedger(t)
+	acceptSignaturesOf(t, origin)
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 2), Policy: &policy, Signature: testSignedState(4)}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	widening := Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("d4", 32), 3), Policy: &wider, Signature: testSignedState(5)}
+	if action, err := ledger.authorizationFor(widening); err != nil || action != ActionEnrolAnchor {
+		t.Fatalf("a widening the publisher signed asks for %s, %v", action, err)
+	}
+
+	useBundleVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		return signature.Verified{}, errors.New("no transparency log holds this")
+	})
+	action, err := ledger.authorizationFor(widening)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != ActionWidenAnchor {
+		t.Fatalf("a widening whose signature does not stand asks for %s", action)
+	}
+}
+
+// A record is still readable when its bundle is not. The ledger is what every
+// launch on the host reads, so a trust root that moved on must cost a report
+// its verdict and never cost an application its anchor.
+func TestARecordSurvivesASignatureThatStoppedStanding(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	acceptSignaturesOf(t, anchor.Origin)
+	if err := ledger.Record(Enrolment{Anchor: anchor, Signature: testSignedState(1)}); err != nil {
+		t.Fatal(err)
+	}
+
+	useBundleVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		return signature.Verified{}, errors.New("this certificate chains to nothing this host trusts")
+	})
+	loaded, found, err := ledger.Load(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("a launch could not read the anchor of an application whose signature stopped standing: %v, %v", found, err)
+	}
+	if loaded != anchor {
+		t.Fatalf("the anchor reads back as %+v", loaded)
+	}
+	recorded, _, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recorded.Signer(); err == nil {
+		t.Fatal("a signature that stopped standing still reads as one")
+	}
+}
+
+// The bus is how an unprivileged install reaches the authority, so the
+// signature has to travel it, and what travels has to be described.
+func TestTheSignedEnrolmentIsCarriedByTheBusInterface(t *testing.T) {
+	arguments := map[string]string{}
+	for _, method := range introspect.Methods(&Service{}) {
+		taken := ""
+		for _, argument := range method.Args {
+			if argument.Direction == "in" {
+				taken += argument.Type
+			}
+		}
+		arguments[method.Name] = taken
+	}
+	for name, want := range map[string]string{
+		"EnrolSignedAnchor":  "iustssssss",
+		"SetSignaturePolicy": "s",
+		"EnrolAnchor":        "iustssss",
+	} {
+		if arguments[name] != want {
+			t.Fatalf("%s takes %q on the bus, want %q", name, arguments[name], want)
+		}
+	}
+}
+
+func TestTheServiceRecordsASignedEnrolment(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	authorizer := &testAuthorizer{}
+	service := testAnchorService(ledger, authorizer)
+	anchor := testAnchor()
+	signed := testSignedState(2)
+	acceptSignaturesOf(t, anchor.Origin)
+	state, err := json.Marshal(signed.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dbusErr := service.EnrolSignedAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "",
+		string(state), string(signed.Bundle))
+	if dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	if authorizer.action != ActionEnrolAnchor {
+		t.Fatalf("a first signed install asked for %s", authorizer.action)
+	}
+	recorded, found, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("the signed enrolment was not recorded: %v, %v", found, err)
+	}
+	if recorded.Signature == nil || !bytes.Equal(recorded.Signature.Bundle, signed.Bundle) {
+		t.Fatalf("the record holds %+v, want the bundle that crossed the bus", recorded.Signature)
+	}
+}
+
+// A bundle that does not stand is refused before anybody is asked for a
+// password, because the enrolment could not be recorded whatever the answer.
+func TestTheServiceRefusesASignatureThatDoesNotStandBeforeAuthorization(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	authorizer := &testAuthorizer{}
+	service := testAnchorService(ledger, authorizer)
+	anchor := testAnchor()
+	signed := testSignedState(2)
+	useBundleVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		return signature.Verified{}, errors.New("no transparency log holds this")
+	})
+	state, err := json.Marshal(signed.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dbusErr := service.EnrolSignedAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
+		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "",
+		string(state), string(signed.Bundle))
+	if dbusErr == nil {
+		t.Fatal("a signature that does not stand was accepted")
+	}
+	if authorizer.action != "" {
+		t.Fatal("a signature that does not stand reached the authorization service")
+	}
+}
+
+func TestTheSignaturePolicyActionAsksTheOwnerOfTheMachine(t *testing.T) {
+	defaults := policyDefaults(t)
+	want := [3]string{"no", "no", "auth_admin"}
+	if defaults[ActionSetSignaturePolicy] != want {
+		t.Fatalf("%s is declared as %v, want %v", ActionSetSignaturePolicy, defaults[ActionSetSignaturePolicy], want)
+	}
+}
+
+// The host policy is held beside the enforcement level and proven the same
+// way, so it is pinned the same way: a host that never set it behaves as it
+// always did, and a file nobody can vouch for never decides anything.
+
+func TestTheSignaturePolicyIsOptionalUntilItIsSet(t *testing.T) {
+	store := testEnforcementStore(t)
+	policy, err := store.SignaturePolicy()
+	if err != nil {
+		t.Fatalf("a host that never set a policy answered %v", err)
+	}
+	if policy != SignaturesOptional {
+		t.Fatalf("a host that never set a policy enrols %s signatures", policy)
+	}
+	for _, want := range []SignaturePolicy{SignaturesRequired, SignaturesOptional} {
+		if err := store.SetSignaturePolicy(want); err != nil {
+			t.Fatal(err)
+		}
+		policy, err := store.SignaturePolicy()
+		if err != nil || policy != want {
+			t.Fatalf("the policy reads back as %s, %v", policy, err)
+		}
+	}
+	// The two settings are separate files, so setting one must not answer for
+	// the other.
+	if err := store.Set(EnforcementRefuse); err != nil {
+		t.Fatal(err)
+	}
+	if policy, err := store.SignaturePolicy(); err != nil || policy != SignaturesOptional {
+		t.Fatalf("the enforcement level moved the signature policy to %s, %v", policy, err)
+	}
+}
+
+func TestTheSignaturePolicyRejectsWhatItCannotTrust(t *testing.T) {
+	store := testEnforcementStore(t)
+	if err := store.SetSignaturePolicy(SignaturePolicy("sometimes")); err == nil {
+		t.Fatal("a policy nobody defines was written")
+	}
+	if err := store.SetSignaturePolicy(SignaturesRequired); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Directory, signaturePolicyFileName)
+	if err := os.WriteFile(path, []byte("required, mostly"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SignaturePolicy(); err == nil {
+		t.Fatal("a policy nobody defines was read")
+	}
+	if err := store.SetSignaturePolicy(SignaturesRequired); err != nil {
+		t.Fatal(err)
+	}
+	// The mode is changed rather than written, because a umask decides what a
+	// mode passed to a create becomes and this has to be world writable.
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SignaturePolicy(); err == nil {
+		t.Fatal("a world writable policy was trusted")
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	foreign := store
+	foreign.OwnerUID = store.OwnerUID + 1
+	if _, err := foreign.SignaturePolicy(); err == nil {
+		t.Fatal("a policy written by another user was trusted")
+	}
+}
+
+// The policy decides whether an installation is enrolled, so the account doing
+// the installing must have no way to state it.
+func TestTheSignaturePolicyIsNeverTakenFromTheEnvironment(t *testing.T) {
+	recorded, err := DefaultEnforcementStore().SignaturePolicy()
+	if err != nil {
+		t.Skipf("the signature policy of this host cannot be read here: %v", err)
+	}
+	for _, name := range []string{"CPAK_SIGNATURES", "CPAK_SIGNATURE_POLICY", "SIGNATURES"} {
+		t.Setenv(name, string(SignaturesOptional))
+	}
+	if policy := Signatures(); policy != recorded {
+		t.Fatalf("the environment moved the signature policy to %s", policy)
+	}
+}
+
+func TestServiceAuthorizesEverySignaturePolicyChange(t *testing.T) {
+	store := testEnforcementStore(t)
+	authorizer := &testAuthorizer{}
+	service := Service{Enforcement: store, Authorizer: authorizer}
+	if dbusErr := service.SetSignaturePolicy(":1.20", string(SignaturesRequired)); dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	if authorizer.action != ActionSetSignaturePolicy {
+		t.Fatalf("changing the signature policy asked for %s", authorizer.action)
+	}
+	policy, err := store.SignaturePolicy()
+	if err != nil || policy != SignaturesRequired {
+		t.Fatalf("the authorized policy reads back as %s, %v", policy, err)
+	}
+
+	denying := Service{Enforcement: testEnforcementStore(t), Authorizer: &testAuthorizer{err: errors.New("denied")}}
+	if dbusErr := denying.SetSignaturePolicy(":1.20", string(SignaturesRequired)); dbusErr == nil {
+		t.Fatal("authorization denial was ignored")
+	}
+	if policy, err := denying.Enforcement.SignaturePolicy(); err != nil || policy != SignaturesOptional {
+		t.Fatalf("a denied change left the policy at %s, %v", policy, err)
+	}
+}
+
+func TestServiceRejectsAPolicyItDoesNotKnowBeforeAuthorization(t *testing.T) {
+	authorizer := &testAuthorizer{}
+	service := Service{Enforcement: testEnforcementStore(t), Authorizer: authorizer}
+	if dbusErr := service.SetSignaturePolicy(":1.20", "sometimes"); dbusErr == nil {
+		t.Fatal("a policy nobody defines was accepted")
+	}
+	if authorizer.action != "" {
+		t.Fatal("invalid request reached the authorization service")
 	}
 }

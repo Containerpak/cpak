@@ -66,6 +66,20 @@
     </defaults>
   </action>
 
+  <!-- Whether this host enrols packages no publisher signed. Turning it on
+       stops software installing into the ledger for every account on the
+       machine, and turning it off takes that protection away again, so both
+       directions are the owner of the machine's decision. -->
+  <action id="it.cpak.system.set-signature-policy">
+    <description>Set whether cpak enrols packages no publisher signed</description>
+    <message>Authentication is required to change whether cpak enrols packages no publisher signed</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
   <action id="it.cpak.system.set-enforcement">
     <description>Set what cpak does with an application it cannot recognise</description>
     <message>Authentication is required to change how cpak treats an application it cannot recognise</message>

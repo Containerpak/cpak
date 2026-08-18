@@ -64,19 +64,31 @@ func (c *AuditCmd) reportIntegrity(cp *cpak.Cpak) error {
 	for _, state := range anchors {
 		held[state.Origin] = state
 	}
+	// Who published an application is the one thing in this section that
+	// neither the store nor this host can state: it is read out of the
+	// signature the publisher attached, and proven again here rather than
+	// believed from the record that holds it.
+	signatures, err := cp.RecordedSignatures()
+	if err != nil {
+		return fmt.Errorf("read what the integrity anchors hold about publishers: %w", err)
+	}
+	signed := make(map[string]cpak.RecordedSignature, len(signatures))
+	for _, found := range signatures {
+		signed[found.Origin] = found
+	}
 	c.Logger.Info("Integrity records")
 	if len(report.Applications) == 0 {
 		c.Logger.Info("  No application is installed.")
 		return nil
 	}
 	for _, app := range report.Applications {
-		c.reportApplication(app, held[app.Origin])
+		c.reportApplication(app, held[app.Origin], signed[app.Origin])
 	}
-	c.summariseIntegrity(report, anchors)
+	c.summariseIntegrity(report, anchors, signatures)
 	return nil
 }
 
-func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity, anchor cpak.AnchorState) {
+func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity, anchor cpak.AnchorState, signed cpak.RecordedSignature) {
 	name := app.Origin
 	if app.Version != "" {
 		name += " " + app.Version
@@ -88,6 +100,7 @@ func (c *AuditCmd) reportApplication(app cpak.ApplicationIntegrity, anchor cpak.
 	c.Logger.Info("  %s: %d of %d layers bound to a store state, %d of %d prepared checkouts described by the state they were made from",
 		name, app.BoundLayers, app.Layers, app.DescribedCheckouts, app.PreparedCheckouts)
 	c.reportEnrolment(anchor)
+	c.reportSignature(signed)
 	for _, disagreement := range app.Disagreements {
 		c.Logger.Error("    the store contradicts itself: %s", disagreement)
 	}
@@ -115,10 +128,26 @@ func (c *AuditCmd) reportEnrolment(anchor cpak.AnchorState) {
 	}
 }
 
+// reportSignature says who published one application, or that nobody said. It
+// is printed only for an application the ledger answers for at all, because
+// the line above has already said that nothing does.
+func (c *AuditCmd) reportSignature(signed cpak.RecordedSignature) {
+	switch {
+	case !signed.Enrolled:
+		return
+	case signed.Verified:
+		c.Logger.Info("    signed by %s at generation %d, and the signature verifies against the trust root cpak ships with", signed.Identity.Repo, signed.State.Generation)
+	case signed.Unsigned():
+		c.Logger.Warning("    unsigned: no publisher signature was recorded when it was enrolled")
+	default:
+		c.Logger.Error("    a publisher signature was recorded for it and no longer verifies: %v", signed.Reason)
+	}
+}
+
 // summariseIntegrity closes the section. Every sentence here is written to be
 // read by someone who would like to believe their store was checked, so none of
 // them says it was.
-func (c *AuditCmd) summariseIntegrity(report cpak.StoreIntegrity, anchors []cpak.AnchorState) {
+func (c *AuditCmd) summariseIntegrity(report cpak.StoreIntegrity, anchors []cpak.AnchorState, signatures []cpak.RecordedSignature) {
 	disagreements := report.Disagreements()
 	unbound := report.UnboundLayers()
 	undescribed := report.UndescribedCheckouts()
@@ -138,8 +167,10 @@ func (c *AuditCmd) summariseIntegrity(report cpak.StoreIntegrity, anchors []cpak
 		c.Logger.Success("Every layer is bound to a state the store holds, every prepared checkout has the shape that state describes, and nothing disagrees. That is the store agreeing with itself.")
 	}
 	c.summariseEnrolment(anchors)
+	c.summariseSignatures(signatures)
 	c.Logger.Info("What no line above says: that the store holds what the publisher shipped. Only the pull that downloaded a layer ties it to the digest a registry named. A binding written at any other moment took whatever the store already held, however it got there, and nothing you can read afterwards tells the two apart.")
-	c.Logger.Info("An anchor adds one thing to that and no more: the application has not changed since it was enrolled. It is written from the installation exactly as it stood at that moment, so nothing here checks a publisher signature either.")
+	c.Logger.Info("An anchor adds one thing to that and no more: the application has not changed since it was enrolled. It is written from the installation exactly as it stood at that moment.")
+	c.Logger.Info("A publisher signature adds a different thing: the manifest and the image that were installed came from the CI of the repository the package is published under, and were not altered on the way. It does not say the software is safe, and it does not survive a repository somebody else took over, because that repository is the identity being proven.")
 	if c.Repair {
 		c.Logger.Info("--repair writes none of these. A pull, an update and --backfill-bindings are the only things that do.")
 	}
@@ -173,6 +204,46 @@ func (c *AuditCmd) summariseEnrolment(anchors []cpak.AnchorState) {
 	if unreadable > 0 {
 		c.Logger.Warning("The integrity anchor of %s could not be read, so this pass says nothing about what claims them.", plural(unreadable, "application"))
 	}
+}
+
+// summariseSignatures closes the half nothing on this machine can state. It
+// names the host policy next to the counts for the same reason the enforcement
+// level is named: unsigned means nothing on its own, and at required it is the
+// reason an installation was not enrolled.
+func (c *AuditCmd) summariseSignatures(signatures []cpak.RecordedSignature) {
+	signed, unsigned, failing := 0, 0, 0
+	for _, found := range signatures {
+		switch {
+		case !found.Enrolled:
+			continue
+		case found.Verified:
+			signed++
+		case found.Unsigned():
+			unsigned++
+		default:
+			failing++
+		}
+	}
+	policy := systemauthority.Signatures()
+	c.Logger.Info("Publisher signatures are %s on this host. cpak system signatures says what each policy does.", policy)
+	if failing > 0 {
+		c.Logger.Error("%s recorded with a publisher signature that no longer verifies. Either the trust root moved on under it or the record was changed, and until it is installed again nothing can say who published it.", plural(failing, "application is"))
+	}
+	if unsigned > 0 {
+		c.Logger.Warning("%s enrolled with no publisher signature at all. %s", plural(unsigned, "application is"), signatureConsequence(policy))
+	}
+	if signed > 0 {
+		c.Logger.Info("%s enrolled with a publisher signature that verifies. The identity above is the repository whose CI signed the state that was installed.", plural(signed, "application is"))
+	}
+}
+
+// signatureConsequence turns the policy into what it costs, which is the only
+// part of it a reader needs.
+func signatureConsequence(policy systemauthority.SignaturePolicy) string {
+	if policy == systemauthority.SignaturesRequired {
+		return "At this policy an installation nobody signed is not enrolled at all, so those were enrolled before it was set."
+	}
+	return "At this policy they are enrolled and the record says they were unsigned. At required they would not be enrolled at all."
 }
 
 // enrolmentConsequence turns the level into the sentence that matters, which is

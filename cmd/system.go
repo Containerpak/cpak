@@ -16,8 +16,8 @@ import (
 )
 
 type SystemCmd struct {
-	Action string `arg:"action" help:"Action: setup, remove, status, enforcement, set-enforcement, explain, register-session or remove-session"`
-	Target string `arg:"target" help:"Enforcement level for set-enforcement, installed package origin for explain"`
+	Action string `arg:"action" help:"Action: setup, remove, status, enforcement, set-enforcement, signatures, set-signatures, explain, register-session or remove-session"`
+	Target string `arg:"target" help:"Enforcement level for set-enforcement, signature policy for set-signatures, installed package origin for explain"`
 
 	ID          string `cli:"id" help:"Session identifier for the session actions"`
 	Origin      string `cli:"origin" help:"Package origin for the session actions"`
@@ -53,6 +53,10 @@ func (c *SystemCmd) Run() error {
 		return c.reportEnforcement()
 	case "set-enforcement":
 		return c.setEnforcement()
+	case "signatures":
+		return c.reportSignaturePolicy()
+	case "set-signatures":
+		return c.setSignaturePolicy()
 	case "explain":
 		return c.explain()
 	case "register-session", "remove-session":
@@ -98,7 +102,98 @@ func (c *SystemCmd) reportEnforcement() error {
 	c.Logger.Info("  refuse  it does not start")
 	c.Logger.Info("No level changes what happens to an application the store contradicts itself about, or to one that is not the launch its anchor names: those do not start at any level.")
 	c.Logger.Info("cpak audit says which applications are enrolled, and cpak system explain ORIGIN says what the ledger holds for one of them.")
+	c.Logger.Info("What gets an application enrolled in the first place is decided separately, by cpak system signatures.")
 	return nil
+}
+
+// reportSignaturePolicy says what this host does about a package no publisher
+// signed, and then how to see the whole of it work. The walkthrough is printed
+// because the two settings only make sense together: this one decides what is
+// enrolled, the enforcement level decides what an unenrolled application may
+// still do, and neither sentence is much use without the other.
+func (c *SystemCmd) reportSignaturePolicy() error {
+	c.Logger.Info("Publisher signatures are %s.", systemauthority.Signatures())
+	c.Logger.Info("  optional  an installation nobody signed is enrolled, and the record says it was unsigned")
+	c.Logger.Info("  required  an installation nobody signed is not enrolled at all: the software stays installed and answers to nothing")
+	c.Logger.Info("A signature says the manifest and the image that were installed came from the CI of the repository the package is published under, and were not altered on the way. It does not say the software is safe, and it does not survive a repository somebody else took over.")
+	c.Logger.Info("This policy decides enrolment and never a launch. What happens to an application nothing has enrolled is the enforcement level, which cpak system enforcement sets.")
+	c.Logger.Info("To follow it end to end:")
+	c.Logger.Info("  1. publish a signed release. docs/publishing-signatures.md has the workflow, and it needs no key and no secret: the identity in the certificate is the repository itself.")
+	c.Logger.Info("  2. cpak install ORIGIN, then cpak audit. The application reads as signed by the repository that published it, at the generation the publisher counted.")
+	c.Logger.Info("  3. cpak system set-signatures required.")
+	c.Logger.Info("  4. install a package nobody signed. It installs, it is not enrolled, and it says so as it happens; cpak audit says it again afterwards.")
+	c.Logger.Info("  5. cpak system set-signatures optional puts the host back where it was.")
+	return nil
+}
+
+// setSignaturePolicy changes what this host takes, for every account on it, so
+// it is the owner of the machine's decision and it goes through the authority.
+func (c *SystemCmd) setSignaturePolicy() error {
+	policy, err := signaturePolicyValue(c.Target)
+	if err != nil {
+		return err
+	}
+	escalated, err := c.applySignaturePolicy(policy)
+	if err != nil {
+		return fmt.Errorf("set the signature policy: %w", err)
+	}
+	if !escalated {
+		c.Logger.Success("Publisher signatures are now %s.", policy)
+	}
+	return c.reportSignatureConsequences(policy)
+}
+
+func (c *SystemCmd) applySignaturePolicy(policy systemauthority.SignaturePolicy) (bool, error) {
+	err := systemauthority.SetSignaturePolicy(policy)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, systemauthority.ErrNoAuthority) || os.Geteuid() == 0 {
+		return false, err
+	}
+	return true, runPrivileged("system", "set-signatures", string(policy))
+}
+
+// reportSignatureConsequences says what the policy just set costs the
+// applications that are installed now. Nothing is unenrolled by setting it,
+// which is exactly why it has to be said: the cost arrives later, at the next
+// install or update of an application no signature stands for.
+func (c *SystemCmd) reportSignatureConsequences(policy systemauthority.SignaturePolicy) error {
+	// Root here is the escalated step, whose store is not the one the question
+	// is about. The process that escalated reads the right one and prints this.
+	if policy != systemauthority.SignaturesRequired || os.Geteuid() == 0 {
+		return nil
+	}
+	cp, err := cpak.NewCpak()
+	if err != nil {
+		return fmt.Errorf("read what the integrity anchors hold about publishers: %w", err)
+	}
+	signatures, err := cp.RecordedSignatures()
+	if err != nil {
+		return fmt.Errorf("read what the integrity anchors hold about publishers: %w", err)
+	}
+	unsigned := make([]string, 0, len(signatures))
+	for _, found := range signatures {
+		if found.Enrolled && !found.Verified {
+			unsigned = append(unsigned, found.Origin)
+		}
+	}
+	if len(unsigned) == 0 {
+		return nil
+	}
+	c.Logger.Warning("No publisher signature stands for these, and they are enrolled: %s", strings.Join(unsigned, ", "))
+	c.Logger.Info("They keep the anchors they have and they keep starting. What changes is the next time one of them actually changes: the installation that comes out of it is not enrolled, it no longer matches the anchor it left behind, and from that moment the enforcement level decides what happens to it.")
+	return nil
+}
+
+func signaturePolicyValue(value string) (systemauthority.SignaturePolicy, error) {
+	switch systemauthority.SignaturePolicy(strings.ToLower(strings.TrimSpace(value))) {
+	case systemauthority.SignaturesOptional:
+		return systemauthority.SignaturesOptional, nil
+	case systemauthority.SignaturesRequired:
+		return systemauthority.SignaturesRequired, nil
+	}
+	return "", fmt.Errorf("unsupported signature policy %q: use optional or required", value)
 }
 
 // setEnforcement changes the level for every account on the host, so it is the
@@ -217,6 +312,7 @@ func (c *SystemCmd) reportExplanation(explanation cpak.LaunchExplanation) {
 	c.Logger.Info("%s", name)
 	c.Logger.Info("  Enforcement: %s", explanation.Enforcement)
 	c.reportLedgerSide(explanation)
+	c.reportPublisher(explanation.Origin)
 	c.Logger.Info("  What a launch derives from the store now")
 	c.reportRoots(explanation.Identity.LaunchRoot, explanation.Identity.PackageRoot, explanation.Identity.PolicyRoot)
 	c.Logger.Info("  Verdict: %s", explanation.Identity.Verdict)
@@ -231,7 +327,29 @@ func (c *SystemCmd) reportExplanation(explanation cpak.LaunchExplanation) {
 	} else {
 		c.Logger.Success("  This launch starts.")
 	}
-	c.Logger.Info("An anchor records the installation as it stood when it was written. That is trust on first install: it says the application has not changed since, and it does not say the store holds what the publisher shipped.")
+	c.Logger.Info("An anchor records the installation as it stood when it was written: it says the application has not changed since, and it does not say the store holds what the publisher shipped.")
+	c.Logger.Info("A publisher signature is the other half and a different claim: the manifest and the image that were installed came from the CI of the repository the package is published under. An application enrolled without one was taken on trust at the moment it was installed.")
+}
+
+// reportPublisher says who signed the installation the ledger holds, proven
+// again here and not read off the record.
+func (c *SystemCmd) reportPublisher(origin string) {
+	cp, err := cpak.NewCpak()
+	if err != nil {
+		c.Logger.Error("  Who published it could not be read: %v", err)
+		return
+	}
+	found := cp.RecordedSignatureOf(origin)
+	switch {
+	case !found.Enrolled:
+		return
+	case found.Verified:
+		c.Logger.Info("  Signed by %s, at the publisher generation %d", found.Identity.Repo, found.State.Generation)
+	case found.Unsigned():
+		c.Logger.Warning("  Unsigned: no publisher signature was recorded when it was enrolled")
+	default:
+		c.Logger.Error("  A publisher signature was recorded for it and no longer verifies: %v", found.Reason)
+	}
 }
 
 func (c *SystemCmd) reportLedgerSide(explanation cpak.LaunchExplanation) {
