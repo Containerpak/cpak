@@ -21,6 +21,10 @@ const (
 
 func legacyStore(t *testing.T, layers ...string) Cpak {
 	t.Helper()
+	// The legacy layout is the path taken when no storage service answers, so
+	// the answer has to come from the test and not from whatever the machine
+	// running it happens to have installed.
+	t.Setenv("CPAK_STORAGE_DRIVER_BINARY", filepath.Join(t.TempDir(), "absent"))
 	root := t.TempDir()
 	for _, layer := range layers {
 		if err := os.MkdirAll(filepath.Join(root, "layers", layer), 0755); err != nil {
