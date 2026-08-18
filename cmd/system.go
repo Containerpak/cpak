@@ -5,6 +5,8 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +14,15 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
+	"github.com/mirkobrombin/cpak/pkg/tools"
+	"github.com/mirkobrombin/cpak/pkg/trustpolicy"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
 type SystemCmd struct {
-	Action string `arg:"action" help:"Action: setup, remove, status, enforcement, set-enforcement, signatures, set-signatures, explain, register-session or remove-session"`
-	Target string `arg:"target" help:"Enforcement level for set-enforcement, signature policy for set-signatures, installed package origin for explain"`
+	Action string `arg:"action" help:"Action: setup, remove, status, enforcement, set-enforcement, signatures, set-signatures, trust, set-trust, ceiling, set-ceiling, explain, register-session or remove-session"`
+	Target string `arg:"target" help:"Enforcement level for set-enforcement, signature policy for set-signatures, policy file for set-trust and set-ceiling, installed package origin for explain"`
 
 	ID          string `cli:"id" help:"Session identifier for the session actions"`
 	Origin      string `cli:"origin" help:"Package origin for the session actions"`
@@ -49,6 +54,14 @@ func (c *SystemCmd) Run() error {
 			return err
 		}
 		return systemauthority.Uninstall()
+	case "trust":
+		return c.reportTrust()
+	case "set-trust":
+		return c.setTrust()
+	case "ceiling":
+		return c.reportCeiling()
+	case "set-ceiling":
+		return c.setCeiling()
 	case "enforcement":
 		return c.reportEnforcement()
 	case "set-enforcement":
@@ -383,4 +396,138 @@ func orNothing(value string) string {
 		return "could not be derived"
 	}
 	return value
+}
+
+// reportCeiling says what this host allows at most. It is not privileged: an
+// application that will not do what its manifest promises is something the
+// person running it has to be able to explain without asking anyone.
+func (c *SystemCmd) reportCeiling() error {
+	ceiling, err := systemauthority.DefaultCeilingStore().Load()
+	if err != nil {
+		return err
+	}
+	if !ceiling.Present {
+		c.Logger.Info("This host sets no ceiling: an application is allowed what its manifest asks and its owner permits.")
+		c.Logger.Info("cpak system set-ceiling FILE reads a policy from a cpak.json override file and makes it the maximum.")
+		return nil
+	}
+	c.Logger.Info("This host allows an application at most:")
+	tools.PrintStructKeyVal(ceiling.Policy)
+	c.Logger.Info("Whatever a manifest asks and whatever an owner permits is held to this, whoever published the application and whether or not it is signed.")
+	c.Logger.Info("cpak system set-ceiling none removes it.")
+	return nil
+}
+
+// setCeiling takes a file rather than a flag per permission, because a ceiling
+// is one decision about a whole policy and setting it a field at a time would
+// leave the host in states nobody chose.
+func (c *SystemCmd) setCeiling() error {
+	if err := refuseSudoedStore(); err != nil {
+		return err
+	}
+	if c.Target == "" {
+		return fmt.Errorf("name the file the ceiling is read from, or none to remove it")
+	}
+	// The file is read and understood before anyone is asked to authenticate,
+	// so a mistyped path costs a message and not an administrator password.
+	policy := types.NewOverride()
+	removing := strings.EqualFold(c.Target, "none")
+	if !removing {
+		data, readErr := os.ReadFile(c.Target)
+		if readErr != nil {
+			return fmt.Errorf("read the ceiling: %w", readErr)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if decodeErr := decoder.Decode(&policy); decodeErr != nil {
+			return fmt.Errorf("read the ceiling from %s: %w", c.Target, decodeErr)
+		}
+		if validateErr := types.ValidateFilesystemPermissions(policy.Filesystem); validateErr != nil {
+			return fmt.Errorf("read the ceiling from %s: %w", c.Target, validateErr)
+		}
+	}
+	if os.Geteuid() != 0 {
+		return runPrivileged("system", "set-ceiling", c.Target)
+	}
+	store := systemauthority.DefaultCeilingStore()
+	if removing {
+		if err := store.Clear(); err != nil {
+			return err
+		}
+		c.Logger.Success("This host no longer sets a ceiling.")
+		return nil
+	}
+	if err := store.Store(policy); err != nil {
+		return err
+	}
+	c.Logger.Success("This host now allows an application at most what %s describes.", c.Target)
+	c.Logger.Info("An application already running keeps the policy it started with until it is restarted.")
+	return nil
+}
+
+// reportTrust says who this host is willing to run software from. It is not
+// privileged, because an application that will not install is something the
+// person in front of the machine has to be able to explain.
+func (c *SystemCmd) reportTrust() error {
+	policy, err := systemauthority.DefaultTrustStore().Policy()
+	if err != nil {
+		return err
+	}
+	if policy.Empty() {
+		c.Logger.Info("This host has decided nothing: any origin may be installed and any publisher may sign for it.")
+		c.Logger.Info("cpak system set-trust FILE reads a policy that says which origins and which signers are allowed.")
+		return nil
+	}
+	c.Logger.Info("This host allows software on these terms:")
+	tools.PrintStructKeyVal(policy)
+	c.Logger.Info("An origin, a publisher or a generation this policy does not allow is not enrolled, whatever it is signed with.")
+	c.Logger.Info("cpak system set-trust none removes it.")
+	return nil
+}
+
+// setTrust takes a file for the same reason the ceiling does: it is one
+// decision about a whole policy, and setting it a field at a time would leave
+// the host in states nobody chose.
+func (c *SystemCmd) setTrust() error {
+	if err := refuseSudoedStore(); err != nil {
+		return err
+	}
+	if c.Target == "" {
+		return fmt.Errorf("name the file the trust policy is read from, or none to remove it")
+	}
+	// The file is understood before anyone authenticates, so a mistyped path
+	// costs a message rather than an administrator password.
+	policy := trustpolicy.Policy{}
+	removing := strings.EqualFold(c.Target, "none")
+	if !removing {
+		data, readErr := os.ReadFile(c.Target)
+		if readErr != nil {
+			return fmt.Errorf("read the trust policy: %w", readErr)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if decodeErr := decoder.Decode(&policy); decodeErr != nil {
+			return fmt.Errorf("read the trust policy from %s: %w", c.Target, decodeErr)
+		}
+		if validateErr := policy.Validate(); validateErr != nil {
+			return fmt.Errorf("read the trust policy from %s: %w", c.Target, validateErr)
+		}
+	}
+	if os.Geteuid() != 0 {
+		return runPrivileged("system", "set-trust", c.Target)
+	}
+	store := systemauthority.DefaultTrustStore()
+	if removing {
+		if err := store.Clear(); err != nil {
+			return err
+		}
+		c.Logger.Success("This host no longer decides who may publish what.")
+		return nil
+	}
+	if err := store.Set(policy); err != nil {
+		return err
+	}
+	c.Logger.Success("This host now allows software on the terms %s describes.", c.Target)
+	c.Logger.Info("An application already enrolled keeps its anchor: the policy is applied the next time one is recorded.")
+	return nil
 }

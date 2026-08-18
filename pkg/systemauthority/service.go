@@ -25,6 +25,7 @@ type Service struct {
 	Registry    Registry
 	Anchors     AnchorLedger
 	Enforcement EnforcementStore
+	Trust       TrustStore
 	Authorizer  Authorizer
 
 	// CallerUID names the account behind a bus name. An enrolment is only the
@@ -241,6 +242,7 @@ func serveBus(ctx context.Context) error {
 		Registry:    DefaultRegistry(),
 		Anchors:     DefaultAnchorLedger(),
 		Enforcement: DefaultEnforcementStore(),
+		Trust:       DefaultTrustStore(),
 		Authorizer:  PolkitAuthorizer{Connection: connection},
 		CallerUID:   busCallerUID(connection),
 	}

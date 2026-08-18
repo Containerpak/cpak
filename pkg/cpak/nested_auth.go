@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -101,12 +102,35 @@ func exportedNestedBinary(app types.Application, requested string) (string, erro
 }
 
 func resolvedOverride(app types.Application) types.Override {
+	return underHostCeiling(requestedOverride(app))
+}
+
+func requestedOverride(app types.Application) types.Override {
 	userOverride, err := LoadOverride(app.Origin, app.Version)
 	if err == nil && !reflect.DeepEqual(userOverride, types.NewOverride()) {
 		return userOverride
 	}
 	return app.ParsedOverride
 }
+
+// underHostCeiling holds a policy to the widest one this host permits. The
+// manifest asks and the owner of the application may narrow it further, but
+// neither can reach past what the administrator decided, and no signature
+// changes that: who published an application is a different question from how
+// much it is allowed to do here.
+//
+// The intersection is the one nested packages already use, so a ceiling
+// restricts exactly the way a parent restricts a child, rather than by a second
+// set of rules that would drift from it.
+func underHostCeiling(requested types.Override) types.Override {
+	ceiling := hostCeiling()
+	if !ceiling.Present {
+		return requested
+	}
+	return intersectOverrides(ceiling.Policy, requested)
+}
+
+var hostCeiling = func() systemauthority.Ceiling { return systemauthority.HostCeiling() }
 
 func intersectOverrides(parent, child types.Override) types.Override {
 	return types.Override{

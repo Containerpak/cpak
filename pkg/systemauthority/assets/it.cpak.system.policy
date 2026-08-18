@@ -80,6 +80,23 @@
     </defaults>
   </action>
 
+  <!-- Who may publish for this host, which origins it takes software from at
+       all, and which releases have had that trust withdrawn. It is the one
+       decision no package can make for the machine, so it is the owner of the
+       machine's and nobody else's, in both directions: naming an approved
+       publisher protects every account on the host and unnaming one takes that
+       protection away. Reading the policy is not an action, because a caller
+       that cannot read the rules it is judged by cannot explain a refusal. -->
+  <action id="it.cpak.system.set-trust-policy">
+    <description>Set which publishers and origins cpak accepts on this host</description>
+    <message>Authentication is required to change which publishers and origins cpak accepts on this host</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
   <action id="it.cpak.system.set-enforcement">
     <description>Set what cpak does with an application it cannot recognise</description>
     <message>Authentication is required to change how cpak treats an application it cannot recognise</message>

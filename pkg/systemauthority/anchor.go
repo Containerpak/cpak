@@ -208,6 +208,9 @@ func (l AnchorLedger) Record(enrolment Enrolment) error {
 	if err := l.admitSignature(enrolment); err != nil {
 		return err
 	}
+	if err := l.admitTrust(enrolment); err != nil {
+		return err
+	}
 	path, err := l.anchorPath(enrolment.UID, enrolment.Origin)
 	if err != nil {
 		return err
@@ -858,7 +861,7 @@ func asRefusal(err error) error {
 	if err == nil {
 		return nil
 	}
-	for _, refusal := range []error{ErrAnchorDowngrade, ErrSignatureDowngrade, ErrSignatureLost} {
+	for _, refusal := range []error{ErrAnchorDowngrade, ErrSignatureDowngrade, ErrSignatureLost, ErrTrustRefused} {
 		if errors.Is(err, refusal) {
 			return err
 		}
