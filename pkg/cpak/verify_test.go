@@ -106,7 +106,7 @@ func verifiedApplication() types.Application {
 		Version:        "1.0",
 		Branch:         "main",
 		Origin:         testOrigin,
-		ImageDigest:    "sha256:image",
+		ImageDigest:    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 		Config:         `{"config":{"Env":["PATH=/usr/bin"]}}`,
 		ParsedLayers:   []string{verifiedBaseLayer, verifiedTopLayer},
 		ParsedBinaries: []string{"/usr/bin/demo"},
@@ -222,7 +222,7 @@ func TestVerifyLaunchCoversTheEnabledAddons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quiet := types.Application{Origin: "github.com/user/addon", ImageDigest: "sha256:addon"}
+	quiet := types.Application{Origin: "github.com/user/addon", ImageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	withAddon, err := cp.verifyLaunch(app, types.Override{}, nil, []types.Application{quiet})
 	if err != nil {
 		t.Fatal(err)

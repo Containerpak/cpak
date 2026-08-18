@@ -297,7 +297,7 @@ func TestUpdateEnrolsTheApplicationItProduced(t *testing.T) {
 		manifest:    newTestManifest(),
 		layers:      []string{verifiedBaseLayer, verifiedTopLayer},
 		config:      "{}",
-		imageDigest: "sha256:new",
+		imageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 	}
 	results, err := cp.update(testOrigin, stub.deps())
 	if err != nil {
@@ -347,7 +347,7 @@ func TestUpdateSucceedsWhenTheApplicationCannotBeEnrolled(t *testing.T) {
 		manifest:    newTestManifest(),
 		layers:      []string{verifiedBaseLayer, verifiedTopLayer},
 		config:      "{}",
-		imageDigest: "sha256:new",
+		imageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 	}
 	results, err := cp.update(testOrigin, stub.deps())
 	if err != nil {
@@ -360,7 +360,7 @@ func TestUpdateSucceedsWhenTheApplicationCannotBeEnrolled(t *testing.T) {
 		t.Fatalf("the authority was asked %d times, want the update to have tried once", authority.recorded)
 	}
 	stored := storedApplications(t, cp)
-	if len(stored) != 1 || stored[0].ImageDigest != "sha256:new" {
+	if len(stored) != 1 || stored[0].ImageDigest != "sha256:1111111111111111111111111111111111111111111111111111111111111111" {
 		t.Fatalf("got %+v, want the updated application to be the one in the store", stored)
 	}
 }
@@ -1355,5 +1355,42 @@ func TestRequiredSignaturesLeaveAnUnsignedInstallUnenrolled(t *testing.T) {
 	}
 	if _, held := authority.holds(t, testOrigin); held {
 		t.Fatal("the ledger answers for an application this host refused to enrol")
+	}
+}
+
+// The authority refuses a signed enrolment whose anchor does not state the
+// image and the manifest it describes, and it validates that client side before
+// any transport. An enroller that leaves them out therefore makes every signed
+// installation unenrollable, which is what shipped once already because the
+// stub authority in this file records an anchor the real one would refuse.
+func TestTheAnchorAnEnrolmentBuildsStatesWhatASignatureIsCheckedAgainst(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	digest := contentDigest([]byte("the image the anchor has to name"))
+	app := installedFromRegistry(t, cp, registry, digest)
+	published := publishedTestPackage(t)
+
+	if outcome := cp.EnrolPublishedApplication(app, published); outcome.Outcome != EnrolmentRecorded {
+		t.Fatalf("the application was not enrolled: %v", outcome.Reason)
+	}
+	anchor, held := authority.holds(t, app.Origin)
+	if !held {
+		t.Fatal("the ledger holds nothing for an application it just enrolled")
+	}
+	if anchor.ImageDigest != app.ImageDigest {
+		t.Fatalf("the anchor states image %q, want the one the installation resolved, %q", anchor.ImageDigest, app.ImageDigest)
+	}
+	configured, err := manifestDigest(published.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if anchor.ManifestDigest != configured {
+		t.Fatalf("the anchor states manifest %q, want the manifest the installation was configured by, %q", anchor.ManifestDigest, configured)
+	}
+	// The values have to be the shape a signed state names, or the authority
+	// refuses them where they are written rather than where they are compared.
+	if err := anchor.ValidateDigests(); err != nil {
+		t.Fatalf("the anchor an enrolment built is not one the authority accepts: %v", err)
 	}
 }

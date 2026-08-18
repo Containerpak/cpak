@@ -243,9 +243,23 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 		UID:         enrolment.UID,
 		Origin:      app.Origin,
 		Generation:  1,
+		ImageDigest: app.ImageDigest,
 		PackageRoot: packageRoot,
 		PolicyRoot:  policyRoot,
 		LaunchRoot:  integrity.LaunchRoot(packageRoot, policyRoot),
+	}
+	// The manifest is hashed here rather than read out of the signed state, so
+	// that the authority compares two values derived independently instead of
+	// comparing one with itself.
+	if published.Manifest != nil {
+		configured, digestErr := manifestDigest(published.Manifest)
+		if digestErr != nil {
+			return undescribedEnrolment(enrolment, fmt.Errorf("hash the manifest of %s: %w", app.Origin, digestErr), "")
+		}
+		anchor.ManifestDigest = configured
+	}
+	if err := anchor.ValidateDigests(); err != nil {
+		return undescribedEnrolment(enrolment, err, "")
 	}
 	if held {
 		if recorded.LaunchRoot == anchor.LaunchRoot {

@@ -169,7 +169,7 @@ func TestUpdateBranchInstallRefreshesRecord(t *testing.T) {
 		Config:         "{}",
 	})
 
-	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}", imageDigest: "sha256:new"}
+	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}", imageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
 	results, err := c.updateWithOptions(testOrigin, stub.deps(), UpdateOptions{
 		ConfirmPermissions: func([]types.UpdateResult) bool { return true },
 	})
@@ -206,7 +206,7 @@ func TestUpdateBranchInstallRefreshesRecord(t *testing.T) {
 	if len(apps[0].ParsedLayers) != 1 || apps[0].ParsedLayers[0] != "newlayer" {
 		t.Fatalf("expected the new layers to be stored, got %v", apps[0].ParsedLayers)
 	}
-	if apps[0].ImageDigest != "sha256:new" {
+	if apps[0].ImageDigest != "sha256:1111111111111111111111111111111111111111111111111111111111111111" {
 		t.Fatalf("expected the resolved image digest, got %q", apps[0].ImageDigest)
 	}
 }

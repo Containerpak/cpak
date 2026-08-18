@@ -26,7 +26,7 @@ func TestRollbackRestoresPreviousInstallation(t *testing.T) {
 	}
 	seedApplication(t, c, previous)
 
-	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}", imageDigest: "sha256:new"}
+	stub := &updateStub{manifest: newTestManifest(), layers: []string{"newlayer"}, config: "{}", imageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
 	results, err := c.update(testOrigin, stub.deps())
 	if err != nil {
 		t.Fatalf("update returned an error: %v", err)

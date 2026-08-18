@@ -30,7 +30,7 @@ func auditedApplication(origin, id string, layers ...string) types.Application {
 		Version:      "1.0",
 		Branch:       "main",
 		Origin:       origin,
-		ImageDigest:  "sha256:image",
+		ImageDigest:  "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 		Config:       `{"config":{"Env":["PATH=/usr/bin"]}}`,
 		ParsedLayers: layers,
 	}

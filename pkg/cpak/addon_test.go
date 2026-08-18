@@ -152,7 +152,7 @@ func TestContainerPolicyHashChangesWithAddon(t *testing.T) {
 	}
 	with, err := containerPolicyHash(override, nil, []types.Application{{
 		CpakId:       "sdk",
-		ImageDigest:  "sha256:one",
+		ImageDigest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
 		ParsedLayers: []string{"base", "sdk"},
 	}})
 	if err != nil {

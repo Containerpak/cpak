@@ -34,7 +34,7 @@ func measuredApplication(layers ...string) types.Application {
 		Version:      "1.0",
 		Branch:       "main",
 		Origin:       testOrigin,
-		ImageDigest:  "sha256:image",
+		ImageDigest:  "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 		Config:       `{"config":{"Env":["PATH=/usr/bin"]}}`,
 		ParsedLayers: layers,
 	}
