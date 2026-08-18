@@ -210,7 +210,16 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 
 	// The installation stands: what is left is to record what it is, so that a
 	// launch of it can be recognised. It reports and it never fails an install.
-	c.EnrolApplication(app)
+	//
+	// The manifest goes with it because this is the only moment it exists. What
+	// a publisher signs is the manifest as cpak applied it beside the image it
+	// resolved to, and nothing the store keeps can name that pair afterwards,
+	// so an enrolment that did not get it here can never ask the registry who
+	// published this.
+	c.EnrolPublishedApplication(app, PublishedPackage{
+		Manifest: manifest,
+		Lock:     signedLock(origin, options.ManifestLock),
+	})
 
 	return nil
 }

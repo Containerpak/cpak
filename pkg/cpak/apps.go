@@ -376,8 +376,10 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		// An installation that changed nothing still has to be enrolled: it is
 		// how an application installed before enrolment existed gets an anchor
 		// without being reinstalled. An anchor the ledger already holds costs
-		// nothing here.
-		c.EnrolApplication(updated)
+		// nothing here, and the manifest travels with it because an update is
+		// the other moment cpak holds one: a package the publisher signed since
+		// it was installed is recognised without waiting for it to change.
+		c.EnrolPublishedApplication(updated, PublishedPackage{Manifest: manifest})
 		result.Status = types.UpdateStatusUpToDate
 		return result
 	}
@@ -417,8 +419,11 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		return failedUpdate(result, err)
 	}
 	// The update stands: what the application is has changed, so the anchor
-	// that names it has to change with it or the next launch is refused.
-	c.EnrolApplication(updated)
+	// that names it has to change with it or the next launch is refused. The
+	// manifest the update applied goes with it, because the state a publisher
+	// signed is that manifest and the image it resolved to, and this is the
+	// last moment either of them is in hand.
+	c.EnrolPublishedApplication(updated, PublishedPackage{Manifest: manifest})
 
 	result.Status = types.UpdateStatusUpdated
 	result.NewVersion = updated.Version

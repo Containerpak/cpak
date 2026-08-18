@@ -71,6 +71,18 @@ var ErrUnsigned = errors.New("the enrolment carries no publisher signature")
 // the answer is to publish a signature and not to try again.
 var ErrSignatureRequired = errors.New("the host enrols only packages a publisher signed")
 
+// ErrSignatureDowngrade reports an enrolment whose publisher counter is lower
+// than the one already proven for this application. Nothing about such a
+// bundle fails to verify, because an old bundle is a genuine bundle; what is
+// wrong with it is that the publisher has already replaced what it names.
+var ErrSignatureDowngrade = errors.New("publisher signature generation would go backwards")
+
+// ErrSignatureLost reports an unsigned enrolment offered for an application the
+// ledger already holds a publisher signature for. The record is the only place
+// that fact is kept, so accepting one would turn a signed application into an
+// unsigned one with nothing left to notice it by.
+var ErrSignatureLost = errors.New("the enrolment drops the publisher signature already on record")
+
 // verifyBundle is the offline check a signature is put through. It is a
 // variable so that a test can drive the answer the authority acts on; nothing
 // in cpak replaces it, and the default is pinned by a test that compares it
@@ -209,8 +221,10 @@ func (l AnchorLedger) Record(enrolment Enrolment) error {
 	if err != nil {
 		return err
 	}
-	if found && enrolment.Generation < existing.Generation {
-		return fmt.Errorf("%w: recorded %d, offered %d", ErrAnchorDowngrade, existing.Generation, enrolment.Generation)
+	if found {
+		if err := ordersAfter(existing, enrolment); err != nil {
+			return err
+		}
 	}
 	// A record that states no policy keeps the one already held for the same
 	// policy root: what was proven once stays proven, and dropping it would
@@ -225,6 +239,36 @@ func (l AnchorLedger) Record(enrolment Enrolment) error {
 	data = append(data, '\n')
 	if err := writeAtomic(path, data, 0644); err != nil {
 		return fmt.Errorf("write anchor ledger: %w", err)
+	}
+	return nil
+}
+
+// ordersAfter refuses an enrolment that would put an application back to
+// something it already left. There are two counters and each answers for a
+// different thing, so each is ordered: the anchor's says which installation
+// this is, and the publisher's says which signed state it was proven against.
+//
+// An unordered signed state replays. The bundle of a release the publisher has
+// since replaced still verifies, still names this origin and, once the anchor
+// names the image it covers, still describes a real installation of it; what
+// stops it being offered again is that the ledger remembers a later one.
+//
+// Losing the signature is refused for the same reason and not a softer one.
+// Everything downstream reads the record to answer who published an
+// application, and an enrolment that states nobody would be that answer.
+func ordersAfter(recorded, offered Enrolment) error {
+	if offered.Generation < recorded.Generation {
+		return fmt.Errorf("%w: recorded %d, offered %d", ErrAnchorDowngrade, recorded.Generation, offered.Generation)
+	}
+	if recorded.Signature == nil {
+		return nil
+	}
+	if offered.Signature == nil {
+		return fmt.Errorf("%w: %s", ErrSignatureLost, offered.Origin)
+	}
+	if offered.Signature.State.Generation < recorded.Signature.State.Generation {
+		return fmt.Errorf("%w: recorded %d, offered %d", ErrSignatureDowngrade,
+			recorded.Signature.State.Generation, offered.Signature.State.Generation)
 	}
 	return nil
 }
@@ -308,34 +352,13 @@ func (l AnchorLedger) authorizationFor(enrolment Enrolment) (string, error) {
 	if recorded.Policy != nil && enrolment.Policy != nil && integrity.Restricts(*recorded.Policy, *enrolment.Policy) {
 		return ActionEnrolAnchor, nil
 	}
-	if publisherWidened(recorded, enrolment) {
-		return ActionEnrolAnchor, nil
-	}
+	// A widening is the owner of the machine's call and a publisher cannot
+	// make it for them, however recently it signed. What a publisher signs is
+	// the origin, the manifest and the image, and none of those is the policy
+	// being enrolled: that policy is the user's own override whenever they set
+	// one, so a counter moving forward over an unchanged manifest would be
+	// read as consent to a widening the publisher never saw.
 	return ActionWidenAnchor, nil
-}
-
-// publisherWidened reports whether the publisher itself said what changed. An
-// update signed by an identity that may speak for the origin, whose own
-// counter has moved forward, is the publisher stating the new permissions, and
-// that is the whole of what the owner of the machine would be asked to
-// confirm.
-//
-// Both signatures are proven here, so nothing a caller says about either
-// counts. The counter must move forward against one that was proven before,
-// which is what stops an old signed state being replayed to widen an
-// application the publisher has since narrowed; an application nobody signed
-// until now has no counter to order against, so its first signed widening is
-// still put to the owner.
-func publisherWidened(recorded, offered Enrolment) bool {
-	offeredSigner, err := offered.Signer()
-	if err != nil {
-		return false
-	}
-	recordedSigner, err := recorded.Signer()
-	if err != nil {
-		return false
-	}
-	return offeredSigner.State.Generation > recordedSigner.State.Generation
 }
 
 // trustedDirectories proves the ledger root along with the directory holding
@@ -409,6 +432,9 @@ func validateAnchor(anchor integrity.Anchor) error {
 	if err := validateOrigin(anchor.Origin); err != nil {
 		return err
 	}
+	if err := anchor.ValidateDigests(); err != nil {
+		return err
+	}
 	for _, root := range []string{anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot} {
 		if !anchorRootPattern.MatchString(root) {
 			return errors.New("invalid integrity anchor root")
@@ -463,6 +489,9 @@ func validateSignedState(enrolment Enrolment) error {
 	if enrolment.Signature.State.Origin != enrolment.Origin {
 		return errors.New("enrolment signed state names another package")
 	}
+	if err := bindsTheAnchor(enrolment); err != nil {
+		return err
+	}
 	bundle := enrolment.Signature.Bundle
 	if len(bundle) == 0 || len(bundle) > signatureBundleLimit {
 		return errors.New("enrolment signature bundle is not a bundle")
@@ -471,6 +500,30 @@ func validateSignedState(enrolment Enrolment) error {
 	// that is not text would fail there instead of here, where it can be named.
 	if !utf8.Valid(bundle) {
 		return errors.New("enrolment signature bundle is not text")
+	}
+	return nil
+}
+
+// bindsTheAnchor is what makes a signature a binding and not a label. The
+// anchor says what this launch is made of and the state says what the
+// publisher shipped, and unless the two name the same image and the same
+// manifest the only thing they agree on is an origin, which every other
+// release of that origin agrees on as well.
+//
+// A signed enrolment that leaves either of them out is refused rather than
+// recorded unbound. This runs on every read too, and it costs no record its
+// anchor: nothing outside a test has ever recorded a signature at all, so
+// there is none on any host that lacks them.
+func bindsTheAnchor(enrolment Enrolment) error {
+	if enrolment.ImageDigest == "" || enrolment.ManifestDigest == "" {
+		return errors.New("a signed enrolment must state the image and the manifest its anchor describes")
+	}
+	state := enrolment.Signature.State
+	if state.ImageDigest != enrolment.ImageDigest {
+		return fmt.Errorf("enrolment signed state names image %s and its anchor names %s", state.ImageDigest, enrolment.ImageDigest)
+	}
+	if state.ManifestSHA256 != enrolment.ManifestDigest {
+		return fmt.Errorf("enrolment signed state names manifest %s and its anchor names %s", state.ManifestSHA256, enrolment.ManifestDigest)
 	}
 	return nil
 }
@@ -522,13 +575,13 @@ func EnrolAnchorWithSignature(anchor integrity.Anchor, policy *types.Override, s
 // root, and the caller is told so.
 func dispatchSignedEnrolment(enrolment Enrolment) error {
 	if os.Geteuid() == 0 {
-		return asDowngrade(DefaultAnchorLedger().Record(enrolment))
+		return asRefusal(DefaultAnchorLedger().Record(enrolment))
 	}
 	err := signedEnrolmentOverBus(enrolment)
 	if errors.Is(err, errTransportUnavailable) {
 		return ErrNoAuthority
 	}
-	return asDowngrade(err)
+	return asRefusal(err)
 }
 
 func signedEnrolmentOverBus(enrolment Enrolment) error {
@@ -548,6 +601,7 @@ func signedEnrolmentOverBus(enrolment Enrolment) error {
 	anchor := enrolment.Anchor
 	call := connection.Object(BusName, ObjectPath).Call(InterfaceName+".EnrolSignedAnchor", 0,
 		int32(anchor.ABI), anchor.UID, anchor.Origin, anchor.Generation,
+		anchor.ImageDigest, anchor.ManifestDigest,
 		anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, policy,
 		string(state), string(enrolment.Signature.Bundle))
 	if call.Err == nil {
@@ -562,7 +616,7 @@ func signedEnrolmentOverBus(enrolment Enrolment) error {
 // EnrolSignedAnchor is EnrolAnchor with the publisher signature beside it. It
 // is a second method and not more arguments on the first, because what a bus
 // method takes is part of what its callers already speak.
-func (s *Service) EnrolSignedAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, packageRoot, policyRoot, launchRoot, policy, state, bundle string) *dbus.Error {
+func (s *Service) EnrolSignedAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, imageDigest, manifestDigest, packageRoot, policyRoot, launchRoot, policy, state, bundle string) *dbus.Error {
 	decoded, err := decodePolicy(policy)
 	if err != nil {
 		return invalidRequest(err)
@@ -573,13 +627,15 @@ func (s *Service) EnrolSignedAnchor(sender dbus.Sender, abi int32, uid uint32, o
 	}
 	return s.enrolThrough(sender, Enrolment{
 		Anchor: integrity.Anchor{
-			ABI:         int(abi),
-			UID:         uid,
-			Origin:      origin,
-			Generation:  generation,
-			PackageRoot: packageRoot,
-			PolicyRoot:  policyRoot,
-			LaunchRoot:  launchRoot,
+			ABI:            int(abi),
+			UID:            uid,
+			Origin:         origin,
+			Generation:     generation,
+			ImageDigest:    imageDigest,
+			ManifestDigest: manifestDigest,
+			PackageRoot:    packageRoot,
+			PolicyRoot:     policyRoot,
+			LaunchRoot:     launchRoot,
 		},
 		Policy:    decoded,
 		Signature: signed,
@@ -680,10 +736,10 @@ func dispatchIntegrity(message socketRequest) error {
 		return applyAnchor(DefaultAnchorLedger(), message)
 	}
 	if err := integrityOverBus(message); !errors.Is(err, errTransportUnavailable) {
-		return asDowngrade(err)
+		return asRefusal(err)
 	}
 	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
-		return asDowngrade(err)
+		return asRefusal(err)
 	}
 	return ErrNoAuthority
 }
@@ -794,22 +850,30 @@ func applyAnchor(ledger AnchorLedger, message socketRequest) error {
 	}
 }
 
-// asDowngrade recognises the one refusal a caller has to act on differently
-// after it crossed a transport, where an error is only its own text.
-func asDowngrade(err error) error {
-	if err == nil || errors.Is(err, ErrAnchorDowngrade) {
-		return err
+// asRefusal recognises the refusals a caller has to act on differently after
+// they crossed a transport, where an error is only its own text. Each of them
+// says the enrolment will not be recorded however often it is offered, which
+// is the one thing a retry cannot fix.
+func asRefusal(err error) error {
+	if err == nil {
+		return nil
 	}
-	if strings.Contains(err.Error(), ErrAnchorDowngrade.Error()) {
-		return remoteDowngrade{message: err.Error()}
+	for _, refusal := range []error{ErrAnchorDowngrade, ErrSignatureDowngrade, ErrSignatureLost} {
+		if errors.Is(err, refusal) {
+			return err
+		}
+		if strings.Contains(err.Error(), refusal.Error()) {
+			return remoteRefusal{message: err.Error(), refusal: refusal}
+		}
 	}
 	return err
 }
 
-type remoteDowngrade struct {
+type remoteRefusal struct {
 	message string
+	refusal error
 }
 
-func (e remoteDowngrade) Error() string { return e.message }
+func (e remoteRefusal) Error() string { return e.message }
 
-func (e remoteDowngrade) Unwrap() error { return ErrAnchorDowngrade }
+func (e remoteRefusal) Unwrap() error { return e.refusal }

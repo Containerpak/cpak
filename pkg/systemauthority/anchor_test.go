@@ -33,17 +33,28 @@ func testAnchorLedger(t *testing.T) AnchorLedger {
 	}
 }
 
+// The image and the manifest every anchor in this file describes, and the ones
+// every signed state in it covers. A signature is checked against them, so a
+// fixture that let them drift apart would be testing the refusal and not the
+// thing being refused.
+var (
+	testImageDigest    = "sha256:" + strings.Repeat("cd", 32)
+	testManifestDigest = strings.Repeat("ab", 32)
+)
+
 func testAnchor() integrity.Anchor {
 	packageRoot := strings.Repeat("a1", 32)
 	policyRoot := strings.Repeat("b2", 32)
 	return integrity.Anchor{
-		ABI:         integrity.ABIVersion,
-		UID:         uint32(os.Getuid()),
-		Origin:      "github.com/singularityos-lab/singularity-desktop",
-		Generation:  7,
-		PackageRoot: packageRoot,
-		PolicyRoot:  policyRoot,
-		LaunchRoot:  integrity.LaunchRoot(packageRoot, policyRoot),
+		ABI:            integrity.ABIVersion,
+		UID:            uint32(os.Getuid()),
+		Origin:         "github.com/singularityos-lab/singularity-desktop",
+		Generation:     7,
+		ImageDigest:    testImageDigest,
+		ManifestDigest: testManifestDigest,
+		PackageRoot:    packageRoot,
+		PolicyRoot:     policyRoot,
+		LaunchRoot:     integrity.LaunchRoot(packageRoot, policyRoot),
 	}
 }
 
@@ -286,11 +297,17 @@ func TestAnchorLedgerRejectsAnUnusableAnchor(t *testing.T) {
 	shortRoot.PackageRoot = "a1b2c3"
 	uppercaseRoot := testAnchor()
 	uppercaseRoot.PolicyRoot = strings.ToUpper(uppercaseRoot.PolicyRoot)
+	unprefixedImage := testAnchor()
+	unprefixedImage.ImageDigest = strings.Repeat("cd", 32)
+	prefixedManifest := testAnchor()
+	prefixedManifest.ManifestDigest = "sha256:" + testManifestDigest
 	for name, anchor := range map[string]integrity.Anchor{
-		"another abi":                  otherABI,
-		"a launch root of its own":     forgedLaunchRoot,
-		"a root that is not a digest":  shortRoot,
-		"a root that is not lowercase": uppercaseRoot,
+		"another abi":                     otherABI,
+		"a launch root of its own":        forgedLaunchRoot,
+		"a root that is not a digest":     shortRoot,
+		"a root that is not lowercase":    uppercaseRoot,
+		"an image digest with no prefix":  unprefixedImage,
+		"a manifest digest with a prefix": prefixedManifest,
 	} {
 		if err := ledger.Store(anchor); err == nil {
 			t.Fatalf("an anchor with %s was enrolled", name)
@@ -319,7 +336,7 @@ func TestAuthoritySocketEnrolsAnAnchorWithoutABus(t *testing.T) {
 	older := anchor
 	older.Generation = anchor.Generation - 1
 	request.Anchor = &older
-	err = asDowngrade(requestOverSocket(path, request))
+	err = asRefusal(requestOverSocket(path, request))
 	if !errors.Is(err, ErrAnchorDowngrade) {
 		t.Fatalf("got %v, want a downgrade the caller can recognise", err)
 	}
@@ -467,13 +484,15 @@ func anchorOver(t *testing.T, policy types.Override, packageRoot string, generat
 		t.Fatal(err)
 	}
 	return integrity.Anchor{
-		ABI:         integrity.ABIVersion,
-		UID:         uint32(os.Getuid()),
-		Origin:      testAnchor().Origin,
-		Generation:  generation,
-		PackageRoot: packageRoot,
-		PolicyRoot:  policyRoot,
-		LaunchRoot:  integrity.LaunchRoot(packageRoot, policyRoot),
+		ABI:            integrity.ABIVersion,
+		UID:            uint32(os.Getuid()),
+		Origin:         testAnchor().Origin,
+		Generation:     generation,
+		ImageDigest:    testImageDigest,
+		ManifestDigest: testManifestDigest,
+		PackageRoot:    packageRoot,
+		PolicyRoot:     policyRoot,
+		LaunchRoot:     integrity.LaunchRoot(packageRoot, policyRoot),
 	}
 }
 
@@ -764,8 +783,8 @@ func testSignedState(generation uint64) *SignedState {
 		State: signature.State{
 			ABI:            signature.ABIVersion,
 			Origin:         testAnchor().Origin,
-			ManifestSHA256: strings.Repeat("ab", 32),
-			ImageDigest:    "sha256:" + strings.Repeat("cd", 32),
+			ManifestSHA256: testManifestDigest,
+			ImageDigest:    testImageDigest,
 			Generation:     generation,
 		},
 		Bundle: []byte(`{"bundle":"what the publisher attached"}`),
@@ -936,12 +955,16 @@ func TestARequiredSignatureDecidesWhetherAnEnrolmentIsRecorded(t *testing.T) {
 	}
 }
 
-// The prompt a signature changes. An update the publisher signed, whose own
-// counter has moved forward, is the publisher saying what changed, so the owner
-// of the machine is not asked to confirm it a second time.
-func TestAPublisherThatSignedAWideningIsNotPutToTheOwner(t *testing.T) {
+// The prompt a signature does not change. A publisher signs the origin, the
+// manifest and the image, and none of those is the policy being enrolled: the
+// policy is the user's own override whenever they set one. So a counter that
+// moved forward is the publisher shipping a release and never the publisher
+// agreeing to what this host would hand it.
+func TestEveryWideningIsPutToTheOwnerWhoeverSignedIt(t *testing.T) {
 	recordedPolicy := types.Override{SocketWayland: true}
-	wider := types.Override{SocketWayland: true, FsHostHome: true}
+	// Nothing a publisher ships asks for this. It is the widening a local
+	// override can state, and the one the owner of the machine has to see.
+	wider := types.Override{SocketWayland: true, FsHost: true, AsRoot: true}
 	firstRoot := strings.Repeat("a1", 32)
 	secondRoot := strings.Repeat("d4", 32)
 	origin := testAnchor().Origin
@@ -950,41 +973,40 @@ func TestAPublisherThatSignedAWideningIsNotPutToTheOwner(t *testing.T) {
 		held      *SignedState
 		signature *SignedState
 		identity  signature.Identity
-		want      string
+		stands    bool
 	}{
-		"a widening the publisher signed after the one on record": {
+		"a counter that moved over an unchanged manifest and image": {
 			held:      testSignedState(4),
 			signature: testSignedState(5),
 			identity:  testSignatureIdentity(origin),
-			want:      ActionEnrolAnchor,
+			stands:    true,
 		},
-		"a widening signed no later than the one on record": {
+		"a counter that moved no further than the one on record": {
 			held:      testSignedState(5),
 			signature: testSignedState(5),
 			identity:  testSignatureIdentity(origin),
-			want:      ActionWidenAnchor,
-		},
-		"a widening signed before the one on record": {
-			held:      testSignedState(6),
-			signature: testSignedState(5),
-			identity:  testSignatureIdentity(origin),
-			want:      ActionWidenAnchor,
+			stands:    true,
 		},
 		"a widening nobody signed": {
 			held:     testSignedState(4),
 			identity: testSignatureIdentity(origin),
-			want:     ActionWidenAnchor,
+			stands:   true,
 		},
 		"a signed widening of an application nobody had signed": {
 			signature: testSignedState(5),
 			identity:  testSignatureIdentity(origin),
-			want:      ActionWidenAnchor,
+			stands:    true,
 		},
 		"a widening signed by somebody else": {
 			held:      testSignedState(4),
 			signature: testSignedState(5),
 			identity:  testSignatureIdentity("github.com/attacker/singularity-desktop"),
-			want:      ActionWidenAnchor,
+			stands:    true,
+		},
+		"a widening whose signature does not stand": {
+			held:      testSignedState(4),
+			signature: testSignedState(5),
+			identity:  testSignatureIdentity(origin),
 		},
 	} {
 		ledger := testAnchorLedger(t)
@@ -996,6 +1018,9 @@ func TestAPublisherThatSignedAWideningIsNotPutToTheOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 		useBundleVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+			if !offered.stands {
+				return signature.Verified{}, errors.New("no transparency log holds this")
+			}
 			if offered.signature != nil && state == offered.signature.State {
 				return signature.Verified{State: state, Identity: offered.identity}, nil
 			}
@@ -1006,38 +1031,37 @@ func TestAPublisherThatSignedAWideningIsNotPutToTheOwner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if action != offered.want {
-			t.Fatalf("%s asks for %s, want %s", name, action, offered.want)
+		if action != ActionWidenAnchor {
+			t.Fatalf("%s asks for %s, want %s", name, action, ActionWidenAnchor)
 		}
 	}
 }
 
-// A widening whose bundle does not stand is a widening nobody signed, whatever
-// the state inside it says.
-func TestAWideningWhoseSignatureDoesNotStandIsPutToTheOwner(t *testing.T) {
-	policy := types.Override{SocketWayland: true}
-	wider := types.Override{SocketWayland: true, FsHostHome: true}
+// The other half of the same rule: a signature changes nothing about an update
+// that does not widen, so an application whose publisher signs it is not asked
+// about more often than one whose publisher does not.
+func TestASignatureDoesNotMakeAnOrdinaryUpdateHarder(t *testing.T) {
+	policy := types.Override{SocketWayland: true, Network: true}
+	narrower := types.Override{SocketWayland: true}
 	origin := testAnchor().Origin
-	ledger := testAnchorLedger(t)
-	acceptSignaturesOf(t, origin)
-	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 2), Policy: &policy, Signature: testSignedState(4)}
-	if err := ledger.Record(held); err != nil {
-		t.Fatal(err)
-	}
-	widening := Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("d4", 32), 3), Policy: &wider, Signature: testSignedState(5)}
-	if action, err := ledger.authorizationFor(widening); err != nil || action != ActionEnrolAnchor {
-		t.Fatalf("a widening the publisher signed asks for %s, %v", action, err)
-	}
-
-	useBundleVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
-		return signature.Verified{}, errors.New("no transparency log holds this")
-	})
-	action, err := ledger.authorizationFor(widening)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if action != ActionWidenAnchor {
-		t.Fatalf("a widening whose signature does not stand asks for %s", action)
+	for name, offered := range map[string]types.Override{
+		"an update that leaves the policy alone": policy,
+		"an update that narrows the policy":      narrower,
+	} {
+		ledger := testAnchorLedger(t)
+		acceptSignaturesOf(t, origin)
+		held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 2), Policy: &policy, Signature: testSignedState(4)}
+		if err := ledger.Record(held); err != nil {
+			t.Fatal(err)
+		}
+		update := Enrolment{Anchor: anchorOver(t, offered, strings.Repeat("d4", 32), 3), Policy: &offered, Signature: testSignedState(5)}
+		action, err := ledger.authorizationFor(update)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action != ActionEnrolAnchor {
+			t.Fatalf("%s asks for %s, want %s", name, action, ActionEnrolAnchor)
+		}
 	}
 }
 
@@ -1085,7 +1109,7 @@ func TestTheSignedEnrolmentIsCarriedByTheBusInterface(t *testing.T) {
 		arguments[method.Name] = taken
 	}
 	for name, want := range map[string]string{
-		"EnrolSignedAnchor":  "iustssssss",
+		"EnrolSignedAnchor":  "iustssssssss",
 		"SetSignaturePolicy": "s",
 		"EnrolAnchor":        "iustssss",
 	} {
@@ -1108,7 +1132,8 @@ func TestTheServiceRecordsASignedEnrolment(t *testing.T) {
 	}
 
 	dbusErr := service.EnrolSignedAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "",
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest,
+		anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "",
 		string(state), string(signed.Bundle))
 	if dbusErr != nil {
 		t.Fatal(dbusErr)
@@ -1122,6 +1147,11 @@ func TestTheServiceRecordsASignedEnrolment(t *testing.T) {
 	}
 	if recorded.Signature == nil || !bytes.Equal(recorded.Signature.Bundle, signed.Bundle) {
 		t.Fatalf("the record holds %+v, want the bundle that crossed the bus", recorded.Signature)
+	}
+	// The bus has to carry what the bundle is checked against as well, or the
+	// authority would be checking it against an anchor that describes nothing.
+	if recorded.ImageDigest != anchor.ImageDigest || recorded.ManifestDigest != anchor.ManifestDigest {
+		t.Fatalf("the record names image %q and manifest %q", recorded.ImageDigest, recorded.ManifestDigest)
 	}
 }
 
@@ -1142,7 +1172,8 @@ func TestTheServiceRefusesASignatureThatDoesNotStandBeforeAuthorization(t *testi
 	}
 
 	dbusErr := service.EnrolSignedAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "",
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest,
+		anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "",
 		string(state), string(signed.Bundle))
 	if dbusErr == nil {
 		t.Fatal("a signature that does not stand was accepted")
@@ -1275,5 +1306,181 @@ func TestServiceRejectsAPolicyItDoesNotKnowBeforeAuthorization(t *testing.T) {
 	}
 	if authorizer.action != "" {
 		t.Fatal("invalid request reached the authorization service")
+	}
+}
+
+// What makes a signature a binding rather than a label. A bundle that verifies
+// and names this origin is not evidence about this installation unless it also
+// names the image it is made of and the manifest it is configured by.
+
+func TestASignedStateMustCoverWhatTheAnchorDescribes(t *testing.T) {
+	origin := testAnchor().Origin
+	other := strings.Repeat("ef", 32)
+	for name, break_ := range map[string]func(*Enrolment){
+		"an anchor that names no image":      func(e *Enrolment) { e.ImageDigest = "" },
+		"an anchor that names no manifest":   func(e *Enrolment) { e.ManifestDigest = "" },
+		"a bundle covering another image":    func(e *Enrolment) { e.Signature.State.ImageDigest = "sha256:" + other },
+		"a bundle covering another manifest": func(e *Enrolment) { e.Signature.State.ManifestSHA256 = other },
+	} {
+		ledger := testAnchorLedger(t)
+		acceptSignaturesOf(t, origin)
+		enrolment := Enrolment{Anchor: testAnchor(), Signature: testSignedState(1)}
+		break_(&enrolment)
+		if err := ledger.Record(enrolment); err == nil {
+			t.Fatalf("%s was recorded as the provenance of this launch", name)
+		}
+		if _, found, err := ledger.Recorded(enrolment.UID, origin); err != nil || found {
+			t.Fatalf("%s reached the ledger: %v, %v", name, found, err)
+		}
+	}
+	// The same enrolment with the anchor and the state naming one package: the
+	// refusals above are about the binding and not about the record.
+	ledger := testAnchorLedger(t)
+	acceptSignaturesOf(t, origin)
+	if err := ledger.Record(Enrolment{Anchor: testAnchor(), Signature: testSignedState(1)}); err != nil {
+		t.Fatalf("a state naming the image and the manifest of its anchor was refused: %v", err)
+	}
+}
+
+// The attack the binding exists for: a genuine bundle, made by the publisher,
+// for a release of this origin that is not the one on disk.
+func TestABundleForAnotherReleaseOfTheSameOriginIsRefused(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	origin := testAnchor().Origin
+	policy := types.Override{SocketWayland: true}
+	acceptSignaturesOf(t, origin)
+	first := anchorOver(t, policy, strings.Repeat("a1", 32), 1)
+	if err := ledger.Record(Enrolment{Anchor: first, Policy: &policy, Signature: testSignedState(1)}); err != nil {
+		t.Fatal(err)
+	}
+	// A second installation made of another image. The bundle above is
+	// genuine, verifies, and says nothing whatever about this one.
+	second := anchorOver(t, policy, strings.Repeat("d4", 32), 2)
+	second.ImageDigest = "sha256:" + strings.Repeat("ef", 32)
+	err := ledger.Record(Enrolment{Anchor: second, Policy: &policy, Signature: testSignedState(2)})
+	if err == nil {
+		t.Fatal("a bundle for one image was recorded as the provenance of another")
+	}
+	recorded, _, err := ledger.Recorded(first.UID, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded.ImageDigest != first.ImageDigest {
+		t.Fatalf("the refused enrolment changed the recorded image to %s", recorded.ImageDigest)
+	}
+}
+
+// The publisher counter is ordered like the anchor's own, because an old
+// bundle is a genuine bundle and nothing about it fails to verify.
+func TestAnOlderPublisherGenerationIsRefused(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	origin := testAnchor().Origin
+	policy := types.Override{SocketWayland: true}
+	acceptSignaturesOf(t, origin)
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 1), Policy: &policy, Signature: testSignedState(5)}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	replay := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 2), Policy: &policy, Signature: testSignedState(4)}
+	err := ledger.Record(replay)
+	if !errors.Is(err, ErrSignatureDowngrade) {
+		t.Fatalf("got %v, want the replay of an older signed state to be refused", err)
+	}
+	recorded, _, err := ledger.Recorded(held.UID, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded.Signature.State.Generation != 5 {
+		t.Fatalf("the refused enrolment moved the recorded generation to %d", recorded.Signature.State.Generation)
+	}
+	// Re-recording what is held is not going backwards, and neither is moving
+	// forward: only a counter that has already been left is refused.
+	same := held
+	same.Signature = testSignedState(5)
+	if err := ledger.Record(same); err != nil {
+		t.Fatalf("re-recording the signed state on record failed: %v", err)
+	}
+	forward := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 2), Policy: &policy, Signature: testSignedState(6)}
+	if err := ledger.Record(forward); err != nil {
+		t.Fatalf("a later signed state was refused: %v", err)
+	}
+}
+
+// A signed application does not quietly become an unsigned one. The record is
+// the only place that fact is kept, so it is kept by refusing to lose it.
+func TestAnEnrolmentCannotDropTheSignatureOnRecord(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	origin := testAnchor().Origin
+	policy := types.Override{SocketWayland: true}
+	acceptSignaturesOf(t, origin)
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 1), Policy: &policy, Signature: testSignedState(3)}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	unsigned := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 2), Policy: &policy}
+	err := ledger.Record(unsigned)
+	if !errors.Is(err, ErrSignatureLost) {
+		t.Fatalf("got %v, want an unsigned enrolment over a signed one to be refused", err)
+	}
+	recorded, found, err := ledger.Recorded(held.UID, origin)
+	if err != nil || !found {
+		t.Fatalf("the refused enrolment took the record with it: %v, %v", found, err)
+	}
+	if recorded.Signature == nil || recorded.Signature.State.Generation != 3 {
+		t.Fatalf("the record now holds %+v", recorded.Signature)
+	}
+	// The fact is read off the record and never re-proven, so a trust root
+	// that moved on cannot turn a signed application into one anybody may
+	// re-enrol unsigned.
+	useBundleVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		return signature.Verified{}, errors.New("this certificate chains to nothing this host trusts")
+	})
+	if err := ledger.Record(unsigned); !errors.Is(err, ErrSignatureLost) {
+		t.Fatalf("got %v, want a signature that stopped standing to still be a signature on record", err)
+	}
+	// An update that carries one is the way forward, and it is open.
+	acceptSignaturesOf(t, origin)
+	next := unsigned
+	next.Signature = testSignedState(4)
+	if err := ledger.Record(next); err != nil {
+		t.Fatalf("a signed update of a signed application was refused: %v", err)
+	}
+}
+
+// Every refusal a caller has to act on differently has to survive a transport,
+// where an error is only its own text.
+func TestTheRefusalsACallerActsOnSurviveATransport(t *testing.T) {
+	for _, refusal := range []error{ErrAnchorDowngrade, ErrSignatureDowngrade, ErrSignatureLost} {
+		crossed := errors.New("it.cpak.system.Error.Failed: " + refusal.Error() + ": recorded 5, offered 4")
+		if !errors.Is(asRefusal(crossed), refusal) {
+			t.Fatalf("%v does not read back as itself after a transport", refusal)
+		}
+	}
+	if errors.Is(asRefusal(errors.New("the authority is not running")), ErrAnchorDowngrade) {
+		t.Fatal("an unrelated failure reads back as a downgrade")
+	}
+	if asRefusal(nil) != nil {
+		t.Fatal("a transport that succeeded reads back as a refusal")
+	}
+}
+
+// The anchor and the signed state are compared field for field, so the shape
+// each of them allows has to be the same shape. Two packages that disagreed
+// about how a digest is written would refuse every signature ever made, and
+// would refuse it as a package no publisher signed.
+func TestTheAnchorAndTheSignedStateAgreeOnHowADigestIsWritten(t *testing.T) {
+	anchor := testAnchor()
+	state := signature.State{
+		ABI:            signature.ABIVersion,
+		Origin:         anchor.Origin,
+		ManifestSHA256: anchor.ManifestDigest,
+		ImageDigest:    anchor.ImageDigest,
+		Generation:     1,
+	}
+	if err := state.Validate(); err != nil {
+		t.Fatalf("the digests an anchor accepts are not the digests a state accepts: %v", err)
+	}
+	if err := anchor.ValidateDigests(); err != nil {
+		t.Fatalf("the digests a state accepts are not the digests an anchor accepts: %v", err)
 	}
 }

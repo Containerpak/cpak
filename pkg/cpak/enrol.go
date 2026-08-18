@@ -125,6 +125,25 @@ type PublishedPackage struct {
 	Lock     *types.ManifestLock
 }
 
+// signedLock is the lock that belongs in a signed state, which is the lock the
+// package being installed is the root of and never one it merely arrived with.
+//
+// A publisher signs its own manifest beside its own lock, and cpak-sign refuses
+// a lock rooted at another manifest for exactly that reason. An installation
+// resolved through a lock also installs the dependencies that lock pins, and
+// naming the same lock in their states would describe something no publisher of
+// theirs ever signed: a signature that stands would be reported as one that
+// does not.
+func signedLock(origin string, lock *types.ManifestLock) *types.ManifestLock {
+	if lock == nil {
+		return nil
+	}
+	if normalizePackageOrigin(lock.Root.Origin) != normalizePackageOrigin(origin) {
+		return nil
+	}
+	return lock
+}
+
 // EnrolmentSignature is what was found out about who published an
 // installation. Signed, unsigned and a signature that does not stand are three
 // answers and none of them is folded into another.
@@ -248,7 +267,7 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 	if signed == nil && signaturePolicy() == systemauthority.SignaturesRequired {
 		return unsignedEnrolment(enrolment, fmt.Errorf("%w: %w", systemauthority.ErrSignatureRequired, found.Reason))
 	}
-	reportSignature(app.Origin, enrolment.Signature)
+	reportSignature(app.Origin, enrolment.UID, enrolment.Signature)
 
 	if err = recordAnchor(anchor, &policy, signed); err != nil {
 		if errors.Is(err, systemauthority.ErrSignatureRequired) {
@@ -478,19 +497,52 @@ func describeSignature(origin string, signed *systemauthority.SignedState) Enrol
 // only somebody who asked for detail wants; a signature that is attached and
 // does not stand is not, because something is claiming to be the publisher and
 // is not.
-func reportSignature(origin string, found EnrolmentSignature) {
+//
+// An origin that was signed and now arrives unsigned is the third case and it
+// is never quiet. Nothing failed and nothing is refused, which is what makes it
+// worth saying: the publisher stopped signing, or somebody put a package that
+// nobody signed where a signed one used to be, and on a host that has not been
+// set to require signatures this line is the only place either shows up.
+func reportSignature(origin string, uid uint32, found EnrolmentSignature) {
 	switch {
 	case found.Verified:
 		if isVerbose {
 			logger.Printf("%s is signed by %s", origin, found.Identity.Repo)
 		}
 	case found.Unsigned():
+		if signedBefore(uid, origin) {
+			logger.Warnf("%s was signed when it was last enrolled and this one carries no publisher signature at all. It is enrolled as unsigned.", origin)
+			return
+		}
 		if isVerbose {
 			logger.Printf("%s is not signed by anybody, and is enrolled as unsigned", origin)
 		}
-	default:
+	case errors.Is(found.Reason, ErrSignatureUnverified), errors.Is(found.Reason, ErrSignatureForeign):
 		logger.Warnf("A publisher signature is attached to %s and cpak does not accept it: %v. It is enrolled as unsigned.", origin, found.Reason)
+	default:
+		// Everything left is cpak failing to find out rather than a package
+		// failing a check, which is now reachable on every install: a registry
+		// that would not answer must not be reported as a package claiming to
+		// be signed by somebody it is not.
+		logger.Warnf("Who published %s could not be found out: %v. It is enrolled as unsigned.", origin, found.Reason)
 	}
+}
+
+// signedBefore reports whether the ledger holds a signature for this origin,
+// asked before the anchor that is about to replace it is written.
+//
+// The record is what remembers it, so the answer is only ever about the last
+// enrolment: once an origin has been recorded as unsigned it is unsigned, and
+// the downgrade is said once, at the moment it happens, rather than at every
+// enrolment forever after. A ledger that cannot be read says nothing, because a
+// warning about a downgrade nobody can show happened is a warning that trains
+// the reader to ignore the next one.
+func signedBefore(uid uint32, origin string) bool {
+	recorded, held, err := recordedAnchor(uid, origin)
+	if err != nil || !held {
+		return false
+	}
+	return recorded.Signature != nil
 }
 
 // forgetEnrolment drops the anchor of an application that has just been

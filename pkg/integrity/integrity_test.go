@@ -239,3 +239,62 @@ func TestRootsCarryTheABI(t *testing.T) {
 		t.Fatal("the launch root does not distinguish its inputs")
 	}
 }
+
+func boundAnchor() Anchor {
+	packageRoot := strings.Repeat("a1", 32)
+	policyRoot := strings.Repeat("b2", 32)
+	return Anchor{
+		ABI:            ABIVersion,
+		UID:            1000,
+		Origin:         "github.com/bottlesdevs/bottles",
+		Generation:     1,
+		ImageDigest:    "sha256:" + strings.Repeat("cd", 32),
+		ManifestDigest: strings.Repeat("ef", 32),
+		PackageRoot:    packageRoot,
+		PolicyRoot:     policyRoot,
+		LaunchRoot:     LaunchRoot(packageRoot, policyRoot),
+	}
+}
+
+// The two digests are what a publisher signature is compared against, so a
+// value written in a shape no signed state can name is refused where it is
+// written. Silently keeping one would mean a signature that can never match
+// anything, which reads as a package no publisher signed.
+func TestAnAnchorDigestMustBeAShapeASignedStateCanName(t *testing.T) {
+	if err := boundAnchor().ValidateDigests(); err != nil {
+		t.Fatalf("the digests a signed state names were refused: %v", err)
+	}
+	unprefixedImage := boundAnchor()
+	unprefixedImage.ImageDigest = strings.Repeat("cd", 32)
+	prefixedManifest := boundAnchor()
+	prefixedManifest.ManifestDigest = "sha256:" + strings.Repeat("ef", 32)
+	uppercase := boundAnchor()
+	uppercase.ImageDigest = strings.ToUpper(uppercase.ImageDigest)
+	truncated := boundAnchor()
+	truncated.ManifestDigest = strings.Repeat("ef", 16)
+	tagged := boundAnchor()
+	tagged.ImageDigest = "sha256:latest"
+	for name, anchor := range map[string]Anchor{
+		"an image digest with no algorithm": unprefixedImage,
+		"a manifest digest with one":        prefixedManifest,
+		"a digest that is not lowercase":    uppercase,
+		"a digest of the wrong length":      truncated,
+		"a tag where a digest belongs":      tagged,
+	} {
+		if err := anchor.ValidateDigests(); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+// An anchor recorded before the digests existed is still an anchor. What it is
+// not is an anchor a signature can be filed under, and that is decided where
+// signatures are and not here.
+func TestAnAnchorMayStateNoDigestsAtAll(t *testing.T) {
+	anchor := boundAnchor()
+	anchor.ImageDigest = ""
+	anchor.ManifestDigest = ""
+	if err := anchor.ValidateDigests(); err != nil {
+		t.Fatalf("an anchor written before the digests existed was refused: %v", err)
+	}
+}

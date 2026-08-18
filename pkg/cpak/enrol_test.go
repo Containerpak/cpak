@@ -6,6 +6,9 @@ package cpak
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strconv"
@@ -967,5 +970,390 @@ func TestRemoveCarriesTheSignatureToTheInstallationThatRemains(t *testing.T) {
 	}
 	if authority.signature == nil || string(authority.signature.Bundle) != string(bundle) {
 		t.Fatalf("the installation that remains was enrolled with %+v, want the signature the removed one had proven", authority.signature)
+	}
+}
+
+// Everything above enters enrolment through an entry point. What follows drives
+// the two paths a user actually runs, because the check above was written,
+// tested through its own entry point, and called by neither: the one thing no
+// test asserted was that an install reaches it at all.
+
+// publishImage puts an image an install can pull into the test registry: a
+// manifest with no layers and the config blob it names. Nothing here is about
+// layers, only about resolving to the digest a signature is attached to.
+func publishImage(t *testing.T, registry *signatureRegistry, tag string) string {
+	t.Helper()
+
+	config := []byte(`{"architecture":"amd64","os":"linux","config":{}}`)
+	configDigest := contentDigest(config)
+	manifest := []byte(fmt.Sprintf(
+		`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":%d},"layers":[]}`,
+		configDigest, len(config)))
+	digest := contentDigest(manifest)
+	registry.blobs[configDigest] = config
+	registry.manifests[digest] = manifest
+	registry.manifests[tag] = manifest
+	return digest
+}
+
+// The defect this test exists for. An install that stops asking who published
+// what it just put on disk fails here, and it fails for the reason that
+// matters: the state the check was made against is the state that was
+// installed, named from the manifest the install applied and the digest the
+// registry answered with.
+func TestInstallVerifiesThePublisherOfWhatItInstalled(t *testing.T) {
+	cp := newSignatureCpak(t)
+	authority := useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	ref := registry.start(t)
+	digest := publishImage(t, registry, "main")
+	bundle := []byte(`{"bundle":"the one the publisher attached"}`)
+	attachSigned(t, registry, digest, 4, bundle)
+
+	var checked []signature.State
+	useSignatureVerifier(t, func(offered []byte, state signature.State) (signature.Verified, error) {
+		checked = append(checked, state)
+		if string(offered) != string(bundle) {
+			return signature.Verified{}, errors.New("that is not the bundle the registry serves")
+		}
+		return signature.Verified{State: state, Identity: publisherIdentity(testOrigin)}, nil
+	})
+
+	manifest := newTestManifest()
+	manifest.Image = ref.ContextName() + ":main"
+	options := InstallOptions{CreateExports: true, ResolveImageRef: true}
+	if err := cp.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", options); err != nil {
+		t.Fatalf("the install failed: %v", err)
+	}
+
+	if len(checked) == 0 {
+		t.Fatal("the install enrolled the application without ever asking the verifier, so nothing on the install path checks who published a package")
+	}
+	want, err := PackageState(testOrigin, manifest, digest, nil)
+	if err != nil {
+		t.Fatalf("the state of the installed package could not be named: %v", err)
+	}
+	want.Generation = 4
+	if checked[0] != want {
+		t.Fatalf("the bundle was checked against %+v, want the state the install resolved %+v", checked[0], want)
+	}
+	if authority.signature == nil || string(authority.signature.Bundle) != string(bundle) {
+		t.Fatalf("the authority was handed %+v, want the bundle the registry serves", authority.signature)
+	}
+	if authority.signature.State != want {
+		t.Fatalf("the authority was handed state %+v, want the state that was installed %+v", authority.signature.State, want)
+	}
+}
+
+// Signing arrives into a world of packages nobody signed, and the install path
+// is where that has to cost nothing: at the policy every host is on, an origin
+// the registry holds no signature for installs and enrols exactly as it did
+// before any of this existed.
+func TestInstallEnrolsAPackageTheRegistryHoldsNoSignatureFor(t *testing.T) {
+	cp := newSignatureCpak(t)
+	authority := useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	ref := registry.start(t)
+	digest := publishImage(t, registry, "main")
+
+	asked := 0
+	useSignatureVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		asked++
+		return signature.Verified{}, errors.New("nothing is attached to this image")
+	})
+
+	manifest := newTestManifest()
+	manifest.Image = ref.ContextName() + ":main"
+	options := InstallOptions{CreateExports: true, ResolveImageRef: true}
+	if err := cp.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", options); err != nil {
+		t.Fatalf("a package nobody signed did not install: %v", err)
+	}
+
+	installed := storedApplications(t, cp)
+	if len(installed) != 1 || installed[0].ImageDigest != digest {
+		t.Fatalf("got %+v, want the unsigned package installed and resolved to %s", installed, digest)
+	}
+	if asked != 0 {
+		t.Fatalf("the offline check was asked %d times about an image nothing is attached to", asked)
+	}
+	if authority.recorded != 1 {
+		t.Fatalf("the authority was asked %d times to record the installation, want once", authority.recorded)
+	}
+	if authority.signature != nil {
+		t.Fatal("the authority was handed a signature for a package nobody signed")
+	}
+	if _, held := authority.holds(t, testOrigin); !held {
+		t.Fatal("an unsigned package was not enrolled on a host that takes unsigned packages")
+	}
+}
+
+// The other path that holds a manifest. An update resolves a new image, and it
+// is the only moment cpak can find out that the publisher signed this one.
+func TestUpdateVerifiesThePublisherOfWhatItInstalled(t *testing.T) {
+	cp := newSignatureCpak(t)
+	authority := useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	ref := registry.start(t)
+	digest := contentDigest([]byte("the image the update resolved"))
+	bundle := []byte(`{"bundle":"signed"}`)
+	attachSigned(t, registry, digest, 2, bundle)
+	bindLayer(t, cp, verifiedBaseLayer, "state-base")
+	bindLayer(t, cp, verifiedTopLayer, "state-top")
+	seedApplication(t, cp, types.Application{
+		CpakId:         testCpakId("branch", "main"),
+		Name:           "demo",
+		Version:        "main",
+		Branch:         "main",
+		Origin:         testOrigin,
+		ParsedLayers:   []string{verifiedBaseLayer},
+		ParsedBinaries: []string{"/usr/bin/demo"},
+		Config:         "{}",
+	})
+
+	var checked []signature.State
+	useSignatureVerifier(t, func(offered []byte, state signature.State) (signature.Verified, error) {
+		checked = append(checked, state)
+		if string(offered) != string(bundle) {
+			return signature.Verified{}, errors.New("that is not the bundle the registry serves")
+		}
+		return signature.Verified{State: state, Identity: publisherIdentity(testOrigin)}, nil
+	})
+
+	manifest := newTestManifest()
+	manifest.Image = ref.ContextName() + ":main"
+	stub := &updateStub{
+		manifest:    manifest,
+		layers:      []string{verifiedBaseLayer, verifiedTopLayer},
+		config:      "{}",
+		imageDigest: digest,
+	}
+	results, err := cp.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("the update returned an error: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != types.UpdateStatusUpdated {
+		t.Fatalf("got %+v, want one updated application", results)
+	}
+	if len(checked) == 0 {
+		t.Fatal("the update enrolled what it produced without ever asking the verifier, so nothing on the update path checks who published a package")
+	}
+	want, err := PackageState(testOrigin, manifest, digest, nil)
+	if err != nil {
+		t.Fatalf("the state of the updated package could not be named: %v", err)
+	}
+	want.Generation = 2
+	if checked[0] != want {
+		t.Fatalf("the bundle was checked against %+v, want the state the update resolved %+v", checked[0], want)
+	}
+	if authority.signature == nil || string(authority.signature.Bundle) != string(bundle) {
+		t.Fatalf("the authority was handed %+v, want the bundle the registry serves", authority.signature)
+	}
+}
+
+// A publisher that stops signing, or a package nobody signed put where a signed
+// one used to be, is the one unsigned case that is never quiet. Nothing failed
+// and nothing was refused, which is exactly why this line is the only place it
+// shows up on a host that takes unsigned packages.
+func TestAnOriginThatWasSignedAndArrivesUnsignedIsReported(t *testing.T) {
+	cp := newSignatureCpak(t)
+	useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	ref := registry.start(t)
+	digest := contentDigest([]byte("the image that was signed"))
+	attachSigned(t, registry, digest, 1, []byte(`{"bundle":"signed"}`))
+	bindLayer(t, cp, verifiedBaseLayer, "state-base")
+	bindLayer(t, cp, verifiedTopLayer, "state-top")
+
+	signed := verifiedApplication()
+	signed.Image = ref.ContextName() + ":main"
+	signed.ImageDigest = digest
+	signed.CpakId = testCpakId("branch", "main")
+	signed.Version = "main"
+	seedApplication(t, cp, signed)
+
+	unsigned := signed
+	unsigned.CpakId = testCpakId("branch", "stable")
+	unsigned.Version = "stable"
+	unsigned.Branch = "stable"
+	unsigned.ImageDigest = contentDigest([]byte("an image nobody signed"))
+	seedApplication(t, cp, unsigned)
+
+	useSignatureVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+		return signature.Verified{State: state, Identity: publisherIdentity(testOrigin)}, nil
+	})
+	if enrolment := cp.EnrolPublishedApplication(signed, publishedTestPackage(t)); enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the signed installation to be enrolled first", enrolment.Outcome, enrolment.Reason)
+	}
+
+	var enrolment ApplicationEnrolment
+	reported := captureStderr(t, func() {
+		enrolment = cp.EnrolPublishedApplication(unsigned, publishedTestPackage(t))
+	})
+	if enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the unsigned installation to be enrolled anyway", enrolment.Outcome, enrolment.Reason)
+	}
+	if !enrolment.Signature.Unsigned() {
+		t.Fatalf("got signature %+v, want the installation that arrived to be unsigned", enrolment.Signature)
+	}
+	if !strings.Contains(reported, testOrigin) || !strings.Contains(reported, "was signed") {
+		t.Fatalf("got %q on the error stream, want the downgrade of %s reported without anybody asking for detail", reported, testOrigin)
+	}
+}
+
+// The same line stays out of the way when nothing was lost. An origin nobody
+// ever signed is a verbose detail, or every install of every unsigned package
+// warns and the one warning that means something is lost among them.
+func TestAnOriginNobodyEverSignedIsNotReportedAsADowngrade(t *testing.T) {
+	cp := newSignatureCpak(t)
+	useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	app := installedFromRegistry(t, cp, registry, contentDigest([]byte("an image nobody signed")))
+
+	var enrolment ApplicationEnrolment
+	reported := captureStderr(t, func() {
+		enrolment = cp.EnrolPublishedApplication(app, publishedTestPackage(t))
+	})
+	if enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the unsigned installation to be enrolled", enrolment.Outcome, enrolment.Reason)
+	}
+	if reported != "" {
+		t.Fatalf("got %q on the error stream, want an origin nobody ever signed to be enrolled quietly", reported)
+	}
+}
+
+// The lock is half of a signed state and it belongs to one package. An install
+// resolved through a lock installs the dependencies that lock pins too, and
+// naming their states through it would describe something no publisher of
+// theirs ever signed.
+func TestSignedLockTravelsOnlyWithThePackageItIsRootedAt(t *testing.T) {
+	lock := &types.ManifestLock{
+		LockVersion:  types.ManifestLockVersion,
+		Root:         types.LockedPackage{Origin: strings.ToUpper(testOrigin)},
+		Dependencies: []types.LockedPackage{{Origin: "github.com/user/runtime"}},
+	}
+	if got := signedLock(testOrigin, lock); got != lock {
+		t.Fatalf("got %+v, want the lock the installed package is the root of", got)
+	}
+	if got := signedLock("github.com/user/runtime", lock); got != nil {
+		t.Fatalf("got %+v, want a dependency to carry no lock into its signed state", got)
+	}
+	if got := signedLock(testOrigin, nil); got != nil {
+		t.Fatalf("got %+v, want nothing named when there is no lock", got)
+	}
+}
+
+// A registry that will not answer is cpak failing to find out, and it used to
+// be reported as a package claiming a publisher it does not have. Nothing about
+// the installation is refused either way, so the line is all the operator gets
+// and it has to say which of the two happened.
+func TestARegistryThatWillNotAnswerIsNotReportedAsAFailedSignature(t *testing.T) {
+	cp := newSignatureCpak(t)
+	useEnrolmentAuthority(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	app := enrolledApplication(t, cp)
+	app.Image = strings.TrimPrefix(server.URL, "http://") + "/example/app:main"
+	app.ImageDigest = contentDigest([]byte("an image the registry will not talk about"))
+	seedApplication(t, cp, app)
+
+	var enrolment ApplicationEnrolment
+	reported := captureStderr(t, func() {
+		enrolment = cp.EnrolPublishedApplication(app, publishedTestPackage(t))
+	})
+	if enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the installation to be enrolled anyway", enrolment.Outcome, enrolment.Reason)
+	}
+	if enrolment.Signature.Verified || enrolment.Signature.Unsigned() {
+		t.Fatalf("got signature %+v, want a registry that would not answer to be neither signed nor unsigned", enrolment.Signature)
+	}
+	if !strings.Contains(reported, "could not be found out") {
+		t.Fatalf("got %q on the error stream, want it to say who published %s could not be found out", reported, testOrigin)
+	}
+	if strings.Contains(reported, "is attached to") {
+		t.Fatalf("got %q on the error stream, want no claim that a signature is attached to %s", reported, testOrigin)
+	}
+}
+
+// The other half of the same line. Something is claiming to be the publisher
+// and is not, which is a different sentence from a registry that would not
+// answer, and it keeps saying so.
+func TestABundleThatDoesNotStandIsReportedAsAnAttachedSignature(t *testing.T) {
+	cp := newSignatureCpak(t)
+	useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	digest := contentDigest([]byte("the image somebody signed"))
+	attachSigned(t, registry, digest, 1, []byte("a bundle that does not stand"))
+	app := installedFromRegistry(t, cp, registry, digest)
+	useSignatureVerifier(t, func([]byte, signature.State) (signature.Verified, error) {
+		return signature.Verified{}, errors.New("no transparency log holds this")
+	})
+
+	reported := captureStderr(t, func() {
+		if enrolment := cp.EnrolPublishedApplication(app, publishedTestPackage(t)); enrolment.Outcome != EnrolmentRecorded {
+			t.Errorf("got outcome %s (%v), want the installation to be enrolled anyway", enrolment.Outcome, enrolment.Reason)
+		}
+	})
+	if !strings.Contains(reported, "A publisher signature is attached to "+testOrigin) {
+		t.Fatalf("got %q on the error stream, want a bundle that does not stand reported as one attached to %s", reported, testOrigin)
+	}
+}
+
+// The question a host policy exists to answer, asked of the path a user runs.
+// Until the install called the verifier, nothing could acquire a signature at
+// all, so a host set to required could enrol nothing whatever it installed.
+func TestRequiredSignaturesInstallAndEnrolASignedPackage(t *testing.T) {
+	cp := newSignatureCpak(t)
+	authority := useEnrolmentAuthority(t)
+	requireSignatures(t)
+	registry := newSignatureRegistry()
+	ref := registry.start(t)
+	digest := publishImage(t, registry, "main")
+	attachSigned(t, registry, digest, 1, []byte(`{"bundle":"signed"}`))
+	useSignatureVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+		return signature.Verified{State: state, Identity: publisherIdentity(testOrigin)}, nil
+	})
+
+	manifest := newTestManifest()
+	manifest.Image = ref.ContextName() + ":main"
+	options := InstallOptions{CreateExports: true, ResolveImageRef: true}
+	if err := cp.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", options); err != nil {
+		t.Fatalf("a signed package did not install on a host that takes only signed packages: %v", err)
+	}
+	if authority.signed != 1 {
+		t.Fatalf("the authority was handed %d signatures, want the one the install verified", authority.signed)
+	}
+	if _, held := authority.holds(t, testOrigin); !held {
+		t.Fatal("a signed package was not enrolled on a host that takes only signed packages")
+	}
+}
+
+// The same host and an unsigned package: the software installs, because an
+// enrolment never fails an install, and the ledger does not answer for it. That
+// is the policy working, and it is the state the gate refuses launches from.
+func TestRequiredSignaturesLeaveAnUnsignedInstallUnenrolled(t *testing.T) {
+	cp := newSignatureCpak(t)
+	authority := useEnrolmentAuthority(t)
+	requireSignatures(t)
+	registry := newSignatureRegistry()
+	ref := registry.start(t)
+	publishImage(t, registry, "main")
+
+	manifest := newTestManifest()
+	manifest.Image = ref.ContextName() + ":main"
+	options := InstallOptions{CreateExports: true, ResolveImageRef: true}
+	if err := cp.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", options); err != nil {
+		t.Fatalf("an unsigned package did not install on a host that takes only signed packages: %v", err)
+	}
+	if installed := storedApplications(t, cp); len(installed) != 1 {
+		t.Fatalf("got %+v, want the installation to stand although it was not enrolled", installed)
+	}
+	if authority.recorded != 0 {
+		t.Fatalf("the authority was asked %d times to record an unsigned enrolment", authority.recorded)
+	}
+	if _, held := authority.holds(t, testOrigin); held {
+		t.Fatal("the ledger answers for an application this host refused to enrol")
 	}
 }
