@@ -119,8 +119,8 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 			if err != nil {
 				return catalog{}, fmt.Errorf("load %s package manifest: %w", origin, err)
 			}
-			iconURL := strings.TrimSuffix(entry.Manifest, path.Base(entry.Manifest)) + "icon.svg"
-			icon, err := fetchText(ctx, client, iconURL, 512*1024)
+			iconBase := strings.TrimSuffix(entry.Manifest, path.Base(entry.Manifest))
+			icon, rasterIcon, err := loadIcon(ctx, client, iconBase)
 			if err != nil {
 				return catalog{}, fmt.Errorf("load %s icon: %w", origin, err)
 			}
@@ -143,6 +143,7 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 					Name:            truncate(entry.Name, 120),
 					Description:     truncate(description, 500),
 					IconSVG:         icon,
+					IconPNG:         rasterIcon,
 					Permissions:     summarizePermissions(packageManifest.Override),
 					RefType:         "commit",
 					Ref:             commit,
@@ -319,6 +320,30 @@ func fetchJSON(ctx context.Context, client *http.Client, url string, target any)
 	return json.Unmarshal(encoded, target)
 }
 
+// loadIcon answers with the icon a package publishes. An SVG is preferred
+// because it scales, but an upstream whose only mark is a bitmap must still be
+// able to show its own icon, and redrawing someone else's mark as a vector is
+// not something a catalog build gets to decide. Exactly one of the two is
+// returned, and a package with neither is an error rather than a silent
+// placeholder.
+func loadIcon(ctx context.Context, client *http.Client, base string) (string, string, error) {
+	vector, err := fetchText(ctx, client, base+"icon.svg", 512*1024)
+	if err == nil {
+		return vector, "", nil
+	}
+	if !errors.Is(err, errNotFound) {
+		return "", "", err
+	}
+	raster, err := fetch(ctx, client, base+"icon.png", 1024*1024)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return "", "", fmt.Errorf("neither icon.svg nor icon.png is published")
+		}
+		return "", "", err
+	}
+	return "", base64.StdEncoding.EncodeToString(raster), nil
+}
+
 func fetchText(ctx context.Context, client *http.Client, url string, limit int64) (string, error) {
 	encoded, err := fetch(ctx, client, url, limit)
 	return string(encoded), err
@@ -341,6 +366,8 @@ func fetch(ctx context.Context, client *http.Client, url string, limit int64) ([
 	return nil, lastErr
 }
 
+var errNotFound = errors.New("not published")
+
 func fetchOnce(ctx context.Context, client *http.Client, url string, limit int64) ([]byte, bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -359,6 +386,12 @@ func fetchOnce(ctx context.Context, client *http.Client, url string, limit int64
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		retry := response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
+		// A caller looking for an optional file has to tell a file that is not
+		// published from a fetch that went wrong, so that a network fault is
+		// never read as an absence.
+		if response.StatusCode == http.StatusNotFound {
+			return nil, false, fmt.Errorf("%s: %w", url, errNotFound)
+		}
 		return nil, retry, fmt.Errorf("%s returned %s", url, response.Status)
 	}
 	encoded, err := io.ReadAll(io.LimitReader(response.Body, limit+1))

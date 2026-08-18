@@ -5,10 +5,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"image/png"
 	"os"
 	"strings"
 	"sync"
@@ -20,6 +23,7 @@ import (
 	"github.com/srwiley/rasterx"
 	"golang.org/x/exp/shiny/driver"
 	"golang.org/x/exp/shiny/screen"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/mobile/event/key"
@@ -69,7 +73,7 @@ func runGUI(capsule bootstrap.Capsule) {
 		}
 
 		state := &guiState{status: "Ready to install", style: desktopui.CurrentDialogStyle()}
-		icon := renderIcon(capsule.Metadata.IconSVG, capsule.Metadata.Name, 108, state.style)
+		icon := renderIcon(capsule.Metadata.IconSVG, capsule.Metadata.IconPNG, capsule.Metadata.Name, 108, state.style)
 		var dimensions size.Event
 		button := buttonRect(width, height)
 		for {
@@ -317,7 +321,7 @@ func drawCloseButton(target *image.RGBA, bounds image.Rectangle, hovered bool, s
 	}
 }
 
-func renderIcon(encoded, name string, size int, style desktopui.DialogStyle) image.Image {
+func renderIcon(encoded, rasterIcon, name string, size int, style desktopui.DialogStyle) image.Image {
 	iconImage := image.NewRGBA(image.Rect(0, 0, size, size))
 	if encoded != "" {
 		icon, err := oksvg.ReadIconStream(strings.NewReader(encoded), oksvg.IgnoreErrorMode)
@@ -327,6 +331,17 @@ func renderIcon(encoded, name string, size int, style desktopui.DialogStyle) ima
 			raster := rasterx.NewDasher(size, size, scanner)
 			icon.Draw(raster, 1)
 			return iconImage
+		}
+	}
+	// A published mark that only exists as a bitmap is drawn as the bitmap.
+	// The alternative is redrawing somebody else's logo, which a package
+	// installer has no business doing.
+	if rasterIcon != "" {
+		if decoded, err := base64.StdEncoding.DecodeString(rasterIcon); err == nil {
+			if source, err := png.Decode(bytes.NewReader(decoded)); err == nil {
+				xdraw.CatmullRom.Scale(iconImage, iconImage.Bounds(), source, source.Bounds(), draw.Over, nil)
+				return iconImage
+			}
 		}
 	}
 	drawRounded(iconImage, iconImage.Bounds(), 24, style.Accent)

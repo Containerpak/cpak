@@ -39,6 +39,7 @@ type Metadata struct {
 	Name            string       `json:"name"`
 	Description     string       `json:"description"`
 	IconSVG         string       `json:"icon_svg,omitempty"`
+	IconPNG         string       `json:"icon_png,omitempty"`
 	Permissions     []Permission `json:"permissions,omitempty"`
 	RefType         string       `json:"ref_type,omitempty"`
 	Ref             string       `json:"ref,omitempty"`
