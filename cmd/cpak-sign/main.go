@@ -23,7 +23,7 @@ import (
 func main() {
 	arguments := os.Args[1:]
 	command := ""
-	if len(arguments) > 0 && !strings.HasPrefix(arguments[0], "-") {
+	if len(arguments) > 0 && (!strings.HasPrefix(arguments[0], "-") || arguments[0] == "-h" || arguments[0] == "--help") {
 		command = arguments[0]
 		arguments = arguments[1:]
 	}
@@ -36,7 +36,9 @@ func main() {
 		err = buildState(arguments)
 	case "attach":
 		err = attachSignature(arguments)
-	case "help":
+	case "approve":
+		err = approveState(arguments)
+	case "help", "-h", "--help":
 		usage(os.Stdout)
 	default:
 		usage(os.Stderr)
@@ -54,6 +56,8 @@ func usage(writer io.Writer) {
   state    build the package state a publisher signs, with the image tag
            resolved to the digest the payload carries
   attach   attach a signed state to its image as an OCI referrer
+  approve  attach an organisation's counter-signature over a state its
+           publisher already signed
 
 Called with no command, cpak-sign signs a capsule.
 `)

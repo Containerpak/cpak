@@ -12,7 +12,7 @@ GO_UI_ADAPTER_TAGS := $(if $(UI_ADAPTER_TAGS),-tags "$(UI_ADAPTER_TAGS)",)
 all: clean cpak
 
 clean:
-	@rm -f cpak cpak-storaged cpak-installer
+	@rm -f cpak cpak-storaged cpak-installer cpak-sign
 	@rm -f pkg/desktopui/adapter_embedded_*_generated.go
 	@rm -rf $(UI_ADAPTER_BUILD_DIR)
 
@@ -52,6 +52,9 @@ cpak: ui-adapters
 
 storaged:
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cpak-storaged ./cmd/cpak-storaged
+
+sign:
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o cpak-sign ./cmd/cpak-sign
 
 installer: cpak storaged
 	CGO_ENABLED=0 go build $(GO_UI_ADAPTER_TAGS) -trimpath -ldflags="-s -w -X github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=$(DIALOG_BACKEND)" -o /tmp/cpak-installer ./cmd/cpak-installer

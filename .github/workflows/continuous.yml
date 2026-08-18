@@ -84,9 +84,11 @@ jobs:
         run: |
           mkdir -p dist
           make installer VERSION="${VERSION}" UI_ADAPTERS=all
+          make sign
           mv cpak "dist/cpak-linux-${ARCH}"
           mv cpak-storaged "dist/cpak-storaged-linux-${ARCH}"
           mv cpak-installer "dist/cpak-installer-linux-${ARCH}"
+          mv cpak-sign "dist/cpak-sign-linux-${ARCH}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -115,7 +117,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum cpak-linux-* cpak-storaged-linux-* cpak-installer-linux-* > SHA256SUMS
+          sha256sum cpak-linux-* cpak-storaged-linux-* cpak-installer-linux-* cpak-sign-linux-* > SHA256SUMS
 
       - name: Build signed installer catalog
         if: startsWith(github.ref, 'refs/tags/v')
