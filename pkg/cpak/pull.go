@@ -205,6 +205,12 @@ func (c *Cpak) downloadLayer(client *oci.Client, ref oci.Reference, layer oci.De
 	if err = publishFVSLayer(layerInStoreDir, c.fvsLayerPath(digest)); err != nil {
 		return
 	}
+	// The layer has just been proven to be the one the registry named, and the
+	// state it produced is on disk. That instant is the only one in which the
+	// two can be tied together.
+	if err = c.recordLayerBinding(digest); err != nil {
+		return
+	}
 
 	return
 }

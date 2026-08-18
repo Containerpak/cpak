@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/fvs-lab/fvs2d/fvs2dpb"
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
@@ -44,6 +45,7 @@ const (
 var (
 	errStoragePreparationRequired = errors.New("application storage is not prepared")
 	errStorageServiceMissing      = errors.New("cpak storage service is not installed")
+	errLegacyLayerRefused         = errors.New("the store already answers for a layer held in the legacy directory layout")
 )
 
 func (c *Cpak) prepareLayerMount(statePath string, layers []string) (string, string, string, error) {
@@ -63,11 +65,22 @@ func (c *Cpak) prepareLayerMount(statePath string, layers []string) (string, str
 	}
 	if c.storageDriver == nil {
 		if _, _, serviceErr := findStorageDriverService(); errors.Is(serviceErr, errStorageServiceMissing) {
-			if _, legacyErr := c.legacyLayerDirectories(layers); legacyErr == nil {
-				return "", "", "", nil
+			// The directories have to travel to the caller: leaving them out
+			// made the spawn side rebuild the paths itself from an argument it
+			// was given, which nothing had checked.
+			legacyDirs, legacyErr := c.legacyLayerDirectories(layers)
+			if legacyErr == nil {
+				return "", strings.Join(legacyDirs, ":"), "", nil
 			}
-			if _, legacyErr := findStorageService(); legacyErr == nil {
+			if _, fvsErr := findStorageService(); fvsErr == nil {
 				return c.prepareFVSMount(statePath, layers)
+			}
+			// A refusal is a decision and must not reach the caller as a
+			// missing service: the layers are on disk, and what stopped them is
+			// that the store answers for them somewhere the mount was not
+			// looking.
+			if errors.Is(legacyErr, errLegacyLayerRefused) {
+				return "", "", "", legacyErr
 			}
 			return "", "", "", errStorageServiceMissing
 		} else if serviceErr != nil {
@@ -97,6 +110,26 @@ func (c *Cpak) prepareLayerMount(statePath string, layers []string) (string, str
 	return "", strings.Join(lowerDirs, ":"), "", nil
 }
 
+// The legacy directory layout is a plain tree under <store>/layers, left by an
+// installation made before a layer became a repository. It holds no fvs state,
+// so nothing derives what it should contain, no binding names it and no anchor
+// reaches it: a directory here is whatever last wrote to it.
+//
+// It is not measured and filed on first sight. That would put the tree and the
+// record that answers for it in the same hands, which is the shape the prepared
+// checkout measurement already has and the reason that one is a tripwire and
+// not a boundary. A prepared checkout at least has an anchored state its
+// expected shape can be derived from; a legacy directory has none, so the
+// record could never be made into anything stronger than the tripwire.
+//
+// So it is refused, and refused where refusing decides something. A layer the
+// store binds, or holds a state for, already has an answer, and serving a
+// directory that is not that answer is how a launch an anchor recognises ends
+// up mounting a tree no anchor ever covered. A layer with neither can never
+// complete a package root, because integrity.Package.Root refuses a layer with
+// no state and launchPackage refuses a layer with no binding, so no anchor can
+// ever recognise it and for that layer this path keeps working unchanged.
+
 func (c *Cpak) legacyLayerDirectories(layers []string) ([]string, error) {
 	lowerDirs := make([]string, 0, len(layers))
 	for index := len(layers) - 1; index >= 0; index-- {
@@ -107,7 +140,116 @@ func (c *Cpak) legacyLayerDirectories(layers []string) ([]string, error) {
 		}
 		lowerDirs = append(lowerDirs, root)
 	}
+	// The objection is raised only once the whole set has resolved, so a store
+	// that holds no legacy layout still reports that this path does not apply
+	// instead of objecting to layers nobody was about to serve.
+	if err := c.refuseAnsweredLegacyLayers(layers); err != nil {
+		return nil, err
+	}
 	return lowerDirs, nil
+}
+
+// refuseAnsweredLegacyLayers objects to serving the legacy copy of a layer the
+// store already answers for.
+func (c *Cpak) refuseAnsweredLegacyLayers(layers []string) error {
+	bindings, err := c.layerBindings()
+	if err != nil {
+		return err
+	}
+	for _, layer := range layers {
+		if err := c.refuseAnsweredLegacyLayer(bindings, layer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refuseAnsweredLegacyLayer weighs one layer. The binding is asked first and
+// not the state: an attacker who removes the repository of a bound layer leaves
+// the binding standing, and a check that only looked for a state would wave
+// through exactly the launch whose anchor was taken over that binding.
+func (c *Cpak) refuseAnsweredLegacyLayer(bindings integrity.Bindings, layer string) error {
+	bound, err := layerIsBound(bindings, layer)
+	if err != nil {
+		return fmt.Errorf("%w: the binding of %s cannot be read: %w", errLegacyLayerRefused, layer, err)
+	}
+	if bound {
+		return fmt.Errorf("%w: %s is bound to a store state", errLegacyLayerRefused, layer)
+	}
+	stored, err := c.fvsLayerAvailable(layer)
+	if err != nil {
+		return fmt.Errorf("%w: the state of %s cannot be read: %w", errLegacyLayerRefused, layer, err)
+	}
+	if stored {
+		return fmt.Errorf("%w: the store holds a state for %s", errLegacyLayerRefused, layer)
+	}
+	return nil
+}
+
+// layerIsBound answers whether the ledger holds a binding for a layer. A
+// reference the ledger cannot file is answered without a lookup, because it
+// carries no binding and never will; every other failure is returned, so a
+// record that cannot be read stays a refusal instead of becoming a pass.
+func layerIsBound(bindings integrity.Bindings, layer string) (bool, error) {
+	if !bindableLayer(layer) {
+		return false, nil
+	}
+	_, bound, err := bindings.Lookup(layer)
+	return bound, err
+}
+
+// bindableLayer reports whether the binding ledger can file a layer reference
+// at all. It keys on the bare sha256 digest and refuses every other shape. The
+// rule is repeated here rather than read off a failed lookup, so that a lookup
+// which failed for any other reason keeps its meaning.
+func bindableLayer(reference string) bool {
+	digest := strings.TrimPrefix(reference, "sha256:")
+	if len(digest) != 64 {
+		return false
+	}
+	for _, character := range digest {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// legacyLayerFindings names the layers of a launch the store still holds in the
+// legacy directory layout. Nothing else reports them: they carry no fvs state
+// for measureLaunchStates to re-derive, no prepared checkout for
+// measureLaunchCheckouts to walk, and the storage driver index has no entry for
+// them, so a launch that mounts one measures like a launch with nothing to say.
+//
+// measureLaunch must call this and add what it answers to the Unmeasured list
+// of the measurement, which is where a layer the store cannot re-derive
+// belongs. Until it does, a legacy layer is refused at the mount when the store
+// answers for it and served in silence when it does not.
+func (c *Cpak) legacyLayerFindings(layers []string) ([]layerFinding, error) {
+	var findings []layerFinding
+	seen := make(map[string]bool, len(layers))
+	for _, layer := range layers {
+		if seen[layer] {
+			continue
+		}
+		seen[layer] = true
+		root := c.GetInStoreDir("layers", layer)
+		info, err := os.Stat(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read the legacy directory of layer %s: %w", layer, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		findings = append(findings, layerFinding{
+			Layer:  layer,
+			Detail: "the store holds it in the legacy directory layout at " + root + ", which nothing measures",
+		})
+	}
+	return findings, nil
 }
 
 func (c *Cpak) prepareFVSMount(statePath string, layers []string) (string, string, string, error) {
@@ -230,8 +372,11 @@ func (c *Cpak) WithApplicationFilesystem(app types.Application, run func(string)
 		if c.storageDriver == nil {
 			if _, _, serviceErr := findStorageDriverService(); errors.Is(serviceErr, errStorageServiceMissing) {
 				if lowerDirs, err = c.legacyLayerDirectories(app.ParsedLayers); err != nil {
-					if _, legacyErr := findStorageService(); legacyErr == nil {
+					if _, fvsErr := findStorageService(); fvsErr == nil {
 						return c.withFVSMount(app.ParsedLayers, run)
+					}
+					if errors.Is(err, errLegacyLayerRefused) {
+						return err
 					}
 					return errStorageServiceMissing
 				}

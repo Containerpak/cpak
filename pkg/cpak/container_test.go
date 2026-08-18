@@ -5,6 +5,7 @@
 package cpak
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -421,6 +422,10 @@ func TestPrivateApplicationHomeIsPersistentAndRestricted(t *testing.T) {
 	}
 }
 
+// The fallback exists because an application told to use the accessibility bus
+// hangs looking for one that is not there. Whether this machine runs a bus is
+// not something the test can decide, so it asserts the implication in both
+// directions instead of assuming the answer.
 func TestContainerEnvironmentDisablesMissingAtSpiBridge(t *testing.T) {
 	app := types.Application{
 		Config:         `{"config":{}}`,
@@ -430,8 +435,13 @@ func TestContainerEnvironmentDisablesMissingAtSpiBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slicesContain(environment, "NO_AT_BRIDGE=1") {
-		t.Fatalf("missing AT-SPI fallback in %v", environment)
+	hostHasBus := len(atSpiSocketPaths(fmt.Sprintf("%d", os.Getuid()))) > 0
+	disabled := slicesContain(environment, "NO_AT_BRIDGE=1")
+	if hostHasBus && disabled {
+		t.Fatal("the bridge was disabled although this host runs an accessibility bus")
+	}
+	if !hostHasBus && !disabled {
+		t.Fatalf("this host runs no accessibility bus and the bridge was left on: %v", environment)
 	}
 }
 

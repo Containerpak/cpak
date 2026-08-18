@@ -70,7 +70,7 @@ func TestContainerPolicyHashTracksLayerComponents(t *testing.T) {
 	}
 	with, err := containerPolicyHash(override, []types.Application{{
 		CpakId:       "shell",
-		ImageDigest:  "sha256:one",
+		ImageDigest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
 		ParsedLayers: []string{"shell"},
 	}}, nil)
 	if err != nil {

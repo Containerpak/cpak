@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/integrity"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
 )
 
@@ -26,18 +28,25 @@ import (
 const (
 	DefaultSocketPath = "/run/cpak/authority.sock"
 	socketDeadline    = 10 * time.Second
-	requestLimit      = 8 << 10
+
+	// An enrolment carries the policy its policy root was taken over, so a
+	// request is the size of one anchor plus one policy.
+	requestLimit = 48 << 10
 )
 
 var errTransportUnavailable = errors.New("system authority transport is unavailable")
 
 type socketRequest struct {
-	Action      string `json:"action"`
-	ID          string `json:"id"`
-	Origin      string `json:"origin"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Kind        string `json:"kind,omitempty"`
+	Action      string            `json:"action"`
+	ID          string            `json:"id"`
+	Origin      string            `json:"origin"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	UID         uint32            `json:"uid,omitempty"`
+	Anchor      *integrity.Anchor `json:"anchor,omitempty"`
+	Policy      *types.Override   `json:"policy,omitempty"`
+	Level       string            `json:"level,omitempty"`
 }
 
 type socketResponse struct {
@@ -45,12 +54,19 @@ type socketResponse struct {
 }
 
 type socketService struct {
-	Registry  Registry
-	Authorize func(*unix.Ucred) error
+	Registry    Registry
+	Anchors     AnchorLedger
+	Enforcement EnforcementStore
+	Authorize   func(*unix.Ucred) error
 }
 
 func ServeSocket(ctx context.Context, path string) error {
-	service := socketService{Registry: DefaultRegistry(), Authorize: authorizePeerCredentials}
+	service := socketService{
+		Registry:    DefaultRegistry(),
+		Anchors:     DefaultAnchorLedger(),
+		Enforcement: DefaultEnforcementStore(),
+		Authorize:   authorizePeerCredentials,
+	}
 	return service.serve(ctx, path)
 }
 
@@ -148,6 +164,10 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 			return err
 		}
 		return s.Registry.Remove(message.ID, message.Origin)
+	case anchorEnrolAction, anchorForgetAction:
+		return applyAnchor(s.Anchors, message)
+	case enforcementSetAction:
+		return applyEnforcement(s.Enforcement, message)
 	default:
 		return errors.New("unsupported system authority action")
 	}
@@ -161,7 +181,7 @@ func authorizePeerCredentials(credentials *unix.Ucred) error {
 		return errors.New("system authority could not identify the caller")
 	}
 	if credentials.Uid != 0 {
-		return errors.New("changing login sessions over the authority socket requires root")
+		return errors.New("changing what the system authority records over its socket requires root")
 	}
 	return nil
 }

@@ -184,3 +184,67 @@ func validManifestForTest() *types.CpakManifest {
 		Binaries:        []string{"/usr/bin/test"},
 	}
 }
+
+func writeTestOverride(t *testing.T, origin, version, body string, mode os.FileMode) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	local, err := getCpakLocalName(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(home, ".config/cpak/overrides", local, version)
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "cpak.json")
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	// The mode is set again because the umask of the machine running the tests
+	// would otherwise decide what this test is actually testing.
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The override decides the sandbox policy, so a file anyone can rewrite must not
+// be able to decide it.
+func TestLoadOverrideRefusesAFileOthersCanWrite(t *testing.T) {
+	origin := "github.com/containerpak/bottles"
+	writeTestOverride(t, origin, "1", `{"asRoot":false}`, 0666)
+	if _, err := LoadOverride(origin, "1"); err == nil {
+		t.Fatal("a world writable override was accepted")
+	}
+}
+
+func TestLoadOverrideRefusesASymlink(t *testing.T) {
+	origin := "github.com/containerpak/bottles"
+	path := writeTestOverride(t, origin, "1", `{"asRoot":false}`, 0644)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.WriteFile(elsewhere, []byte(`{"asRoot":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOverride(origin, "1"); err == nil {
+		t.Fatal("an override reached through a symlink was accepted")
+	}
+}
+
+func TestLoadOverrideAcceptsAFileOwnedByTheCaller(t *testing.T) {
+	origin := "github.com/containerpak/bottles"
+	writeTestOverride(t, origin, "1", `{"asRoot":true}`, 0644)
+	override, err := LoadOverride(origin, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !override.AsRoot {
+		t.Fatal("the override was read but its content was lost")
+	}
+}

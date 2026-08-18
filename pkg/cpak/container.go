@@ -93,7 +93,14 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	if err != nil {
 		return types.Container{}, err
 	}
-	policyHash, err := containerPolicyHash(override, components, addons)
+	// The gate answers before anything of the application is mounted, and on
+	// the reuse path too: a container that is attached to is a launch as much
+	// as a container that is created.
+	identity, err := c.gateLaunch(app, override, components, addons)
+	if err != nil {
+		return types.Container{}, err
+	}
+	policyHash, err := containerLaunchPolicyHash(containerRuntimePolicyVersion, identity.LaunchRoot, override, components, addons)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -314,13 +321,24 @@ func containerPolicyHash(override types.Override, components, addons []types.App
 }
 
 func containerPolicyHashVersion(runtimeVersion int, override types.Override, components, addons []types.Application) (string, error) {
+	return containerLaunchPolicyHash(runtimeVersion, "", override, components, addons)
+}
+
+// containerLaunchPolicyHash folds the launch root into the key a container is
+// reused by, so that a container cannot outlive the state its launch was
+// recognised as. A launch that carries no root hashes the way it did before
+// there was one, which is what keeps the containers of an unenrolled
+// application from being rebuilt for nothing.
+func containerLaunchPolicyHash(runtimeVersion int, launchRoot string, override types.Override, components, addons []types.Application) (string, error) {
 	policy := struct {
 		Runtime    int                   `json:"runtime"`
+		LaunchRoot string                `json:"launch_root,omitempty"`
 		Override   types.Override        `json:"override"`
 		Components []addonPolicyIdentity `json:"components,omitempty"`
 		Addons     []addonPolicyIdentity `json:"addons,omitempty"`
 	}{
 		Runtime:    runtimeVersion,
+		LaunchRoot: launchRoot,
 		Override:   override,
 		Components: addonPolicyIdentities(components),
 		Addons:     addonPolicyIdentities(addons),
@@ -388,6 +406,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--state-dir", container.StatePath)
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", c.GetInStoreDir("layers"))
+	if override.AsRoot {
+		cmds = append(cmds, "--allow-root")
+	}
 	cmds = append(cmds, "--lower-dir", container.FVSLayerMountPath)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)

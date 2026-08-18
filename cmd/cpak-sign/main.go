@@ -2,91 +2,65 @@
  * Copyright (c) 2025 Fabricators and Mirko Brombin <brombin94@gmail.com>
  * SPDX-License-Identifier: LGPL-2.1-only
  */
+
+// Command cpak-sign signs the two things a publisher can determine off the
+// machine that installs their software: the capsule an installer ships as, and
+// the state a package is in at one moment, which is its manifest, the image
+// that manifest resolved to and a generation.
+//
+// A state is never signed over a tag. A tag can be repointed at another image
+// after it is signed, so the tag is resolved here and the digest it resolved to
+// is what enters the payload; the signature is the pin.
 package main
 
 import (
-	"crypto/ed25519"
-	"encoding/json"
-	"flag"
 	"fmt"
+	"io"
 	"os"
-	"runtime"
-
-	"github.com/mirkobrombin/cpak/pkg/bootstrap"
+	"strings"
 )
 
 func main() {
-	installerPath := flag.String("installer", "", "path to the packed installer")
-	metadataPath := flag.String("metadata", "", "path to the metadata JSON")
-	privateKeyPath := flag.String("private-key", "", "path to the Ed25519 private key")
-	outputPath := flag.String("output", "", "output path")
-	origin := flag.String("origin", "", "package origin")
-	name := flag.String("name", "", "package name")
-	description := flag.String("description", "", "package description")
-	iconPath := flag.String("icon", "", "path to the package SVG icon")
-	refType := flag.String("ref-type", "", "package reference type")
-	ref := flag.String("ref", "", "package reference")
-	arch := flag.String("arch", runtime.GOARCH, "target architecture")
-	flag.Parse()
-	if *installerPath == "" || *privateKeyPath == "" || *outputPath == "" {
-		fail(fmt.Errorf("installer, private-key and output are required"))
+	arguments := os.Args[1:]
+	command := ""
+	if len(arguments) > 0 && (!strings.HasPrefix(arguments[0], "-") || arguments[0] == "-h" || arguments[0] == "--help") {
+		command = arguments[0]
+		arguments = arguments[1:]
 	}
 
-	installer, err := os.ReadFile(*installerPath)
+	var err error
+	switch command {
+	case "", "capsule":
+		err = signCapsule(arguments)
+	case "state":
+		err = buildState(arguments)
+	case "attach":
+		err = attachSignature(arguments)
+	case "approve":
+		err = approveState(arguments)
+	case "help", "-h", "--help":
+		usage(os.Stdout)
+	default:
+		usage(os.Stderr)
+		err = fmt.Errorf("unknown command %q", command)
+	}
 	if err != nil {
-		fail(err)
-	}
-	var metadata bootstrap.Metadata
-	if *metadataPath != "" {
-		encoded, readErr := os.ReadFile(*metadataPath)
-		if readErr != nil {
-			fail(readErr)
-		}
-		if err = json.Unmarshal(encoded, &metadata); err != nil {
-			fail(err)
-		}
-	} else {
-		if *origin == "" || *name == "" || *description == "" {
-			fail(fmt.Errorf("metadata or origin, name and description are required"))
-		}
-		icon := ""
-		if *iconPath != "" {
-			encoded, readErr := os.ReadFile(*iconPath)
-			if readErr != nil {
-				fail(readErr)
-			}
-			icon = string(encoded)
-		}
-		metadata = bootstrap.Metadata{
-			Schema:      bootstrap.SchemaVersion,
-			Origin:      *origin,
-			Name:        *name,
-			Description: *description,
-			IconSVG:     icon,
-			RefType:     *refType,
-			Ref:         *ref,
-			Arch:        *arch,
-		}
-	}
-	privateKey, err := readPrivateKey(*privateKeyPath)
-	if err != nil {
-		fail(err)
-	}
-	packed, err := bootstrap.SignCapsule(installer, metadata, privateKey)
-	if err != nil {
-		fail(err)
-	}
-	if err = os.WriteFile(*outputPath, packed, 0755); err != nil {
 		fail(err)
 	}
 }
 
-func readPrivateKey(path string) (ed25519.PrivateKey, error) {
-	encoded, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return bootstrap.ParsePrivateKeyPEM(encoded)
+func usage(writer io.Writer) {
+	fmt.Fprint(writer, `usage: cpak-sign <command> [options]
+
+  capsule  sign a packed installer capsule with an Ed25519 key
+  state    build the package state a publisher signs, with the image tag
+           resolved to the digest the payload carries
+  attach   attach a signed state to its image as an OCI referrer
+  approve  attach an organisation's counter-signature over a state its
+           publisher already signed
+
+Called with no command, cpak-sign signs a capsule.
+`)
 }
 
 func fail(err error) {

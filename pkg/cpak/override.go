@@ -7,9 +7,11 @@ package cpak
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -279,6 +281,26 @@ func NewOverride() types.Override {
 }
 
 // LoadOverride loads an override from its name.
+const overrideSizeLimit = 1 << 20
+
+func validateOverrideFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("override %s is not a regular file", path)
+	}
+	if info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("override %s is writable by other users", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return fmt.Errorf("override %s does not belong to the caller", path)
+	}
+	return nil
+}
+
 func LoadOverride(origin, version string) (override types.Override, err error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -291,16 +313,28 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 	}
 
 	overridePath := filepath.Join(homeDir, ".config/cpak/overrides", cpakLocalDir, version)
-	file, err := os.Open(filepath.Join(overridePath, "cpak.json"))
+	path := filepath.Join(overridePath, "cpak.json")
+	// The override decides the sandbox policy, so it is read under the same
+	// conditions the authority applies to the files it trusts: a real file,
+	// owned by the caller, not writable by anyone else.
+	if err = validateOverrideFile(path); err != nil {
+		return types.Override{}, err
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return
 	}
 	defer file.Close()
 
 	override = types.NewOverride()
-	err = json.NewDecoder(file).Decode(&override)
+	decoder := json.NewDecoder(io.LimitReader(file, overrideSizeLimit))
+	decoder.DisallowUnknownFields()
+	err = decoder.Decode(&override)
 	if err != nil {
 		return
+	}
+	if err = types.ValidateFilesystemPermissions(override.Filesystem); err != nil {
+		return types.Override{}, err
 	}
 	if err = migrateLegacyHostCommands(&override); err != nil {
 		return types.Override{}, err
@@ -338,11 +372,16 @@ func SaveOverride(override types.Override, name, version string) (err error) {
 		return
 	}
 
-	file, err := os.Create(filepath.Join(overridePath, "cpak.json"))
+	// The mode is set outright rather than left to the umask, because the load
+	// path refuses a file other users can write and the two have to agree.
+	file, err := os.OpenFile(filepath.Join(overridePath, "cpak.json"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return
 	}
 	defer file.Close()
+	if err = file.Chmod(0600); err != nil {
+		return
+	}
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")

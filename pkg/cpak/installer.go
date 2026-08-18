@@ -7,6 +7,8 @@ package cpak
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
@@ -148,11 +151,20 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		}
 		return
 	}
+	pulled := layers
 	layers, err = c.BuildRuntimeLayers(layers, manifest.RuntimeSources)
 	if err != nil {
 		return
 	}
 	layers, err = c.BuildLocaleLayer(layers, manifest.Image, config, manifest.Override)
+	if err != nil {
+		return
+	}
+	if err = c.bindBuiltLayers(pulled, layers); err != nil {
+		return
+	}
+
+	manifestDigest, err := manifestIdentityDigest(manifest)
 	if err != nil {
 		return
 	}
@@ -177,6 +189,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		Config:               config,
 		Image:                image,
 		ImageDigest:          imageDigest,
+		ManifestDigest:       manifestDigest,
 		ParsedOverride:       manifest.Override,
 	}
 	if err = c.PrepareApplicationStorage(app); err != nil {
@@ -195,7 +208,37 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		return
 	}
 
+	// The installation stands: what is left is to record what it is, so that a
+	// launch of it can be recognised. It reports and it never fails an install.
+	//
+	// The manifest goes with it because this is the only moment it exists. What
+	// a publisher signs is the manifest as cpak applied it beside the image it
+	// resolved to, and nothing the store keeps can name that pair afterwards,
+	// so an enrolment that did not get it here can never ask the registry who
+	// published this.
+	c.EnrolPublishedApplication(app, PublishedPackage{
+		Manifest: manifest,
+		Lock:     signedLock(origin, options.ManifestLock),
+	})
+
 	return nil
+}
+
+// manifestIdentityDigest names the manifest an installation was made from, as
+// it stands once cpak has validated and migrated it, which is the manifest that
+// was applied and not the one that was published. The decoded manifest is
+// hashed rather than the bytes that were fetched, because an installation
+// resolved from a lock never sees those bytes and both paths must name the same
+// manifest.
+func manifestIdentityDigest(manifest *types.CpakManifest) (string, error) {
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return "", fmt.Errorf("encode the manifest of %s: %w", manifest.Name, err)
+	}
+	hash := sha256.New()
+	fmt.Fprintf(hash, "cpak.manifest.v%d\n", integrity.ABIVersion)
+	hash.Write(encoded)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // installDependencies installs the dependencies declared in the given manifest
@@ -743,7 +786,13 @@ func (c *Cpak) exportBinary(app types.Application, binary string) error {
 		return err
 	}
 
-	scriptContent := fmt.Sprintf("#!/bin/sh\ncpak run %s @%s -- \"$@\"\n", app.Origin, binary)
+	// A bare name here is resolved through PATH, which any writer of the home
+	// can rearrange. The launcher is named outright.
+	launcher, err := getCpakBinary()
+	if err != nil {
+		return err
+	}
+	scriptContent := fmt.Sprintf("#!/bin/sh\nexec %s run %s @%s -- \"$@\"\n", launcher, app.Origin, binary)
 	err = os.WriteFile(destinationPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return err
@@ -842,8 +891,14 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err = c.clearRollbackHistory(origin); err != nil {
 		return fmt.Errorf("remove rollback history for %s: %w", appToRemove.Name, err)
 	}
+	if err = c.removeApplicationLayers(appToRemove); err != nil {
+		return err
+	}
 
-	return c.removeApplicationLayers(appToRemove)
+	// The layers are gone, so nothing the anchor names is still on disk.
+	c.forgetEnrolment(appToRemove)
+
+	return nil
 }
 
 func sessionsRemovedByVersionSelection(apps []types.Application, branch, commit, release string) ([]types.Session, int) {

@@ -61,6 +61,12 @@ type Application struct {
 	// ImageDigest is the resolved immutable OCI image digest.
 	ImageDigest string `json:"image_digest"`
 
+	// ManifestDigest names the manifest this installation was made from, as it
+	// stood once cpak had validated and migrated it. It is absent from every
+	// record written before it was introduced, and for those the manifest is
+	// not part of what the application is recognised by.
+	ManifestDigest string `json:"manifest_digest,omitempty"`
+
 	// Containers is the list of containers created for the application.
 	Containers []Container `json:"containers"`
 

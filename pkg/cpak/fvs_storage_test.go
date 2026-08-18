@@ -366,8 +366,13 @@ func TestPrepareLayerMountFallsBackWithoutTheStorageService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mountID != "" || mountPath != "" {
-		t.Fatalf("legacy fallback returned an FVS mount: %q %q", mountID, mountPath)
+	if mountID != "" {
+		t.Fatalf("legacy fallback returned an FVS mount: %q", mountID)
+	}
+	// The fallback has to hand back the directories it found. Returning none
+	// left the spawn side to rebuild them from an argument nobody had checked.
+	if mountPath != cp.GetInStoreDir("layers", layer) {
+		t.Fatalf("legacy fallback did not report its layer directory: %q", mountPath)
 	}
 	if managerSocket != "" {
 		t.Fatalf("legacy fallback returned a manager socket: %q", managerSocket)

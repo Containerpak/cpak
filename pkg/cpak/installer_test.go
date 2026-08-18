@@ -219,3 +219,27 @@ func TestRewriteDesktopExecPreservesQuotedBinary(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+// A shim that says only "cpak" is resolved through PATH, which anyone who can
+// write the home can rearrange.
+func TestExportBinaryNamesTheLauncherOutright(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{Origin: "github.com/containerpak/umu"}
+	if err := c.exportBinary(app, "/usr/local/bin/umu-run"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(c.Options.ExportsPath, "github.com", "containerpak", "umu", "umu-run")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if !strings.Contains(line, " run ") {
+			continue
+		}
+		command := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "exec "))
+		if len(command) == 0 || !filepath.IsAbs(command[0]) {
+			t.Fatalf("the shim resolves its launcher through PATH: %q", line)
+		}
+	}
+}

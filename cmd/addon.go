@@ -61,6 +61,9 @@ func (c *AddonCmd) Run() error {
 		if err := cp.EnableAddon(app, c.AddonOrigin); err != nil {
 			return err
 		}
+		// An addon is part of the composed layers, so enabling one changes the
+		// root a launch derives and the anchor has to follow it.
+		cp.EnrolApplication(app)
 		c.Logger.Success("Addon %s enabled for %s", c.AddonOrigin, c.AppOrigin)
 		return nil
 	case "disable":
@@ -70,6 +73,7 @@ func (c *AddonCmd) Run() error {
 		if err := cp.DisableAddon(app, c.AddonOrigin); err != nil {
 			return err
 		}
+		cp.EnrolApplication(app)
 		c.Logger.Success("Addon %s disabled for %s", c.AddonOrigin, c.AppOrigin)
 		return nil
 	default:
