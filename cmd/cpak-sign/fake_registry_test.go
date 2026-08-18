@@ -176,12 +176,18 @@ func (f *fakeRegistry) storeManifest(writer http.ResponseWriter, request *http.R
 	if err != nil {
 		f.t.Fatalf("reading the pushed manifest failed: %v", err)
 	}
-	if digestOf(body) != identifier {
+	// A push by tag is what a registry without referrers support is given, so
+	// the identifier is only expected to be the digest when it looks like one.
+	if strings.HasPrefix(identifier, "sha256:") && digestOf(body) != identifier {
 		f.t.Errorf("the manifest was pushed as %s but is %s", identifier, digestOf(body))
 	}
 	f.pushed[identifier] = body
 	f.manifests[identifier] = body
 	f.mediaTypes[identifier] = request.Header.Get("Content-Type")
+	if !strings.HasPrefix(identifier, "sha256:") {
+		f.manifests[digestOf(body)] = body
+		f.mediaTypes[digestOf(body)] = request.Header.Get("Content-Type")
+	}
 
 	var pushed struct {
 		Subject descriptor `json:"subject"`

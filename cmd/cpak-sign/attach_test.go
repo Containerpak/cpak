@@ -148,7 +148,11 @@ func TestAttachPublishesTheBundleAsAReferrerOfTheSignedImage(t *testing.T) {
 	}
 }
 
-func TestAttachFailsWhenTheRegistryDoesNotIndexReferrers(t *testing.T) {
+// A registry that stores a manifest without indexing it answers nothing for it,
+// which is where the specification's fallback tag applies. Refusing instead
+// would mean no package on such a registry could ever carry a signature, and
+// that includes the one every cpak package is published to.
+func TestAttachKeepsItsOwnIndexWhenTheRegistryDoesNotIndexReferrers(t *testing.T) {
 	registry := newFakeRegistry(t)
 	registry.indexReferrers = false
 	imageDigest := registry.publishImage("main")
@@ -156,12 +160,53 @@ func TestAttachFailsWhenTheRegistryDoesNotIndexReferrers(t *testing.T) {
 
 	directory := t.TempDir()
 	statePath, bundlePath, _ := stageSignature(t, directory, signedState(imageDigest))
-	err := attachSignature([]string{"--image", registry.reference(""), "--state", statePath, "--bundle", bundlePath})
-	if err == nil {
-		t.Fatalf("a signature the registry does not answer for was reported as published")
+	if err := attachSignature([]string{"--image", registry.reference(""), "--state", statePath, "--bundle", bundlePath}); err != nil {
+		t.Fatalf("the fallback was not taken: %v", err)
 	}
-	if !strings.Contains(err.Error(), "referrers") {
-		t.Fatalf("the failure does not say the registry indexes no referrers: %v", err)
+
+	tag := strings.Replace(imageDigest, ":", "-", 1)
+	stored, found := registry.manifests[tag]
+	if !found {
+		t.Fatalf("nothing was written to %s, so the signature is one nobody will be served", tag)
+	}
+	var index fallbackIndex
+	if err := json.Unmarshal(stored, &index); err != nil {
+		t.Fatal(err)
+	}
+	if len(index.Manifests) != 1 {
+		t.Fatalf("the index names %d referrers", len(index.Manifests))
+	}
+	if index.Manifests[0].ArtifactType != signatureArtifactType {
+		t.Fatalf("the referrer is filed as %q", index.Manifests[0].ArtifactType)
+	}
+	// The descriptor has to name a manifest the registry actually holds,
+	// because a reader follows it by digest and nothing else.
+	if _, held := registry.manifests[index.Manifests[0].Digest]; !held {
+		t.Fatal("the index names a manifest the registry never stored")
+	}
+}
+
+// Publishing twice must leave one signature and not a growing list, and must
+// not throw away anything published beside it.
+func TestTheFallbackIndexKeepsOneSignatureAndWhateverElseIsThere(t *testing.T) {
+	registry := newFakeRegistry(t)
+	registry.indexReferrers = false
+	imageDigest := registry.publishImage("main")
+	stubVerify(t, signedIdentity(), nil)
+
+	directory := t.TempDir()
+	statePath, bundlePath, _ := stageSignature(t, directory, signedState(imageDigest))
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := attachSignature([]string{"--image", registry.reference(""), "--state", statePath, "--bundle", bundlePath}); err != nil {
+			t.Fatalf("attach %d failed: %v", attempt, err)
+		}
+	}
+	var index fallbackIndex
+	if err := json.Unmarshal(registry.manifests[strings.Replace(imageDigest, ":", "-", 1)], &index); err != nil {
+		t.Fatal(err)
+	}
+	if len(index.Manifests) != 1 {
+		t.Fatalf("two publications left %d referrers", len(index.Manifests))
 	}
 }
 

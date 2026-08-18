@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // referrersLimit bounds the index of what is attached to one subject. It is
@@ -44,7 +45,10 @@ func (c *Client) Referrers(ctx context.Context, ref Reference, subject, artifact
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotFound {
-		return nil, nil
+		// A registry that does not implement the API is where the
+		// specification's fallback tag applies, and a publisher that met one
+		// wrote the index there.
+		return c.fallbackReferrers(ctx, ref, subject, artifactType)
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, responseError("list referrers", response)
@@ -65,6 +69,40 @@ func (c *Client) Referrers(ctx context.Context, ref Reference, subject, artifact
 		// The filter is applied again on this side because artifactType is a
 		// request the registry is free to ignore, and an answer it did not
 		// filter looks exactly like one it did.
+		if artifactType != "" && descriptor.ArtifactType != artifactType {
+			continue
+		}
+		referrers = append(referrers, descriptor)
+	}
+	if len(referrers) == 0 {
+		// An empty answer from a registry that implements the API and an empty
+		// answer from one that only pretends to look the same from here, so
+		// the tag is consulted before reporting that nothing is attached.
+		return c.fallbackReferrers(ctx, ref, subject, artifactType)
+	}
+	return referrers, nil
+}
+
+// fallbackReferrers reads the index a publisher keeps under the tag reserved
+// for subjects whose registry does not index referrers. Nothing there is an
+// answer of nothing attached, exactly as an empty index from the API is.
+func (c *Client) fallbackReferrers(ctx context.Context, ref Reference, subject, artifactType string) ([]Descriptor, error) {
+	tag := strings.Replace(subject, ":", "-", 1)
+	body, _, _, err := c.fetchManifest(ctx, ref, tag)
+	if err != nil {
+		// The tag is optional, so a subject that has none is not a failure to
+		// report over a signature that was simply never published this way.
+		return nil, nil
+	}
+	var index imageManifest
+	if err := json.Unmarshal(body, &index); err != nil {
+		return nil, fmt.Errorf("oci: decode the referrers index at %s: %w", tag, err)
+	}
+	referrers := make([]Descriptor, 0, len(index.Manifests))
+	for _, descriptor := range index.Manifests {
+		if !validDescriptor(descriptor) {
+			return nil, fmt.Errorf("oci: invalid referrer descriptor")
+		}
 		if artifactType != "" && descriptor.ArtifactType != artifactType {
 			continue
 		}

@@ -135,10 +135,15 @@ func attachApproval(ctx context.Context, reference oci.Reference, state signatur
 		return err
 	}
 	// An approval the registry stored but does not answer for is one no
-	// installation will ever be served, so it is a failed publication and not
-	// a warning.
+	// installation will ever be served, so it falls back to the tag the
+	// specification reserves for registries without referrers support.
 	if indexed == "" {
-		return fmt.Errorf("%s stored the approval but did not index it as a referrer of %s: cpak looks an approval up through the OCI referrers API, which this registry does not implement", reference.Registry, state.ImageDigest)
+		fallback := descriptor{MediaType: manifestMediaType, Digest: digestOf(encoded), Size: int64(len(encoded))}
+		if err := publishFallbackIndex(ctx, client, state.ImageDigest, fallback, approvalArtifactType); err != nil {
+			return fmt.Errorf("%s does not index referrers and the fallback tag could not be written: %w", reference.Registry, err)
+		}
+		fmt.Fprintf(os.Stderr, "%s approved %s at %s, generation %d\n", identityOf(approver), state.Origin, state.ImageDigest, state.Generation)
+		return nil
 	}
 	if indexed != state.ImageDigest {
 		return fmt.Errorf("%s indexed the approval under %s and not %s", reference.Registry, indexed, state.ImageDigest)

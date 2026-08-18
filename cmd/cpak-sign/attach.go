@@ -122,11 +122,16 @@ func attachBundle(ctx context.Context, reference oci.Reference, state signature.
 	if err != nil {
 		return err
 	}
-	// A signature the registry stored but does not answer for is a signature
-	// nobody will ever be served, so it is a failed publication and not a
-	// warning.
+	// A registry that stores the manifest without indexing it has answered
+	// nothing, and a signature nobody is served is not published. The
+	// specification's own way out is to keep the index under a tag, which is
+	// what registries without referrers support expect a client to do.
 	if indexed == "" {
-		return fmt.Errorf("%s stored the signature but did not index it as a referrer of %s: cpak looks a signature up through the OCI referrers API, which this registry does not implement", reference.Registry, state.ImageDigest)
+		fallback := descriptor{MediaType: manifestMediaType, Digest: digestOf(encoded), Size: int64(len(encoded))}
+		if err := publishFallbackIndex(ctx, client, state.ImageDigest, fallback, signatureArtifactType); err != nil {
+			return fmt.Errorf("%s does not index referrers and the fallback tag could not be written: %w", reference.Registry, err)
+		}
+		return nil
 	}
 	if indexed != state.ImageDigest {
 		return fmt.Errorf("%s indexed the signature under %s and not %s", reference.Registry, indexed, state.ImageDigest)
