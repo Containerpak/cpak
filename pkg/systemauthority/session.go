@@ -135,7 +135,7 @@ func (r Registry) Remove(id, origin string) error {
 	if err := validateOrigin(origin); err != nil {
 		return err
 	}
-	if err := r.validate(); err != nil {
+	if err := r.validateWritable(); err != nil {
 		return err
 	}
 	existing, err := r.Load(id)
@@ -164,6 +164,9 @@ func (r Registry) Purge() error {
 		return err
 	}
 	entries, err := os.ReadDir(r.RegistryDirectory)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("read registered sessions: %w", err)
 	}
@@ -236,6 +239,18 @@ func (r Registry) validate() error {
 		(r.SystemSessions != "" && !filepath.IsAbs(r.SystemSessions)) {
 		return errors.New("system authority paths must be absolute")
 	}
+	return nil
+}
+
+// validateWritable is validate for the callers that are about to write. Purge
+// deliberately does not use it: creating the directory a removal is about to
+// empty turns an uninstall into an install on a host where the prefix cannot
+// be written, which is how removing something that is not there ends up
+// failing on a read-only filesystem.
+func (r Registry) validateWritable() error {
+	if err := r.validate(); err != nil {
+		return err
+	}
 	for _, path := range []string{r.RegistryDirectory, r.SessionDirectory} {
 		if err := ensureDirectory(path, r.OwnerUID); err != nil {
 			return err
@@ -245,7 +260,7 @@ func (r Registry) validate() error {
 }
 
 func (r Registry) Prepare() error {
-	if err := r.validate(); err != nil {
+	if err := r.validateWritable(); err != nil {
 		return err
 	}
 	return r.syncSystemSessions()

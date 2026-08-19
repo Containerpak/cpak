@@ -1,0 +1,8 @@
+[Unit]
+Description=cpak system authority
+
+[Service]
+Type=dbus
+BusName=it.cpak.SystemAuthority1
+ExecStart=@BINARY@ system-authority
+User=root

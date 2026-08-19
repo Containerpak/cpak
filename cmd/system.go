@@ -53,7 +53,15 @@ func (c *SystemCmd) Run() error {
 			}
 			return err
 		}
-		return systemauthority.Uninstall()
+		if err := systemauthority.Uninstall(); err != nil {
+			if errors.Is(err, systemauthority.ErrNotInstalled) {
+				c.Logger.Info("cpak system integration is not installed, nothing to remove")
+				return nil
+			}
+			return err
+		}
+		c.Logger.Success("cpak system integration removed")
+		return nil
 	case "trust":
 		return c.reportTrust()
 	case "set-trust":

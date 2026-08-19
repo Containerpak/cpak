@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -19,6 +20,13 @@ var serviceFile []byte
 
 //go:embed assets/it.cpak.SystemAuthority1.conf
 var busPolicy []byte
+
+//go:embed assets/cpak-system-authority.service
+var systemdUnit []byte
+
+// ErrNotInstalled means there is nothing to remove. It is a state and not a
+// fault, so a caller may report it plainly instead of as a failure.
+var ErrNotInstalled = errors.New("cpak system integration is not installed")
 
 //go:embed assets/it.cpak.system.policy
 var polkitPolicy []byte
@@ -58,6 +66,14 @@ func Install() ([]string, error) {
 			return nil, fmt.Errorf("write system integration file: %w", err)
 		}
 	}
+	// dbus-daemon on a systemd host runs with --systemd-activation, and there
+	// it never executes Exec= itself: it hands the name to systemd, which needs
+	// a unit to hand it to. Without this the bus lists the name as activatable
+	// and then fails to activate it, which is the shape of a service that was
+	// installed and never worked.
+	if err := installSystemdUnit(target); err != nil {
+		return nil, err
+	}
 	if err := target.registry().Prepare(); err != nil {
 		return nil, fmt.Errorf("prepare login session directory: %w", err)
 	}
@@ -68,7 +84,10 @@ func Uninstall() error {
 	if os.Geteuid() != 0 {
 		return errors.New("system integration removal requires root")
 	}
-	installed, _ := installedLayout()
+	installed, found := installedLayout()
+	if !found {
+		return ErrNotInstalled
+	}
 	if err := installed.registry().Purge(); err != nil {
 		return fmt.Errorf("remove registered login sessions: %w", err)
 	}
@@ -79,6 +98,9 @@ func Uninstall() error {
 	for _, prefix := range installPrefixes {
 		candidate := layoutFor(prefix)
 		paths = append(paths, candidate.service, candidate.polkit, candidate.binary)
+	}
+	if systemdIsRunning() {
+		paths = append(paths, systemdUnitPath)
 	}
 	for _, path := range paths {
 		// A read-only prefix answers EROFS even for a missing file, so the
@@ -163,6 +185,49 @@ func installExecutable(destination string) error {
 	}
 	if err := os.Rename(temporaryPath, destination); err != nil {
 		return fmt.Errorf("install cpak executable: %w", err)
+	}
+	return nil
+}
+
+// systemdUnitPath is where a unit that is not shipped by a package belongs, and
+// it is writable on hosts that keep the rest of the tree read-only.
+const systemdUnitPath = "/etc/systemd/system/cpak-system-authority.service"
+
+// systemdIsRunning reports whether systemd is the init in charge. It is asked
+// of the running system and not of what is installed, because a host can carry
+// systemd files and boot something else.
+func systemdIsRunning() bool {
+	info, err := os.Stat("/run/systemd/system")
+	return err == nil && info.IsDir()
+}
+
+// installSystemdUnit writes the unit the bus activates through, and asks
+// systemd to read it. A host running another init needs none of this: there
+// dbus-daemon executes Exec= from the bus service file itself, which is why
+// that key is written on every host and this one only where it is used.
+func installSystemdUnit(target layout) error {
+	if !systemdIsRunning() {
+		return nil
+	}
+	unit := renderAsset(systemdUnit, "@BINARY@", target.binary)
+	if err := ensureDirectory(filepath.Dir(systemdUnitPath), 0); err != nil {
+		return fmt.Errorf("create the systemd unit directory: %w", err)
+	}
+	if err := writeAtomic(systemdUnitPath, unit, 0644); err != nil {
+		return fmt.Errorf("write the systemd unit: %w", err)
+	}
+	// A unit systemd has not read is a unit the bus cannot reach, so a reload
+	// that fails is a failed installation and not a detail.
+	if err := reloadSystemd(); err != nil {
+		return fmt.Errorf("ask systemd to read the unit: %w", err)
+	}
+	return nil
+}
+
+var reloadSystemd = func() error {
+	command := exec.Command("systemctl", "daemon-reload")
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
