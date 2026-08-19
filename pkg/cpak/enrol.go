@@ -873,7 +873,6 @@ func reportEnrolment(enrolment ApplicationEnrolment) ApplicationEnrolment {
 	return enrolment
 }
 
-
 // sessionLaunchRoots answers for every session the manifest declares.
 //
 // A session is started with its own policy, not the application's, so an anchor

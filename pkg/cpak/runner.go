@@ -753,15 +753,15 @@ func (c *Cpak) RunNested(nestedToken string, origin string, version string, bran
 	// the RequestParams struct is used by the server to check if the cpak
 	// which is running, has the ability to run the specified nested cpak
 	params := types.RequestParams{
-		Action:      "run",
-		Token:       nestedToken,
-		Origin:      origin,
-		Version:     version,
-		Branch:      branch,
-		Commit:      commit,
-		Release:     release,
-		Binary:      binary,
-		ExtraArgs:   extraArgs,
+		Action:    "run",
+		Token:     nestedToken,
+		Origin:    origin,
+		Version:   version,
+		Branch:    branch,
+		Commit:    commit,
+		Release:   release,
+		Binary:    binary,
+		ExtraArgs: extraArgs,
 	}
 	err = validateNestedRequest(params)
 	if err != nil {
