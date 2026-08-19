@@ -451,9 +451,21 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 			grants = append(grants, sandbox.PathGrant{Path: "/tmp/.X11-unix"})
 			continue
 		}
-		destination, prepareErr := prepareRootfsMountTarget(rootFs, mount, source)
+		// A base device is already bound by the time this loop runs, and an
+		// override may name the same path: deviceTTY asks for /dev/tty, which
+		// setupBaseDevices always binds. Preparing it a second time finds a
+		// character device where a regular file is required and refuses, so a
+		// permission the schema advertises could never be used. The bind-aware
+		// preparation answers that the work is already done, which is the same
+		// question the filesystem permissions already ask.
+		destination, needed, prepareErr := prepareRootfsBindTarget(rootFs, mount, source)
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", mount, prepareErr)
+		}
+		if !needed {
+			c.spawnVerbose(mount, " is already mounted, skipping")
+			grants = append(grants, sandbox.PathGrant{Path: filepath.Clean(mount), ReadOnly: filepath.Clean(mount) == "/etc"})
+			continue
 		}
 
 		if filepath.Clean(mount) == "/etc" {
