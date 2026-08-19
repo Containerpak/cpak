@@ -1355,6 +1355,24 @@ func securePrivateDirectory(path string) error {
 // symlink to a private directory is not one, and the mode has to be exactly
 // 0700 rather than merely closed to others: a directory this account may not
 // write is not one this account can hold a socket in either.
+// adoptPrivateDirectory makes a directory cpak was pointed at, without taking
+// it over.
+//
+// cpak creating the directory is cpak choosing its mode, so a missing one is
+// made private. One that is already there was made by somebody else, and its
+// mode is theirs: it is proven and reported, never changed.
+func adoptPrivateDirectory(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return errors.New("private directory path must be absolute")
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			return err
+		}
+	}
+	return provePrivateDirectory(path)
+}
+
 func provePrivateDirectory(path string) error {
 	if path == "" || !filepath.IsAbs(path) {
 		return errors.New("private directory path must be absolute")
@@ -1373,13 +1391,19 @@ func provePrivateDirectory(path string) error {
 	return nil
 }
 
-// securePrivateDirectoryUnder secures every directory from root down to path.
+// securePrivateDirectoryUnder secures every directory below root down to path.
 //
 // securePrivateDirectory answers only for the directory it is handed, and
 // MkdirAll leaves a directory that already exists at whatever mode it has, so
 // on an installation made by an older cpak the leaves become private while
 // every directory above them stays world-readable. Walking the spine is what
 // makes an upgraded tree converge.
+//
+// The root itself is not touched. Every root passed here is one of the paths
+// cpak.json and the CPAK_ variables can move, and Options.keepPrivate has
+// already answered for it under the rule that fits where it came from. Doing
+// it again here would narrow a directory the operator named, whichever way
+// that was decided.
 func securePrivateDirectoryUnder(root, path string) error {
 	root = filepath.Clean(root)
 	path = filepath.Clean(path)
@@ -1388,9 +1412,6 @@ func securePrivateDirectoryUnder(root, path string) error {
 	}
 	if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
 		return fmt.Errorf("%s is outside %s", path, root)
-	}
-	if err := securePrivateDirectory(root); err != nil {
-		return err
 	}
 	relative, err := filepath.Rel(root, path)
 	if err != nil {

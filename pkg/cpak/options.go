@@ -55,4 +55,28 @@ type Options struct {
 	StoreLayersPath     string `json:"store_layers_path"`
 	StoreStatesPath     string `json:"store_states_path"`
 	StoreContainersPath string `json:"store_containers_path"`
+
+	// OperatorNamedPaths holds the directories above whose location came from
+	// cpak.json or a CPAK_ variable instead of cpak's own layout.
+	//
+	// cpak keeps its tree private to the user who owns it, and where it laid
+	// that tree out itself it also fixes a directory it finds open. A path
+	// somebody else named is a different thing: they chose it, something else
+	// may be sharing it, and quietly narrowing it under them is the defect
+	// this installation just removed from its service socket. Such a directory
+	// is created private when it is missing and only reported on when it is
+	// already there.
+	//
+	// getCpakOptions fills this. An Options built in code names nothing,
+	// which is the right answer: those paths were chosen by cpak.
+	OperatorNamedPaths map[string]bool `json:"-"`
+}
+
+// keepPrivate keeps one directory of this installation readable by its owner
+// alone, under whichever of the two rules the path falls.
+func (o Options) keepPrivate(path string) error {
+	if o.OperatorNamedPaths[path] {
+		return adoptPrivateDirectory(path)
+	}
+	return securePrivateDirectory(path)
 }

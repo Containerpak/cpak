@@ -130,6 +130,11 @@ func getCpakOptions() (options Options, err error) {
 		StorageDriver:    "fvs",
 	}
 
+	// What cpak laid out itself, kept before anything is bound: afterwards the
+	// two are one struct and nothing can tell a path cpak chose from a path
+	// somebody handed it.
+	layout := options
+
 	var confPaths []string
 	if os.Getenv("CPAK_OPTS_FILE") != "" {
 		confPaths = append(confPaths, os.Getenv("CPAK_OPTS_FILE"))
@@ -158,6 +163,7 @@ func getCpakOptions() (options Options, err error) {
 		return options, err
 	}
 	bindDaBaDeeOptions(config, &options.DaBaDeeStoreOptions)
+	options.OperatorNamedPaths = operatorNamedPaths(layout, options)
 
 	options.StoreLayersPath = filepath.Join(options.StorePath, "fvs", "layers")
 	options.StoreContainersPath = filepath.Join(options.StorePath, "containers")
@@ -166,6 +172,32 @@ func getCpakOptions() (options Options, err error) {
 	cleanupLegacyRuntimeTools(options.BinPath)
 
 	return options, nil
+}
+
+// operatorNamedPaths answers which of the directories cpak keeps private were
+// moved by the configuration.
+//
+// It compares what was bound against what cpak had laid out, field by field,
+// because that is the only moment the difference exists. The deduplication
+// store is asked of its own field rather than of the path it resolves to: with
+// that field left alone the root follows the store cpak was given, and a
+// directory cpak places inside somebody's tree is still cpak's to keep
+// private.
+func operatorNamedPaths(layout, options Options) map[string]bool {
+	named := map[string]bool{}
+	for _, path := range [][3]string{
+		{layout.BinPath, options.BinPath, options.BinPath},
+		{layout.ManifestsPath, options.ManifestsPath, options.ManifestsPath},
+		{layout.ExportsPath, options.ExportsPath, options.ExportsPath},
+		{layout.StorePath, options.StorePath, options.StorePath},
+		{layout.CachePath, options.CachePath, options.CachePath},
+		{layout.DaBaDeeStoreOptions.Root, options.DaBaDeeStoreOptions.Root, daBaDeeRoot(&options)},
+	} {
+		if path[0] != path[1] {
+			named[path[2]] = true
+		}
+	}
+	return named
 }
 
 func cleanupLegacyRuntimeTools(binPath string) {
@@ -237,7 +269,7 @@ func createCpakDirs(options *Options) {
 		daBaDeeRoot(options),
 	}
 	for _, root := range roots {
-		if err := securePrivateDirectory(root); err != nil {
+		if err := options.keepPrivate(root); err != nil {
 			reportUnsecuredDirectory(err)
 		}
 	}

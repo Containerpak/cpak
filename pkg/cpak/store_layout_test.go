@@ -252,3 +252,74 @@ func TestOneDirectoryThatCannotBeSecuredDoesNotStopCpak(t *testing.T) {
 		t.Fatalf("the repair pass could not run: %v", err)
 	}
 }
+
+func TestADirectoryTheOperatorNamedKeepsTheModeItHas(t *testing.T) {
+	root := t.TempDir()
+	options := testStoreOptions(root)
+	// A directory that already exists at a mode somebody else chose, in a
+	// place cpak was pointed at rather than one it laid out.
+	shared := filepath.Join(root, "shared")
+	if err := os.MkdirAll(shared, 0755); err != nil {
+		t.Fatal(err)
+	}
+	options.BinPath = shared
+	options.OperatorNamedPaths = map[string]bool{shared: true}
+
+	createCpakDirs(&options)
+
+	info, err := os.Stat(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("cpak narrowed a directory it was pointed at: %04o", info.Mode().Perm())
+	}
+}
+
+func TestADirectoryCpakLaidOutIsNarrowedWhenItIsFoundOpen(t *testing.T) {
+	root := t.TempDir()
+	options := testStoreOptions(root)
+	if err := os.MkdirAll(options.BinPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	createCpakDirs(&options)
+
+	info, err := os.Stat(options.BinPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Fatalf("cpak left its own directory open: %04o", info.Mode().Perm())
+	}
+}
+
+func TestAPathTakenFromTheEnvironmentIsNotCpaksToNarrow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CPAK_INSTALLATION_PATH", filepath.Join(home, "installation"))
+	// No configuration file, so the environment is the only thing speaking.
+	t.Setenv("CPAK_OPTS_FILE", filepath.Join(home, "absent.json"))
+	shared := filepath.Join(home, "shared")
+	if err := os.MkdirAll(shared, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CPAK_BIN_PATH", shared)
+
+	options, err := getCpakOptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.OperatorNamedPaths[shared] {
+		t.Fatalf("a path set through the environment was read as one cpak chose: %v", options.OperatorNamedPaths)
+	}
+	info, err := os.Stat(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("cpak narrowed a directory the environment named: %04o", info.Mode().Perm())
+	}
+	// And the tree cpak laid out for itself is still private.
+	refuseOpenDirectories(t, options.StorePath, options.CachePath, options.ManifestsPath)
+}
