@@ -37,9 +37,6 @@ func (a PolkitAuthorizer) Authorize(sender dbus.Sender, action string, details m
 			"name": dbus.MakeVariant(string(sender)),
 		},
 	}
-	var authorized bool
-	var challenge bool
-	var resultDetails map[string]string
 	call := a.Connection.Object("org.freedesktop.PolicyKit1", "/org/freedesktop/PolicyKit1/Authority").Call(
 		"org.freedesktop.PolicyKit1.Authority.CheckAuthorization",
 		0,
@@ -52,11 +49,23 @@ func (a PolkitAuthorizer) Authorize(sender dbus.Sender, action string, details m
 	if call.Err != nil {
 		return fmt.Errorf("check authorization: %w", call.Err)
 	}
-	if err := call.Store(&authorized, &challenge, &resultDetails); err != nil {
+	var result polkitResult
+	if err := call.Store(&result); err != nil {
 		return fmt.Errorf("decode authorization result: %w", err)
 	}
-	if !authorized {
+	if !result.Authorized {
 		return errors.New("authorization denied")
 	}
 	return nil
+}
+
+// polkitResult is the one value CheckAuthorization answers with. polkit
+// declares it as (bba{ss}): a single struct of three members, not three
+// values. Reading it as three is a length mismatch, and it is a mismatch
+// nothing sees until an authority is reachable and something actually asks it
+// for permission.
+type polkitResult struct {
+	Authorized bool
+	Challenge  bool
+	Details    map[string]string
 }
