@@ -6,6 +6,8 @@ package desktopui
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -148,7 +149,17 @@ func pickFilePortal(ctx context.Context, request FilePickerRequest) (FilePickerR
 	signals := make(chan *dbus.Signal, 1)
 	connection.Signal(signals)
 	defer connection.RemoveSignal(signals)
+	// The reply has to come from the portal and from nothing else. An
+	// application holding the session bus is a full peer there, so a rule that
+	// names only the interface and the member accepts an answer any peer can
+	// send, and the answer names the files cpak then grants. The unique name is
+	// resolved once and both the rule and the handler are held to it.
+	portalOwner, err := portalUniqueName(connection)
+	if err != nil {
+		return FilePickerResult{}, err
+	}
 	match := []dbus.MatchOption{
+		dbus.WithMatchSender(portalOwner),
 		dbus.WithMatchInterface("org.freedesktop.portal.Request"),
 		dbus.WithMatchMember("Response"),
 	}
@@ -156,7 +167,12 @@ func pickFilePortal(ctx context.Context, request FilePickerRequest) (FilePickerR
 		return FilePickerResult{}, err
 	}
 	defer connection.RemoveMatchSignal(match...)
-	token := fmt.Sprintf("cpak_%d", time.Now().UnixNano())
+	// The token used to be a clock reading, which is a value anybody can guess
+	// and nobody has to steal.
+	token, err := pickerHandleToken()
+	if err != nil {
+		return FilePickerResult{}, err
+	}
 	options := map[string]dbus.Variant{
 		"handle_token": dbus.MakeVariant(token),
 		"modal":        dbus.MakeVariant(true),
@@ -208,7 +224,7 @@ func pickFilePortal(ctx context.Context, request FilePickerRequest) (FilePickerR
 			_ = connection.Object("org.freedesktop.portal.Desktop", handle).Call("org.freedesktop.portal.Request.Close", 0).Err
 			return FilePickerResult{}, ctx.Err()
 		case signal := <-signals:
-			if signal == nil || signal.Path != handle || signal.Name != "org.freedesktop.portal.Request.Response" {
+			if signal == nil || signal.Sender != portalOwner || signal.Path != handle || signal.Name != "org.freedesktop.portal.Request.Response" {
 				continue
 			}
 			return decodePortalFilePickerResponse(signal.Body, request.Multiple)
@@ -363,4 +379,31 @@ func ConfirmFileGrant(ctx context.Context, result FilePickerResult, request File
 		}
 	}
 	return confirmFileGrantBuiltin(ctx, result, request)
+}
+
+// portalUniqueName resolves who currently owns the portal name, so a reply can
+// be held to that peer rather than to a well-known name anybody may answer for.
+func portalUniqueName(connection *dbus.Conn) (string, error) {
+	var owner string
+	call := connection.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, "org.freedesktop.portal.Desktop")
+	if call.Err != nil {
+		return "", fmt.Errorf("resolve the desktop portal: %w", call.Err)
+	}
+	if err := call.Store(&owner); err != nil {
+		return "", fmt.Errorf("resolve the desktop portal: %w", err)
+	}
+	if owner == "" {
+		return "", errors.New("the desktop portal has no owner")
+	}
+	return owner, nil
+}
+
+// pickerHandleToken answers with a value nobody can predict, which is what the
+// token was always supposed to be.
+func pickerHandleToken() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("derive a request token: %w", err)
+	}
+	return "cpak_" + hex.EncodeToString(raw), nil
 }
