@@ -14,6 +14,11 @@ import (
 )
 
 func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Application) {
+	cp, parent, child, _ := nestedAuthFixtureWithToken(t)
+	return cp, parent, child
+}
+
+func nestedAuthFixtureWithToken(t *testing.T) (*Cpak, types.Application, types.Application, string) {
 	t.Helper()
 	storePath := t.TempDir()
 	child := types.Application{
@@ -96,10 +101,21 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 	if err = store.NewApplication(child); err != nil {
 		t.Fatal(err)
 	}
+	token, tokenErr := newNestedToken()
+	if tokenErr != nil {
+		t.Fatal(tokenErr)
+	}
+	if err = store.NewContainer(types.Container{
+		CpakId:            "parent-container",
+		ApplicationCpakId: parent.CpakId,
+		NestedToken:       token,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err = store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return &Cpak{Options: Options{StorePath: storePath}}, parent, child
+	return &Cpak{Options: Options{StorePath: storePath}}, parent, child, token
 }
 
 func TestDependencyLinksExposeOnlyDeclaredExports(t *testing.T) {
@@ -135,12 +151,12 @@ func TestDependencyLinksSkipLayerDependencies(t *testing.T) {
 }
 
 func TestAuthorizeNestedRunRejectsUndeclaredChild(t *testing.T) {
-	cp, parent, _ := nestedAuthFixture(t)
+	cp, _, _, nestedToken := nestedAuthFixtureWithToken(t)
 	_, err := cp.authorizeNestedRun(types.RequestParams{
-		Action:      "run",
-		ParentAppId: parent.CpakId,
-		Origin:      "github.com/example/not-declared",
-		Binary:      "tool",
+		Action: "run",
+		Token:  nestedToken,
+		Origin: "github.com/example/not-declared",
+		Binary: "tool",
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a declared dependency") {
 		t.Fatalf("got %v", err)
@@ -148,14 +164,14 @@ func TestAuthorizeNestedRunRejectsUndeclaredChild(t *testing.T) {
 }
 
 func TestAuthorizeNestedRunRejectsLayerDependency(t *testing.T) {
-	cp, parent, child := nestedAuthFixture(t)
+	cp, parent, child, nestedToken := nestedAuthFixtureWithToken(t)
 	parent.ParsedDependencies[0].Mode = "layer"
 	seedApplication(t, cp, parent)
 	_, err := cp.authorizeNestedRun(types.RequestParams{
-		Action:      "run",
-		ParentAppId: parent.CpakId,
-		Origin:      child.Origin,
-		Binary:      "child",
+		Action: "run",
+		Token:  nestedToken,
+		Origin: child.Origin,
+		Binary: "child",
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a declared dependency") {
 		t.Fatalf("got %v", err)
@@ -163,12 +179,12 @@ func TestAuthorizeNestedRunRejectsLayerDependency(t *testing.T) {
 }
 
 func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
-	cp, parent, child := nestedAuthFixture(t)
+	cp, _, child, nestedToken := nestedAuthFixtureWithToken(t)
 	authorized, err := cp.authorizeNestedRun(types.RequestParams{
-		Action:      "run",
-		ParentAppId: parent.CpakId,
-		Origin:      child.Origin,
-		Binary:      "@/usr/bin/child",
+		Action: "run",
+		Token:  nestedToken,
+		Origin: child.Origin,
+		Binary: "@/usr/bin/child",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,12 +223,12 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 }
 
 func TestAuthorizeNestedRunRejectsUnexportedBinary(t *testing.T) {
-	cp, parent, child := nestedAuthFixture(t)
+	cp, _, child, nestedToken := nestedAuthFixtureWithToken(t)
 	_, err := cp.authorizeNestedRun(types.RequestParams{
-		Action:      "run",
-		ParentAppId: parent.CpakId,
-		Origin:      child.Origin,
-		Binary:      "@/bin/sh",
+		Action: "run",
+		Token:  nestedToken,
+		Origin: child.Origin,
+		Binary: "@/bin/sh",
 	})
 	if err == nil || !strings.Contains(err.Error(), "is not exported") {
 		t.Fatalf("got %v", err)
@@ -234,5 +250,35 @@ func TestIntersectFilesystemPortableScopes(t *testing.T) {
 	)
 	if len(hostReadOnly) != 2 || hostReadOnly[0] != (types.FilesystemPermission{Path: "/tmp", Access: "read-only"}) || hostReadOnly[1] != (types.FilesystemPermission{Path: "home", Access: "read-only"}) {
 		t.Fatalf("host scope intersection: %v", hostReadOnly)
+	}
+}
+
+// The attack, end to end. An application identifier is public metadata, so a
+// package with no permissions of its own can compute the identifier of one that
+// has plenty and offer it as proof of being that application. It used to be
+// believed, and the caller then ran one of the victim's declared dependencies
+// under the victim's policy.
+func TestNamingTheParentIsNotBeingIt(t *testing.T) {
+	cp, parent, child, nestedToken := nestedAuthFixtureWithToken(t)
+
+	// What the attacker can work out without ever seeing the victim.
+	if _, err := cp.authorizeNestedRun(types.RequestParams{
+		Action: "run",
+		Token:  parent.CpakId,
+		Origin: child.Origin,
+		Binary: "child",
+	}); err == nil {
+		t.Fatal("the parent's own identifier was accepted as proof of being the parent")
+	}
+
+	// And the capability the container really holds still works, or the fix
+	// would be a lockout rather than a fix.
+	if _, err := cp.authorizeNestedRun(types.RequestParams{
+		Action: "run",
+		Token:  nestedToken,
+		Origin: child.Origin,
+		Binary: "child",
+	}); err != nil {
+		t.Fatalf("a container's own capability was refused: %v", err)
 	}
 }

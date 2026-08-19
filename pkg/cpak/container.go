@@ -203,6 +203,17 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 			os.RemoveAll(container.StatePath)
 			return types.Container{}, err
 		}
+		// The capability this container presents when it asks to run one of its
+		// declared dependencies. It is minted here, beside the container it
+		// belongs to, so the service can resolve it back to this application
+		// instead of believing whatever a caller claims to be.
+		container.NestedToken, err = newNestedToken()
+		if err != nil {
+			cleanupSystemBrokerRuntime(container)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
 		desktopRuntime := ""
 		if override.HostApplications {
 			_, _, err = prepareHostApplicationCatalog(container.StatePath)
@@ -396,6 +407,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	cmds = append(cmds, "--user-uid", strconv.Itoa(os.Getuid()))
 	cmds = append(cmds, "--app-id", app.CpakId)
+	cmds = append(cmds, "--nested-token", container.NestedToken)
 	machineID, err := c.applicationMachineID(app.CpakId)
 	if err != nil {
 		return "", 0, "", err
@@ -1218,12 +1230,11 @@ func getCpakBinary() (cpakBinary string, err error) {
 
 var nestedMarkerPath = "/tmp/.cpak"
 
-func getNested() (parentAppCpakId string, nested bool) {
-	content, err := os.ReadFile(nestedMarkerPath)
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(content)), true
+// getNested answers the capability this container was given, and whether it is
+// running inside one at all. It used to answer the parent's identifier, which
+// the caller then sent as its own proof of identity.
+func getNested() (token string, nested bool) {
+	return readNestedToken()
 }
 
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"

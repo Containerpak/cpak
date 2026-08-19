@@ -70,10 +70,10 @@ func (c *Cpak) Run(origin string, version string, branch string, commit string, 
 
 func (c *Cpak) RunInstance(origin string, version string, branch string, commit string, release string, instance string, binary string, verbose bool, extraArgs ...string) (err error) {
 	isVerbose = verbose
-	parentAppCpakId, isNested := getNested()
+	nestedToken, isNested := getNested()
 	if isNested {
 		logger.Println("Running in nested mode...")
-		return c.RunNested(parentAppCpakId, origin, version, branch, commit, release, binary, extraArgs...)
+		return c.RunNested(nestedToken, origin, version, branch, commit, release, binary, extraArgs...)
 	}
 
 	err = c.prepareSocketListener()
@@ -621,14 +621,14 @@ func sendErrorFrame(writer *frameWriter, errToSend error) {
 	}
 }
 
-func (c *Cpak) RunNested(parentAppCpakId string, origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
+func (c *Cpak) RunNested(nestedToken string, origin string, version string, branch string, commit string, release string, binary string, extraArgs ...string) (err error) {
 	logger.Println("Running another cpak container in nested mode...")
 
 	// the RequestParams struct is used by the server to check if the cpak
 	// which is running, has the ability to run the specified nested cpak
 	params := types.RequestParams{
 		Action:      "run",
-		ParentAppId: parentAppCpakId,
+		Token:       nestedToken,
 		Origin:      origin,
 		Version:     version,
 		Branch:      branch,

@@ -192,8 +192,8 @@ func validateNestedRequest(params types.RequestParams) error {
 	if params.Origin == "" {
 		return errors.New("the nested request carries no origin")
 	}
-	if params.ParentAppId == "" {
-		return errors.New("the nested request carries no parent application")
+	if !validNestedToken(params.Token) {
+		return errors.New("the nested request carries no capability")
 	}
 	if params.Binary == "" {
 		return errors.New("the nested request carries no binary")

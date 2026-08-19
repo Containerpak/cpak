@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -215,15 +216,15 @@ func TestDecodeSignalAcceptsOnlyForwardableSignals(t *testing.T) {
 // survive the round trip untouched, dashes included.
 func TestNestedRequestRoundTripKeepsArbitraryArguments(t *testing.T) {
 	params := types.RequestParams{
-		Action:      "run",
-		ParentAppId: "parent",
-		Origin:      "github.com/example/app",
-		Version:     "1.0.0",
-		Branch:      "main",
-		Commit:      "0123456789",
-		Release:     "v1",
-		Binary:      "app",
-		ExtraArgs:   []string{"-i", "--version", "--branch", "-", "--", "-rf", "a b", "--nested-request", "ünïcødé"},
+		Action:    "run",
+		Token:     strings.Repeat("ab", 32),
+		Origin:    "github.com/example/app",
+		Version:   "1.0.0",
+		Branch:    "main",
+		Commit:    "0123456789",
+		Release:   "v1",
+		Binary:    "app",
+		ExtraArgs: []string{"-i", "--version", "--branch", "-", "--", "-rf", "a b", "--nested-request", "ünïcødé"},
 	}
 
 	encoded, err := EncodeNestedRequest(params)
@@ -246,7 +247,7 @@ func TestNestedRequestRoundTripKeepsArbitraryArguments(t *testing.T) {
 }
 
 func TestDecodeNestedRequestRejectsInvalidRequests(t *testing.T) {
-	valid := types.RequestParams{Action: "run", ParentAppId: "parent", Origin: "github.com/example/app", Binary: "app"}
+	valid := types.RequestParams{Action: "run", Token: strings.Repeat("ab", 32), Origin: "github.com/example/app", Binary: "app"}
 
 	if _, err := DecodeNestedRequest("not base64 !!"); err == nil {
 		t.Fatal("an unencodable request was accepted")

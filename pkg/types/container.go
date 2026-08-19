@@ -47,6 +47,12 @@ type Container struct {
 	// SystemBrokerTokenPath is a private capability file mounted read-only into the container.
 	SystemBrokerTokenPath string `json:"system_broker_token_path"`
 
+	// NestedToken is what this container presents when it asks to run one of
+	// its declared dependencies. It replaces the application identifier the
+	// request used to carry, which was public metadata anybody could compute,
+	// so a container now proves which one it is instead of naming one.
+	NestedToken string `json:"nested_token"`
+
 	// SystemBrokerPolicyPath is the policy registered for this container.
 	SystemBrokerPolicyPath string `json:"system_broker_policy_path"`
 

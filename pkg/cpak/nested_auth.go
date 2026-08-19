@@ -30,9 +30,12 @@ func (c *Cpak) authorizeNestedRun(params types.RequestParams) (authorizedNestedR
 	}
 	defer store.Close()
 
-	parent, err := store.GetApplicationByCpakId(params.ParentAppId)
+	// Which application is calling is resolved from the capability it holds,
+	// never from anything it said. The identifier it used to send is public
+	// metadata and proved nothing.
+	parent, err := parentForNestedToken(store, params.Token)
 	if err != nil {
-		return authorizedNestedRun{}, fmt.Errorf("parent application not found: %w", err)
+		return authorizedNestedRun{}, err
 	}
 
 	dependency, err := declaredDependency(parent, params)

@@ -55,6 +55,7 @@ type SpawnCmd struct {
 	Verbose        bool     `cli:"verbose,v" help:"enable verbose output"`
 	UserUid        int      `cli:"user-uid" help:"set the user uid"`
 	AppId          string   `cli:"app-id" help:"set the app id"`
+	NestedToken    string   `cli:"nested-token" help:"the capability this container presents to run its declared dependencies"`
 	MachineId      string   `cli:"machine-id" help:"set the application machine id"`
 	ContainerId    string   `cli:"container-id" help:"set the container id"`
 	Rootfs         string   `cli:"rootfs" help:"set the rootfs"`
@@ -168,7 +169,7 @@ func (c *SpawnCmd) Run() error {
 		}
 	}
 
-	err = c.createCpakFile(c.AppId, c.Rootfs)
+	err = c.createCpakFile(c.NestedToken, c.Rootfs)
 	if err != nil {
 		return err
 	}
@@ -275,7 +276,10 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 	return envVars
 }
 
-func (c *SpawnCmd) createCpakFile(appId string, rootFs string) error {
+// createCpakFile writes the capability the container presents when it asks to
+// run one of its declared dependencies. It used to hold the application
+// identifier, which is public metadata and therefore proved nothing.
+func (c *SpawnCmd) createCpakFile(token string, rootFs string) error {
 	c.spawnVerbose("Creating cpak file")
 
 	_, err := prepareRootfsDirectory(rootFs, "/tmp")
@@ -292,7 +296,7 @@ func (c *SpawnCmd) createCpakFile(appId string, rootFs string) error {
 	}
 	defer file.Close()
 
-	_, err = file.WriteString(appId)
+	_, err = file.WriteString(token)
 	if err != nil {
 		return fmt.Errorf("write: an error occurred while spawning the namespace: %s", err)
 	}

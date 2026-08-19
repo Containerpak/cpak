@@ -186,23 +186,31 @@ func TestGetNested(t *testing.T) {
 		content string
 		want    string
 	}{
-		{"application-id", "application-id"},
-		{"application-id\n", "application-id"},
-		{"  application-id  \n", "application-id"},
-		{"", ""},
+		{"cafe0123", "cafe0123"},
+		{"cafe0123\n", "cafe0123"},
+		{"  cafe0123  \n", "cafe0123"},
 	}
 
 	for _, tc := range cases {
 		if err := os.WriteFile(marker, []byte(tc.content), 0644); err != nil {
 			t.Fatalf("write the marker: %v", err)
 		}
-		parent, nested := getNested()
+		token, nested := getNested()
 		if !nested {
 			t.Fatalf("the marker %q was not detected", tc.content)
 		}
-		if parent != tc.want {
-			t.Fatalf("parent: got %q, want %q", parent, tc.want)
+		if token != tc.want {
+			t.Fatalf("capability: got %q, want %q", token, tc.want)
 		}
+	}
+
+	// An empty marker is not a capability. It used to read as a container with
+	// an empty parent identifier, which the service then looked up.
+	if err := os.WriteFile(marker, nil, 0644); err != nil {
+		t.Fatalf("write the marker: %v", err)
+	}
+	if _, nested := getNested(); nested {
+		t.Fatal("an empty marker was read as a capability")
 	}
 }
 

@@ -44,13 +44,13 @@ func TestCpakSocketPathCanBeIsolated(t *testing.T) {
 
 func TestBuildNestedRunArgsEncodesTheWholeRequest(t *testing.T) {
 	params := types.RequestParams{
-		Action:      "run",
-		ParentAppId: "parent",
-		Origin:      "github.com/example/app",
-		Version:     "1.0.0",
-		Branch:      "main",
-		Binary:      "app",
-		ExtraArgs:   []string{"-i", "--version"},
+		Action:    "run",
+		Token:     strings.Repeat("ab", 32),
+		Origin:    "github.com/example/app",
+		Version:   "1.0.0",
+		Branch:    "main",
+		Binary:    "app",
+		ExtraArgs: []string{"-i", "--version"},
 	}
 
 	args, err := BuildNestedRunArgs(params)
@@ -307,12 +307,12 @@ func TestNestedRunPropagatesArgumentsAndExitStatus(t *testing.T) {
 	defer conn.Close()
 
 	params := types.RequestParams{
-		Action:      "run",
-		ParentAppId: "parent",
-		Origin:      "github.com/example/app",
-		Branch:      "main",
-		Binary:      "app",
-		ExtraArgs:   []string{"-i", "--version", "--", "-rf"},
+		Action:    "run",
+		Token:     strings.Repeat("ab", 32),
+		Origin:    "github.com/example/app",
+		Branch:    "main",
+		Binary:    "app",
+		ExtraArgs: []string{"-i", "--version", "--", "-rf"},
 	}
 	request, err := json.Marshal(params)
 	if err != nil {
@@ -378,7 +378,7 @@ func TestNestedRunReportsSuccessWithoutAnError(t *testing.T) {
 	}
 	defer conn.Close()
 
-	request, err := json.Marshal(types.RequestParams{Action: "run", ParentAppId: "parent", Origin: "github.com/example/app", Binary: "app"})
+	request, err := json.Marshal(types.RequestParams{Action: "run", Token: strings.Repeat("ab", 32), Origin: "github.com/example/app", Binary: "app"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestNestedRunAcceptsARequestLongerThanTheOldBuffer(t *testing.T) {
 	}
 	defer conn.Close()
 
-	params := types.RequestParams{Action: "run", ParentAppId: "parent", Origin: "github.com/example/app", Binary: "app"}
+	params := types.RequestParams{Action: "run", Token: strings.Repeat("ab", 32), Origin: "github.com/example/app", Binary: "app"}
 	for i := 0; i < 200; i++ {
 		params.ExtraArgs = append(params.ExtraArgs, fmt.Sprintf("--argument-number-%d=%s", i, strings.Repeat("v", 32)))
 	}
