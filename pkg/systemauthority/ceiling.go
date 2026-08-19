@@ -34,9 +34,22 @@ const ceilingSizeLimit = 1 << 20
 // Ceiling is the recorded maximum. Present says whether an administrator has
 // decided anything at all: a host with no ceiling is unmanaged and every
 // application keeps the policy it already had.
+//
+// Named is the other half of the answer, and leaving it out was a bug worth
+// naming. A ceiling meets a policy by intersection, so a permission the
+// administrator never wrote met whatever the zero value happened to be: a file
+// saying only that the session bus is closed also closed the ssh agent, emptied
+// every filesystem permission and dropped every environment variable, for every
+// application on the host. A ceiling constrains what it mentions and nothing
+// else, and Named is what it mentioned.
+//
+// A nil Named means every permission, so a ceiling assembled in code rather
+// than read from a file holds all of them. The empty map is the other case and
+// a real one: a file that names nothing constrains nothing.
 type Ceiling struct {
 	Present bool
 	Policy  types.Override
+	Named   map[string]bool
 }
 
 // CeilingStore reads the ceiling from beside the ledger, where the account that
@@ -59,33 +72,57 @@ func (c CeilingStore) Load() (Ceiling, error) {
 	if err != nil || !found {
 		return Ceiling{}, nil
 	}
+	policy, named, err := parseCeiling(data)
+	if err != nil {
+		return Ceiling{}, fmt.Errorf("read the cpak ceiling: %w", err)
+	}
+	return Ceiling{Present: true, Policy: policy, Named: named}, nil
+}
+
+// parseCeiling reads the file twice on purpose. Once for the values, and once
+// for the keys that are actually in it, which is what decides how far the
+// ceiling reaches: the decoded struct cannot tell a permission set to false
+// apart from one nobody wrote.
+func parseCeiling(data []byte) (types.Override, map[string]bool, error) {
+	var policy types.Override
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	policy := types.NewOverride()
 	if err := decoder.Decode(&policy); err != nil {
-		return Ceiling{}, fmt.Errorf("read the cpak ceiling: %w", err)
+		return types.Override{}, nil, err
 	}
 	if err := types.ValidateFilesystemPermissions(policy.Filesystem); err != nil {
-		return Ceiling{}, fmt.Errorf("read the cpak ceiling: %w", err)
+		return types.Override{}, nil, err
 	}
-	return Ceiling{Present: true, Policy: policy}, nil
+	var written map[string]json.RawMessage
+	if err := json.Unmarshal(data, &written); err != nil {
+		return types.Override{}, nil, err
+	}
+	named := make(map[string]bool, len(written))
+	for key := range written {
+		named[key] = true
+	}
+	return policy, named, nil
 }
 
 // Store writes the ceiling. It is privileged, and the caller reaches it through
 // the authority rather than by writing the file, so the polkit action is what
 // decides whether it may change.
-func (c CeilingStore) Store(policy types.Override) error {
-	if err := types.ValidateFilesystemPermissions(policy.Filesystem); err != nil {
+//
+// It takes the administrator's bytes rather than a decoded policy because the
+// keys they left out are part of what the file says. Writing back a marshalled
+// struct would name every permission and turn a file about one of them into a
+// ceiling over all of them.
+func (c CeilingStore) Store(data []byte) error {
+	if _, _, err := parseCeiling(data); err != nil {
 		return fmt.Errorf("write the cpak ceiling: %w", err)
 	}
 	if err := ensureDirectory(c.Directory, c.OwnerUID); err != nil {
 		return fmt.Errorf("write the cpak ceiling: %w", err)
 	}
-	data, err := json.MarshalIndent(policy, "", "  ")
-	if err != nil {
-		return fmt.Errorf("write the cpak ceiling: %w", err)
+	if !bytes.HasSuffix(data, []byte("\n")) {
+		data = append(bytes.Clone(data), '\n')
 	}
-	return writeAtomic(c.path(), append(data, '\n'), 0644)
+	return writeAtomic(c.path(), data, 0644)
 }
 
 // Clear removes the ceiling, which returns the host to unmanaged.
@@ -108,4 +145,13 @@ var HostCeiling = func() Ceiling {
 		return Ceiling{}
 	}
 	return ceiling
+}
+
+// ValidateCeiling reports whether a file could be a ceiling, so a caller can
+// refuse a bad one before asking anybody to authenticate. The parse is the same
+// one the store performs, because a file that passes here and fails there would
+// be the worst of both.
+func ValidateCeiling(data []byte) error {
+	_, _, err := parseCeiling(data)
+	return err
 }

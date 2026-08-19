@@ -227,6 +227,7 @@ func summarizePermissions(override types.Override) []bootstrap.Permission {
 			{override.DeviceFuse, "FUSE"},
 			{override.DeviceTun, "TUN/TAP"},
 			{override.DeviceUsb, "USB"},
+			{override.DeviceSerial, "serial ports"},
 			{override.DeviceInput, "input devices"},
 			{override.DeviceTTY, "controlling terminal"},
 		}

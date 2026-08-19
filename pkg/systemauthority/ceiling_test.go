@@ -5,11 +5,10 @@
 package systemauthority
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 func testCeilingStore(t *testing.T) CeilingStore {
@@ -31,11 +30,7 @@ func TestAHostWithNoCeilingDecidesNothing(t *testing.T) {
 
 func TestTheCeilingSurvivesBeingWrittenAndRead(t *testing.T) {
 	store := testCeilingStore(t)
-	policy := types.NewOverride()
-	policy.Network = false
-	policy.SocketWayland = true
-	policy.Filesystem = []types.FilesystemPermission{{Path: "xdg-download", Access: "read-only"}}
-	if err := store.Store(policy); err != nil {
+	if err := store.Store([]byte(`{"network":false,"socketWayland":true,"filesystem":[{"path":"xdg-download","access":"read-only"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	ceiling, err := store.Load()
@@ -60,7 +55,7 @@ func TestACeilingNobodyCanVouchForDecidesNothing(t *testing.T) {
 		t.Skip("root ignores the permission bits this case rests on")
 	}
 	store := testCeilingStore(t)
-	if err := store.Store(types.NewOverride()); err != nil {
+	if err := store.Store([]byte(`{"network":false}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(filepath.Join(store.Directory, ceilingFileName), 0666); err != nil {
@@ -77,7 +72,7 @@ func TestACeilingNobodyCanVouchForDecidesNothing(t *testing.T) {
 
 func TestClearingTheCeilingReturnsTheHostToUnmanaged(t *testing.T) {
 	store := testCeilingStore(t)
-	if err := store.Store(types.NewOverride()); err != nil {
+	if err := store.Store([]byte(`{"network":false}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Clear(); err != nil {
@@ -101,5 +96,80 @@ func TestACeilingThatIsNotAPolicyIsRefused(t *testing.T) {
 	}
 	if _, err := store.Load(); err == nil {
 		t.Fatal("a file naming something no policy has was read as a ceiling")
+	}
+}
+
+// The case the whole Named field exists for. A ceiling meets a policy by
+// intersection, so a permission the administrator did not write must not be
+// answered for: it would be answered with a zero value, and an administrator
+// closing the session bus would be emptying the filesystem, the environment and
+// every host action for everything on the host.
+func TestTheCeilingRemembersWhichPermissionsItNames(t *testing.T) {
+	store := testCeilingStore(t)
+	if err := store.Store([]byte(`{"socketSessionBus":false}`)); err != nil {
+		t.Fatal(err)
+	}
+	ceiling, err := store.Load()
+	if err != nil || !ceiling.Present {
+		t.Fatalf("the ceiling was not read back: present=%v err=%v", ceiling.Present, err)
+	}
+	if !ceiling.Named["socketSessionBus"] {
+		t.Fatal("the ceiling forgot the one permission it named")
+	}
+	for _, unwritten := range []string{"socketSshAgent", "filesystem", "env", "hostActions", "deviceUsb"} {
+		if ceiling.Named[unwritten] {
+			t.Fatalf("the ceiling claims to decide %s, which its file never mentions", unwritten)
+		}
+	}
+}
+
+// Storing has to keep the file the administrator wrote rather than a
+// marshalled struct, because writing every key back would turn a ceiling over
+// one permission into a ceiling over all of them.
+func TestACeilingIsStoredAsItWasWritten(t *testing.T) {
+	store := testCeilingStore(t)
+	if err := store.Store([]byte(`{"socketSessionBus":false}`)); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(filepath.Join(store.Directory, ceilingFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(written, &keys); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("a ceiling naming one permission was stored naming %d: %s", len(keys), written)
+	}
+}
+
+// An empty ceiling is a real thing an administrator can write, and it is not
+// the same as no ceiling: it is present, and it holds nobody to anything.
+func TestACeilingThatNamesNothingIsStillACeiling(t *testing.T) {
+	store := testCeilingStore(t)
+	if err := store.Store([]byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	ceiling, err := store.Load()
+	if err != nil || !ceiling.Present {
+		t.Fatalf("an empty ceiling was not read back: present=%v err=%v", ceiling.Present, err)
+	}
+	if ceiling.Named == nil {
+		t.Fatal("an empty ceiling came back as one that decides everything")
+	}
+	if len(ceiling.Named) != 0 {
+		t.Fatalf("an empty ceiling named %v", ceiling.Named)
+	}
+}
+
+// The file is refused before anybody authenticates, so the check the command
+// runs has to be the one the store runs.
+func TestAFileThatIsNotAPolicyIsRefusedBeforeItIsStored(t *testing.T) {
+	if err := ValidateCeiling([]byte(`{"whatIsThis":true}`)); err == nil {
+		t.Fatal("a file naming something no policy has passed validation")
+	}
+	if err := ValidateCeiling([]byte(`{"socketSessionBus":false}`)); err != nil {
+		t.Fatalf("a real ceiling was refused: %v", err)
 	}
 }

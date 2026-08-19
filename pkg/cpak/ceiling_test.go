@@ -19,6 +19,22 @@ func useHostCeiling(t *testing.T, policy types.Override) {
 	t.Cleanup(func() { hostCeiling = previous })
 }
 
+// useNamedHostCeiling is the ceiling as it comes off disk, which knows which
+// permissions its file actually mentioned. useHostCeiling leaves that nil, and
+// nil means all of them, so the two helpers cover both readings on purpose.
+func useNamedHostCeiling(t *testing.T, policy types.Override, names ...string) {
+	t.Helper()
+	named := make(map[string]bool, len(names))
+	for _, name := range names {
+		named[name] = true
+	}
+	previous := hostCeiling
+	hostCeiling = func() systemauthority.Ceiling {
+		return systemauthority.Ceiling{Present: true, Policy: policy, Named: named}
+	}
+	t.Cleanup(func() { hostCeiling = previous })
+}
+
 func useNoHostCeiling(t *testing.T) {
 	t.Helper()
 	previous := hostCeiling
@@ -110,5 +126,49 @@ func TestTheResultIsAlwaysInsideTheCeiling(t *testing.T) {
 	// A limit of zero is no limit, so the ceiling's has to be the one that stands.
 	if got.PidsMax != 64 {
 		t.Fatalf("an application asking for no process limit kept it: %d", got.PidsMax)
+	}
+}
+
+// An administrator who closes one door must not find they have closed every
+// other one. The ceiling meets a policy by intersection, so before it recorded
+// which permissions its file named, a file saying only that the session bus is
+// closed also emptied the filesystem, the environment and every host action for
+// every application on the host, because those are what an unwritten field
+// intersects down to.
+func TestACeilingOnlyHoldsBackThePermissionsItNames(t *testing.T) {
+	closed := types.Override{}
+	useNamedHostCeiling(t, closed, "socketSessionBus")
+
+	application := wideApplication()
+	application.ParsedOverride.SocketSessionBus = true
+	resolved := resolvedOverride(application)
+
+	if resolved.SocketSessionBus {
+		t.Fatal("the ceiling named the session bus and did not close it")
+	}
+	if !resolved.Network || !resolved.SocketX11 || !resolved.DeviceAll {
+		t.Fatalf("the ceiling closed permissions its file never named: %+v", resolved)
+	}
+	if len(resolved.Filesystem) == 0 {
+		t.Fatal("the ceiling emptied the filesystem permissions it never named")
+	}
+	if len(resolved.HostActions) == 0 {
+		t.Fatal("the ceiling dropped the host actions it never named")
+	}
+}
+
+// The other half: a ceiling that names a permission still beats the manifest,
+// and naming one permission is not a way to escape the rest of the file.
+func TestACeilingStillBeatsTheManifestOnWhatItNames(t *testing.T) {
+	useNamedHostCeiling(t, types.Override{Network: false, DeviceAll: false}, "network", "deviceAll")
+	resolved := resolvedOverride(wideApplication())
+	if resolved.Network {
+		t.Fatal("an application kept the network a ceiling took away")
+	}
+	if resolved.DeviceAll {
+		t.Fatal("an application kept every device a ceiling took away")
+	}
+	if !resolved.SocketX11 {
+		t.Fatal("the ceiling reached a permission it did not name")
 	}
 }

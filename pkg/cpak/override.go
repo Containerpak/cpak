@@ -117,6 +117,18 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 			mounts = append(mounts, "/dev/usb/")
 		}
 
+		// The globs are resolved when the container is built, so a port plugged
+		// in later is not there. That is the same bargain deviceVideo and the
+		// nvidia nodes already make, and the fix for all three is the devices
+		// provider rather than a wider mount here.
+		if o.DeviceSerial {
+			for _, pattern := range []string{"/dev/ttyUSB*", "/dev/ttyACM*"} {
+				if ports, err := filepath.Glob(pattern); err == nil {
+					mounts = append(mounts, ports...)
+				}
+			}
+		}
+
 		if o.DeviceInput {
 			mounts = append(mounts, "/dev/input/")
 		}

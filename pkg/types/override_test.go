@@ -8,7 +8,9 @@ import (
 func TestOverrideDiffReportsChangedPermissions(t *testing.T) {
 	before := NewOverride()
 	after := before
-	after.Network = false
+	// Toggled rather than assigned, so the case reports a change whichever way
+	// the default for the field goes.
+	after.Network = !before.Network
 	after.Filesystem = []FilesystemPermission{{Path: "/run/media", Access: "read-write"}}
 
 	changes := before.Diff(after)

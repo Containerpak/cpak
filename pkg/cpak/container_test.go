@@ -333,7 +333,9 @@ func TestGetCpakBinaryUsesTheRunningExecutable(t *testing.T) {
 func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 	first := types.NewOverride()
 	second := first
-	second.Network = false
+	// Toggling rather than assigning, so the case keeps testing the hash and
+	// not whatever the default for the field happens to be.
+	second.Network = !first.Network
 	firstHash, err := containerPolicyHash(first, nil, nil)
 	if err != nil {
 		t.Fatal(err)

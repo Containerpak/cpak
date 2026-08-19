@@ -11,28 +11,33 @@ import (
 )
 
 type Override struct {
-	SocketX11        bool `json:"socketX11" jsonschema:"description=Mount /tmp/.X11-unix/,default=true" flag:"socketX11,bool"`
-	SocketWayland    bool `json:"socketWayland" jsonschema:"description=Mount Wayland socket,default=true" flag:"socketWayland,bool"`
-	SocketPulseAudio bool `json:"socketPulseAudio" jsonschema:"description=Mount PulseAudio socket,default=true" flag:"socketPulseAudio,bool"`
-	SocketSessionBus bool `json:"socketSessionBus" jsonschema:"description=Mount session DBus socket,default=true" flag:"socketSessionBus,bool"`
-	SocketSystemBus  bool `json:"socketSystemBus" jsonschema:"description=Mount system DBus socket,default=true" flag:"socketSystemBus,bool"`
+	SocketX11        bool `json:"socketX11" jsonschema:"description=Mount /tmp/.X11-unix/,default=false" flag:"socketX11,bool"`
+	SocketWayland    bool `json:"socketWayland" jsonschema:"description=Mount Wayland socket,default=false" flag:"socketWayland,bool"`
+	SocketPulseAudio bool `json:"socketPulseAudio" jsonschema:"description=Mount PulseAudio socket,default=false" flag:"socketPulseAudio,bool"`
+	SocketSessionBus bool `json:"socketSessionBus" jsonschema:"description=Mount session DBus socket,default=false" flag:"socketSessionBus,bool"`
+	SocketSystemBus  bool `json:"socketSystemBus" jsonschema:"description=Mount system DBus socket,default=false" flag:"socketSystemBus,bool"`
 	SocketSshAgent   bool `json:"socketSshAgent" jsonschema:"description=Mount SSH agent socket,default=false" flag:"socketSshAgent,bool"`
-	SocketCups       bool `json:"socketCups" jsonschema:"description=Mount CUPS socket,default=true" flag:"socketCups,bool"`
+	SocketCups       bool `json:"socketCups" jsonschema:"description=Mount CUPS socket,default=false" flag:"socketCups,bool"`
 	SocketGpgAgent   bool `json:"socketGpgAgent" jsonschema:"description=Mount GPG agent socket,default=false" flag:"socketGpgAgent,bool"`
-	SocketAtSpiBus   bool `json:"socketAtSpiBus" jsonschema:"description=Mount AT-SPI bus socket,default=true" flag:"socketAtSpiBus,bool"`
+	SocketAtSpiBus   bool `json:"socketAtSpiBus" jsonschema:"description=Mount AT-SPI bus socket,default=false" flag:"socketAtSpiBus,bool"`
 	SocketBluetooth  bool `json:"socketBluetooth" jsonschema:"description=Mount Bluetooth socket,default=false" flag:"socketBluetooth,bool"`
 
-	DeviceDri   bool `json:"deviceDri" jsonschema:"description=Expose /dev/dri,default=true" flag:"deviceDri,bool"`
-	DeviceKvm   bool `json:"deviceKvm" jsonschema:"description=Expose /dev/kvm,default=true" flag:"deviceKvm,bool"`
-	DeviceShm   bool `json:"deviceShm" jsonschema:"description=Expose /dev/shm,default=true" flag:"deviceShm,bool"`
+	DeviceDri   bool `json:"deviceDri" jsonschema:"description=Expose /dev/dri,default=false" flag:"deviceDri,bool"`
+	DeviceKvm   bool `json:"deviceKvm" jsonschema:"description=Expose /dev/kvm,default=false" flag:"deviceKvm,bool"`
+	DeviceShm   bool `json:"deviceShm" jsonschema:"description=Expose /dev/shm,default=false" flag:"deviceShm,bool"`
 	DeviceAlsa  bool `json:"deviceAlsa" jsonschema:"description=Expose ALSA devices,default=false" flag:"deviceAlsa,bool"`
 	DeviceVideo bool `json:"deviceVideo" jsonschema:"description=Expose video devices,default=false" flag:"deviceVideo,bool"`
 	DeviceFuse  bool `json:"deviceFuse" jsonschema:"description=Expose FUSE devices,default=false" flag:"deviceFuse,bool"`
 	DeviceTun   bool `json:"deviceTun" jsonschema:"description=Expose TUN/TAP,default=false" flag:"deviceTun,bool"`
 	DeviceUsb   bool `json:"deviceUsb" jsonschema:"description=Expose USB devices,default=false" flag:"deviceUsb,bool"`
-	DeviceInput bool `json:"deviceInput" jsonschema:"description=Expose input devices,default=false" flag:"deviceInput,bool"`
-	DeviceTTY   bool `json:"deviceTTY" jsonschema:"description=Expose the controlling terminal,default=false" flag:"deviceTTY,bool"`
-	DeviceAll   bool `json:"deviceAll" jsonschema:"description=Expose all /dev,default=false" flag:"deviceAll,bool"`
+	// A serial port used to cost deviceAll, which is the whole of /dev, because
+	// nothing here named one. Boards, printers, radios and meters all arrive as
+	// ttyUSB or ttyACM, so they get their own permission rather than the
+	// escalation that was the only way to reach them.
+	DeviceSerial bool `json:"deviceSerial" jsonschema:"description=Expose USB and CDC serial ports,default=false" flag:"deviceSerial,bool"`
+	DeviceInput  bool `json:"deviceInput" jsonschema:"description=Expose input devices,default=false" flag:"deviceInput,bool"`
+	DeviceTTY    bool `json:"deviceTTY" jsonschema:"description=Expose the controlling terminal,default=false" flag:"deviceTTY,bool"`
+	DeviceAll    bool `json:"deviceAll" jsonschema:"description=Expose all /dev,default=false" flag:"deviceAll,bool"`
 
 	Notification     bool              `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
 	OpenURI          bool              `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
@@ -48,7 +53,7 @@ type Override struct {
 	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Legacy v1 additional paths" flag:"fsExtra,strings"`
 
 	Env            []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
-	Network        bool     `json:"network" jsonschema:"description=Enable network namespace,default=true" flag:"network,bool"`
+	Network        bool     `json:"network" jsonschema:"description=Enable network namespace,default=false" flag:"network,bool"`
 	Process        bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
 	UserNamespaces bool     `json:"userNamespaces" jsonschema:"description=Allow nested user namespaces for application sandboxes,default=false" flag:"userNamespaces,bool"`
 
@@ -83,20 +88,35 @@ func ValidateFilePickerGrant(grant FilePickerGrant) error {
 	return nil
 }
 
+// NewOverride is what a manifest gets for every permission it does not mention,
+// and the answer is now none of them.
+//
+// It used to hand out the session bus, the system bus, X11, Wayland, PulseAudio,
+// CUPS, AT-SPI, the GPU, KVM, shared memory and the network to anything that
+// stayed quiet. The session bus alone is the whole sandbox: with it the proxy in
+// pkg/desktopbus stops filtering, and a name away sits org.freedesktop.systemd1
+// and a StartTransientUnit that runs a process outside the container. A
+// permission nobody asked for is not a default, it is a grant, and a package
+// that needs one can say so in one line.
+//
+// This is a breaking change for a manifest that relied on a default, and that
+// is the intended direction: the failure is an application that cannot reach
+// something until its manifest asks, rather than one that reaches everything
+// because its manifest was silent.
 func NewOverride() Override {
 	return Override{
-		SocketX11:           true,
-		SocketWayland:       true,
-		SocketPulseAudio:    true,
-		SocketSessionBus:    true,
-		SocketSystemBus:     true,
+		SocketX11:           false,
+		SocketWayland:       false,
+		SocketPulseAudio:    false,
+		SocketSessionBus:    false,
+		SocketSystemBus:     false,
 		SocketSshAgent:      false,
-		SocketCups:          true,
+		SocketCups:          false,
 		SocketGpgAgent:      false,
-		SocketAtSpiBus:      true,
-		DeviceDri:           true,
-		DeviceKvm:           true,
-		DeviceShm:           true,
+		SocketAtSpiBus:      false,
+		DeviceDri:           false,
+		DeviceKvm:           false,
+		DeviceShm:           false,
 		DeviceAll:           false,
 		HostApplications:    false,
 		Filesystem:          []FilesystemPermission{},
@@ -105,7 +125,7 @@ func NewOverride() Override {
 		FsHostHome:          false,
 		FsExtra:             []string{},
 		Env:                 []string{},
-		Network:             true,
+		Network:             false,
 		Process:             false,
 		UserNamespaces:      false,
 		MemoryMaxMB:         0,

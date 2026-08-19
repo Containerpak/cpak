@@ -105,12 +105,21 @@ func resolvedOverride(app types.Application) types.Override {
 	return underHostCeiling(requestedOverride(app))
 }
 
+// requestedOverride answers with what the owner of the application decided, and
+// with the manifest when they decided nothing.
+//
+// Whether they decided anything is answered by the file being there, not by
+// comparing what it says to the defaults. That comparison was harmless while
+// the defaults granted things, because a policy identical to them was one
+// nobody had narrowed. Now that they grant nothing it would read the most
+// restrictive choice an owner can make, deny everything, as no choice at all,
+// and hand the application whatever its manifest asked for instead.
 func requestedOverride(app types.Application) types.Override {
 	userOverride, err := LoadOverride(app.Origin, app.Version)
-	if err == nil && !reflect.DeepEqual(userOverride, types.NewOverride()) {
-		return userOverride
+	if err != nil {
+		return app.ParsedOverride
 	}
-	return app.ParsedOverride
+	return userOverride
 }
 
 // underHostCeiling holds a policy to the widest one this host permits. The
@@ -127,7 +136,37 @@ func underHostCeiling(requested types.Override) types.Override {
 	if !ceiling.Present {
 		return requested
 	}
-	return intersectOverrides(ceiling.Policy, requested)
+	return heldToNamed(requested, intersectOverrides(ceiling.Policy, requested), ceiling.Named)
+}
+
+// heldToNamed keeps the intersected value for every permission the ceiling
+// names and the requested one for the rest.
+//
+// The intersection is computed whole so it stays the same operation nested
+// packages use, and this decides only which of its fields the administrator
+// asked about. Without it a ceiling would answer for permissions it never
+// mentioned, and the answer would be whatever the zero value happened to be:
+// no filesystem, no environment, no host actions, for everything on the host.
+//
+// A nil map means the ceiling speaks for all of them. That is the safe reading
+// for a ceiling that did not come from a file, and it is not the same as a file
+// that named nothing, which is an empty map and holds nobody to anything.
+func heldToNamed(requested, restricted types.Override, named map[string]bool) types.Override {
+	if named == nil {
+		return restricted
+	}
+	result := requested
+	target := reflect.ValueOf(&result).Elem()
+	source := reflect.ValueOf(restricted)
+	fields := target.Type()
+	for index := 0; index < fields.NumField(); index++ {
+		key := strings.Split(fields.Field(index).Tag.Get("json"), ",")[0]
+		if key == "" || !named[key] {
+			continue
+		}
+		target.Field(index).Set(source.Field(index))
+	}
+	return result
 }
 
 var hostCeiling = func() systemauthority.Ceiling { return systemauthority.HostCeiling() }
@@ -152,6 +191,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		DeviceFuse:          parent.DeviceFuse && child.DeviceFuse,
 		DeviceTun:           parent.DeviceTun && child.DeviceTun,
 		DeviceUsb:           parent.DeviceUsb && child.DeviceUsb,
+		DeviceSerial:        parent.DeviceSerial && child.DeviceSerial,
 		DeviceInput:         parent.DeviceInput && child.DeviceInput,
 		DeviceTTY:           parent.DeviceTTY && child.DeviceTTY,
 		DeviceAll:           parent.DeviceAll && child.DeviceAll,

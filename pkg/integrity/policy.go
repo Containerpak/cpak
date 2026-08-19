@@ -46,6 +46,7 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.DeviceFuse, current.DeviceFuse},
 		{candidate.DeviceTun, current.DeviceTun},
 		{candidate.DeviceUsb, current.DeviceUsb},
+		{candidate.DeviceSerial, current.DeviceSerial},
 		{candidate.DeviceInput, current.DeviceInput},
 		{candidate.DeviceTTY, current.DeviceTTY},
 		{candidate.DeviceAll, current.DeviceAll},

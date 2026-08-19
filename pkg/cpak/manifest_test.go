@@ -62,6 +62,8 @@ func TestValidateManifestRejectsWritableHostScope(t *testing.T) {
 
 func TestMigrateManifestPreservesV1Permissions(t *testing.T) {
 	override := types.NewOverride()
+	// A v1 manifest carried every key, so one that wanted the network said so.
+	override.Network = true
 	override.FsHostEtc = true
 	override.FsHostHome = true
 	override.FsExtra = []string{"/srv/data"}

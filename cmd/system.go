@@ -10,13 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/trustpolicy"
-	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -406,6 +407,24 @@ func orNothing(value string) string {
 	return value
 }
 
+// describeCeiling lists the permissions the ceiling actually names, and only
+// those. Printing the whole policy would show a value for every field and read
+// as a decision about all of them, when the file decided a handful.
+func describeCeiling(ceiling systemauthority.Ceiling) []string {
+	policy := reflect.ValueOf(ceiling.Policy)
+	fields := policy.Type()
+	lines := []string{}
+	for index := 0; index < fields.NumField(); index++ {
+		key := strings.Split(fields.Field(index).Tag.Get("json"), ",")[0]
+		if key == "" || !ceiling.Named[key] {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  %s: %v", key, policy.Field(index).Interface()))
+	}
+	sort.Strings(lines)
+	return lines
+}
+
 // reportCeiling says what this host allows at most. It is not privileged: an
 // application that will not do what its manifest promises is something the
 // person running it has to be able to explain without asking anyone.
@@ -419,9 +438,17 @@ func (c *SystemCmd) reportCeiling() error {
 		c.Logger.Info("cpak system set-ceiling FILE reads a policy from a cpak.json override file and makes it the maximum.")
 		return nil
 	}
-	c.Logger.Info("This host allows an application at most:")
-	tools.PrintStructKeyVal(ceiling.Policy)
+	if len(ceiling.Named) == 0 {
+		c.Logger.Info("This host sets a ceiling that names no permission, so it holds nothing back.")
+		c.Logger.Info("cpak system set-ceiling none removes it.")
+		return nil
+	}
+	c.Logger.Info("This host holds an application to the following, and to nothing else:")
+	for _, line := range describeCeiling(ceiling) {
+		c.Logger.Info(line)
+	}
 	c.Logger.Info("Whatever a manifest asks and whatever an owner permits is held to this, whoever published the application and whether or not it is signed.")
+	c.Logger.Info("Every permission not listed is left to the manifest and the owner.")
 	c.Logger.Info("cpak system set-ceiling none removes it.")
 	return nil
 }
@@ -438,21 +465,21 @@ func (c *SystemCmd) setCeiling() error {
 	}
 	// The file is read and understood before anyone is asked to authenticate,
 	// so a mistyped path costs a message and not an administrator password.
-	policy := types.NewOverride()
+	//
+	// The bytes travel rather than a decoded policy: which permissions the file
+	// leaves out is what decides how far the ceiling reaches, and a struct
+	// cannot carry that.
+	var policy []byte
 	removing := strings.EqualFold(c.Target, "none")
 	if !removing {
 		data, readErr := os.ReadFile(c.Target)
 		if readErr != nil {
 			return fmt.Errorf("read the ceiling: %w", readErr)
 		}
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if decodeErr := decoder.Decode(&policy); decodeErr != nil {
-			return fmt.Errorf("read the ceiling from %s: %w", c.Target, decodeErr)
-		}
-		if validateErr := types.ValidateFilesystemPermissions(policy.Filesystem); validateErr != nil {
+		if validateErr := systemauthority.ValidateCeiling(data); validateErr != nil {
 			return fmt.Errorf("read the ceiling from %s: %w", c.Target, validateErr)
 		}
+		policy = data
 	}
 	if os.Geteuid() != 0 {
 		return runPrivileged("system", "set-ceiling", c.Target)

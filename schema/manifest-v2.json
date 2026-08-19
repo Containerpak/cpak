@@ -124,27 +124,27 @@
         "socketX11": {
           "type": "boolean",
           "description": "Mount /tmp/.X11-unix/",
-          "default": true
+          "default": false
         },
         "socketWayland": {
           "type": "boolean",
           "description": "Mount Wayland socket",
-          "default": true
+          "default": false
         },
         "socketPulseAudio": {
           "type": "boolean",
           "description": "Mount PulseAudio socket",
-          "default": true
+          "default": false
         },
         "socketSessionBus": {
           "type": "boolean",
           "description": "Mount session DBus socket",
-          "default": true
+          "default": false
         },
         "socketSystemBus": {
           "type": "boolean",
           "description": "Mount system DBus socket",
-          "default": true
+          "default": false
         },
         "socketSshAgent": {
           "type": "boolean",
@@ -154,7 +154,7 @@
         "socketCups": {
           "type": "boolean",
           "description": "Mount CUPS socket",
-          "default": true
+          "default": false
         },
         "socketGpgAgent": {
           "type": "boolean",
@@ -164,7 +164,7 @@
         "socketAtSpiBus": {
           "type": "boolean",
           "description": "Mount AT-SPI bus socket",
-          "default": true
+          "default": false
         },
         "socketBluetooth": {
           "type": "boolean",
@@ -174,17 +174,17 @@
         "deviceDri": {
           "type": "boolean",
           "description": "Expose /dev/dri",
-          "default": true
+          "default": false
         },
         "deviceKvm": {
           "type": "boolean",
           "description": "Expose /dev/kvm",
-          "default": true
+          "default": false
         },
         "deviceShm": {
           "type": "boolean",
           "description": "Expose /dev/shm",
-          "default": true
+          "default": false
         },
         "deviceAlsa": {
           "type": "boolean",
@@ -209,6 +209,11 @@
         "deviceUsb": {
           "type": "boolean",
           "description": "Expose USB devices",
+          "default": false
+        },
+        "deviceSerial": {
+          "type": "boolean",
+          "description": "Expose USB and CDC serial ports",
           "default": false
         },
         "deviceInput": {
@@ -270,7 +275,7 @@
         "network": {
           "type": "boolean",
           "description": "Enable network namespace",
-          "default": true
+          "default": false
         },
         "process": {
           "type": "boolean",
@@ -336,6 +341,7 @@
         "deviceFuse",
         "deviceTun",
         "deviceUsb",
+        "deviceSerial",
         "deviceInput",
         "deviceTTY",
         "deviceAll",
