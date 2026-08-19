@@ -7,6 +7,7 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 )
@@ -174,15 +175,60 @@ func (o Override) WithMigratedFilesystem() Override {
 		filesystem = append(filesystem, FilesystemPermission{Path: "home", Access: "read-write"})
 	}
 	for _, path := range o.FsExtra {
-		filesystem = append(filesystem, FilesystemPermission{Path: path, Access: "read-write"})
+		if grant, ok := LegacyFilesystemGrant(path); ok {
+			filesystem = append(filesystem, grant)
+		}
 	}
 	migrated := o
-	migrated.Filesystem = filesystem
+	migrated.Filesystem = widestPerPath(filesystem)
 	migrated.FsHost = false
 	migrated.FsHostEtc = false
 	migrated.FsHostHome = false
 	migrated.FsExtra = nil
 	return migrated
+}
+
+// LegacyFilesystemGrant reads one v1 fsExtra entry as the grant it stands for,
+// and says when it stands for nothing cpak can express.
+//
+// The form is normalised, and only the form. A trailing separator and a segment
+// that has to be resolved are what v1 wrote and what this codebase's own legacy
+// mount builder still produces, so a manifest carrying them is naming a path
+// cpak can hold an application to. Meaning is not normalised: a relative path,
+// "/" and a path written with ~ or $HOME are not paths v1 ever mounted, so
+// reading one as a grant now would hand an installed application more than it
+// has ever run with. Those are refused here and dropped by the caller, which is
+// the only direction a migration is allowed to move.
+func LegacyFilesystemGrant(path string) (FilesystemPermission, bool) {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) || cleaned == "/" || !validFilesystemPath(cleaned) {
+		return FilesystemPermission{}, false
+	}
+	return FilesystemPermission{Path: cleaned, Access: "read-write"}, true
+}
+
+// widestPerPath keeps one grant per path, the widest of the ones naming it.
+//
+// The legacy fields and the typed ones can name the same path: fsHostEtc and an
+// fsExtra of "/etc/" are one directory written twice, and v1 mounted it once,
+// writable. Two rows for one path would fail validation and leave an
+// installation that has been running for a year refusing every update, so they
+// are folded the way v1 resolved them.
+func widestPerPath(permissions []FilesystemPermission) []FilesystemPermission {
+	folded := make([]FilesystemPermission, 0, len(permissions))
+	at := make(map[string]int, len(permissions))
+	for _, permission := range permissions {
+		index, seen := at[permission.Path]
+		if !seen {
+			at[permission.Path] = len(folded)
+			folded = append(folded, permission)
+			continue
+		}
+		if permission.Access == "read-write" {
+			folded[index].Access = "read-write"
+		}
+	}
+	return folded
 }
 
 // Diff returns the manifest permission keys whose effective values changed.

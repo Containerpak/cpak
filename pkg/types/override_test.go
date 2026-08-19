@@ -144,3 +144,57 @@ func TestWithMigratedFilesystemIsTheOneTableTheLegacyFieldsMean(t *testing.T) {
 		t.Fatalf("a policy with no legacy field was rewritten: %+v", got)
 	}
 }
+
+// A v1 manifest was never validated, and cpak's own legacy mount builder wrote
+// trailing separators, so a path that has to be resolved is the normal case
+// rather than a malformed one. What it may not do is grow: a path v1 could not
+// mount is not read as a grant now.
+func TestALegacyPathIsNormalisedButNeverReinterpreted(t *testing.T) {
+	for path, want := range map[string]string{
+		"/srv/data/":       "/srv/data",
+		"/srv/../srv/data": "/srv/data",
+		"/srv/data":        "/srv/data",
+		"/srv//data":       "/srv/data",
+	} {
+		grant, ok := LegacyFilesystemGrant(path)
+		if !ok {
+			t.Fatalf("%q was refused, and it names a directory cpak can hold an application to", path)
+		}
+		if grant.Path != want || grant.Access != "read-write" {
+			t.Fatalf("%q became %v, want %s (read-write)", path, grant, want)
+		}
+	}
+
+	// None of these is a path v1 ever mounted, so none becomes a grant.
+	for _, path := range []string{"srv/data", "/", "~/Documents", "$HOME/Documents", "home", "host"} {
+		if grant, ok := LegacyFilesystemGrant(path); ok {
+			t.Fatalf("%q was read as %v, which is more than the application ever ran with", path, grant)
+		}
+	}
+}
+
+// One directory named twice is one grant. Two rows naming the same path fail
+// validation, and the validation runs at every install and every update, so
+// this is what keeps an installation that has been running for a year able to
+// take its next security update.
+func TestOneDirectoryNamedTwiceIsOneGrant(t *testing.T) {
+	migrated := Override{FsHostEtc: true, FsExtra: []string{"/etc/", "/srv/data", "/srv/data/"}}.WithMigratedFilesystem()
+
+	want := []FilesystemPermission{
+		{Path: "/etc", Access: "read-write"},
+		{Path: "/srv/data", Access: "read-write"},
+	}
+	if !reflect.DeepEqual(migrated.Filesystem, want) {
+		t.Fatalf("folded grants: got %v, want %v", migrated.Filesystem, want)
+	}
+	if err := ValidateFilesystemPermissions(migrated.Filesystem); err != nil {
+		t.Fatalf("the migrated policy does not validate: %v", err)
+	}
+
+	// fsHostEtc on its own is still the read-only grant it always was. It is
+	// the second mention, writable, that widens it.
+	alone := Override{FsHostEtc: true}.WithMigratedFilesystem()
+	if len(alone.Filesystem) != 1 || alone.Filesystem[0].Access != "read-only" {
+		t.Fatalf("fsHostEtc alone: got %v", alone.Filesystem)
+	}
+}

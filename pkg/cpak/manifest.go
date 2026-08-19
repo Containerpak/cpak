@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
@@ -386,6 +387,18 @@ func MigrateManifest(manifest *types.CpakManifest) error {
 	// manifest that named no mount leaves an override equal to the one already
 	// installed rather than one that merely reads the same. Override.Diff
 	// compares the fields whole, and an empty list is not the absent one.
+	// A v1 fsExtra entry that names nothing cpak can hold an application to is
+	// dropped rather than refused. Refusing is not a stricter reading of the
+	// manifest, it is an installation that cannot be made and, through
+	// installedOverride, an installed application that can never be updated
+	// again, security updates included. The publisher is told which grant went,
+	// and the application runs with less than it asked for, which is the side a
+	// migration is allowed to err on.
+	for _, path := range manifest.Override.FsExtra {
+		if _, ok := types.LegacyFilesystemGrant(path); !ok {
+			logger.Printf("Warning: %s asks for the path %q, which cpak cannot express as a grant; the application runs without it", manifest.Name, path)
+		}
+	}
 	override := manifest.Override.WithMigratedFilesystem()
 	if err := types.ValidateFilesystemPermissions(override.Filesystem); err != nil {
 		return fmt.Errorf("migrate filesystem permissions: %w", err)

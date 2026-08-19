@@ -86,13 +86,47 @@ func TestMigrateManifestPreservesV1Permissions(t *testing.T) {
 	}
 }
 
-func TestMigrateManifestRejectsWritableHostRoot(t *testing.T) {
+// A writable host root is never granted. It used to be refused, which reads as
+// the stricter answer and is not: installedOverride migrates at every install
+// and every update, so a refusal is an installed application that can never
+// take another update, security updates included. Dropping the grant leaves
+// the application with less, which is the only direction this is allowed to
+// move, and the publisher is told.
+func TestMigrateManifestNeverGrantsAWritableHostRoot(t *testing.T) {
 	manifest := &types.CpakManifest{
 		ManifestVersion: "1.0",
-		Override:        types.Override{FsExtra: []string{"/"}},
+		Override:        types.Override{FsExtra: []string{"/", "/srv/data"}},
 	}
-	if err := MigrateManifest(manifest); err == nil {
-		t.Fatal("migrated a writable host root grant")
+	if err := MigrateManifest(manifest); err != nil {
+		t.Fatalf("an update of this package would fail forever: %v", err)
+	}
+	want := []types.FilesystemPermission{{Path: "/srv/data", Access: "read-write"}}
+	if !reflect.DeepEqual(manifest.Override.Filesystem, want) {
+		t.Fatalf("migrated grants: got %v, want %v", manifest.Override.Filesystem, want)
+	}
+}
+
+// The shape a v1 manifest actually has. None of these was ever validated, and
+// the mount builder in this package writes a trailing separator itself, so an
+// installation carrying them has to keep working.
+func TestMigrateManifestReadsTheV1PathsThatWereNeverValidated(t *testing.T) {
+	manifest := &types.CpakManifest{
+		ManifestVersion: "1.0",
+		Override: types.Override{
+			FsHostEtc: true,
+			FsExtra:   []string{"/etc/", "/srv/data/", "/srv/../srv/media", "opt/data"},
+		},
+	}
+	if err := MigrateManifest(manifest); err != nil {
+		t.Fatalf("a package installed with these fields could not be updated: %v", err)
+	}
+	want := []types.FilesystemPermission{
+		{Path: "/etc", Access: "read-write"},
+		{Path: "/srv/data", Access: "read-write"},
+		{Path: "/srv/media", Access: "read-write"},
+	}
+	if !reflect.DeepEqual(manifest.Override.Filesystem, want) {
+		t.Fatalf("migrated grants: got %v, want %v", manifest.Override.Filesystem, want)
 	}
 }
 
