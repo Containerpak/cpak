@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,10 +44,13 @@ func NewStore(storePath string) (s *Store, err error) {
 	appsDir := filepath.Join(storePath, "db", "apps")
 	containersDir := filepath.Join(storePath, "db", "containers")
 
-	if err := os.MkdirAll(appsDir, 0755); err != nil {
+	// The database names every application and container on the machine, so
+	// it is created as private as the tree it sits in rather than waiting for
+	// an audit to notice.
+	if err := securePrivateDirectoryUnder(storePath, appsDir); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(containersDir, 0755); err != nil {
+	if err := securePrivateDirectoryUnder(storePath, containersDir); err != nil {
 		return nil, err
 	}
 

@@ -266,7 +266,8 @@
         },
         "env": {
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*="
           },
           "type": "array",
           "minItems": 0,
@@ -313,7 +314,8 @@
         },
         "allowedHostCommands": {
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
           },
           "type": "array",
           "minItems": 0,
@@ -483,7 +485,8 @@
     },
     "binaries": {
       "items": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^/[^\\x00-\\x1f\\x7f-\\x9f]+$"
       },
       "type": "array",
       "minItems": 1,
@@ -491,7 +494,8 @@
     },
     "desktop_entries": {
       "items": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^.+\\.desktop$"
       },
       "type": "array",
       "description": ".desktop entry files"

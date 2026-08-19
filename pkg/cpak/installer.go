@@ -533,6 +533,15 @@ func (c *Cpak) createExports(app types.Application) (err error) {
 			return entriesErr
 		}
 		for _, entry := range app.ParsedDesktopEntries {
+			if _, nameErr := desktopEntryExportName(entry); nameErr != nil {
+				// The manifest check refuses this at install time, but an
+				// application installed before it keeps the name in the store
+				// and every update and repair re-exports from there. Leaving
+				// the entry unwritten is the answer; refusing to update the
+				// application the user already has is not.
+				logger.Printf("Warning: %v, skipping its export", nameErr)
+				continue
+			}
 			err = c.exportFVSDesktopEntry(entries, app, entry)
 			if err != nil {
 				return err
@@ -774,6 +783,11 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 }
 
 func exportDesktopAlias(app types.Application, name, content string) error {
+	name, nameErr := desktopEntryExportName(name)
+	if nameErr != nil {
+		logger.Printf("Warning: %v, skipping its alias", nameErr)
+		return nil
+	}
 	path := originalDesktopEntryExportPath(name)
 	if existing, err := os.ReadFile(path); err == nil {
 		if desktopEntryValue(existing, "X-cpak-Origin") != app.Origin {
@@ -788,6 +802,15 @@ func exportDesktopAlias(app types.Application, name, content string) error {
 	content = setDesktopEntryValue(content, "NoDisplay", "true")
 	content = setDesktopEntryValue(content, "X-cpak-Origin", app.Origin)
 	content = setDesktopEntryValue(content, "X-cpak-ID", app.CpakId)
+	// Every guard around this file, the one above and the one at removal, reads
+	// the marker back out of it, so a serialisation that took none is a file
+	// cpak owns and can never name again. setDesktopEntryValue answers the
+	// content unchanged when there is no [Desktop Entry] group to put a key in,
+	// which is exactly the file that is not a launcher.
+	if desktopEntryValue([]byte(content), "X-cpak-ID") != app.CpakId {
+		logger.Printf("Warning: desktop entry %q carries no [Desktop Entry] group to mark, skipping its alias", name)
+		return nil
+	}
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
@@ -811,12 +834,31 @@ func desktopEntryExistsInSystemData(name string) bool {
 	return false
 }
 
+// setDesktopEntryValue writes a key into the [Desktop Entry] group of a
+// desktop file, adding it when it is not already there.
+//
+// It reads the file the way desktopEntryValue does, which is the reader every
+// guard around the export uses: the group header is recognised after trimming,
+// and a file written on Windows or opened by an editor that leaves a byte
+// order mark is still a launcher. Recognising less here than the readers do
+// meant the marker silently never landed, and an alias without a marker is one
+// the uninstall walks past.
 func setDesktopEntryValue(content, key, value string) string {
+	content = strings.TrimPrefix(content, "\ufeff")
 	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSuffix(line, "\r")
+	}
 	inDesktopEntry := false
 	insertAt := -1
 	for i, line := range lines {
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+		line = strings.TrimSpace(line)
+		// A group header is a line that opens one, which is what
+		// desktopEntryValue reads and therefore what a group header has to be
+		// here. Requiring the closing bracket as well ended the group for the
+		// reader and not for the writer, so on a file carrying a malformed
+		// header the marker went into a group the reader never looks in.
+		if strings.HasPrefix(line, "[") {
 			if inDesktopEntry {
 				insertAt = i
 				break
@@ -984,6 +1026,11 @@ func findIcon(layerDir, iconName string) string {
 	return iconPath
 }
 
+// shellLiteral renders a value as a single word for /bin/sh.
+func shellLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
 func (c *Cpak) exportBinary(app types.Application, binary string) error {
 	destinationItems := []string{c.Options.ExportsPath}
 	destinationItems = append(destinationItems, strings.Split(app.Origin, "/")...)
@@ -1001,7 +1048,11 @@ func (c *Cpak) exportBinary(app types.Application, binary string) error {
 	if err != nil {
 		return err
 	}
-	scriptContent := fmt.Sprintf("#!/bin/sh\nexec %s run %s @%s -- \"$@\"\n", launcher, app.Origin, binary)
+	// The words the manifest chose are quoted, not formatted in: a wrapper is
+	// a shell script, and what an application names is an argument to the
+	// launcher, never a piece of the script. The launcher itself is named
+	// outright, as above.
+	scriptContent := "#!/bin/sh\nexec " + launcher + " run " + shellLiteral(app.Origin) + " " + shellLiteral("@"+binary) + " -- \"$@\"\n"
 	err = os.WriteFile(destinationPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return err

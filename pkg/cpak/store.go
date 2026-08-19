@@ -6,7 +6,6 @@ package cpak
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -25,7 +24,7 @@ func (c *Cpak) GetInStoreDirMkdir(sub string, args ...string) (path string, err 
 	if filepath.Ext(path) != "" {
 		path = filepath.Dir(path)
 	}
-	err = os.MkdirAll(path, 0755)
+	err = securePrivateDirectoryUnder(c.Options.StorePath, path)
 
 	if sub == "states" && len(args) == 1 {
 		_, err = c.GetInStoreDirMkdir("states", args[0], "up")
@@ -56,7 +55,7 @@ func (c *Cpak) GetInCacheDirMkdir(args ...string) (path string, err error) {
 		path = filepath.Dir(path)
 	}
 
-	err = os.MkdirAll(path, 0755)
+	err = securePrivateDirectoryUnder(c.Options.CachePath, path)
 	return
 }
 
@@ -92,7 +91,7 @@ func (c *Cpak) GetInManifestsDirMkdir(origin string, args ...string) (path strin
 		path = filepath.Dir(path)
 	}
 
-	err = os.MkdirAll(path, 0755)
+	err = securePrivateDirectoryUnder(c.Options.ManifestsPath, path)
 	return
 }
 

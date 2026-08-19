@@ -1322,8 +1322,15 @@ func securePrivateDirectory(path string) error {
 		return err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != uint32(os.Getuid()) {
-		return errors.New("private directory is not owned by the current user")
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is not a directory this user can keep private", path)
+	}
+	if stat.Uid != uint32(os.Getuid()) {
+		// This gate sits under the store paths, so a single sudo run leaves
+		// every later cpak command failing here. It names the path, who owns
+		// it and how to hand it back, because the user has nothing else to
+		// go on.
+		return fmt.Errorf("%s is owned by uid %d, not by uid %d: run chown -R %d %s to hand it back", path, stat.Uid, os.Getuid(), os.Getuid(), path)
 	}
 	if info.Mode().Perm() != 0700 {
 		if err = os.Chmod(path, 0700); err != nil {
@@ -1362,6 +1369,42 @@ func provePrivateDirectory(path string) error {
 	}
 	if info.Mode().Perm() != 0700 {
 		return fmt.Errorf("private directory %s is open to other accounts: %s", path, info.Mode().Perm())
+	}
+	return nil
+}
+
+// securePrivateDirectoryUnder secures every directory from root down to path.
+//
+// securePrivateDirectory answers only for the directory it is handed, and
+// MkdirAll leaves a directory that already exists at whatever mode it has, so
+// on an installation made by an older cpak the leaves become private while
+// every directory above them stays world-readable. Walking the spine is what
+// makes an upgraded tree converge.
+func securePrivateDirectoryUnder(root, path string) error {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(root) || !filepath.IsAbs(path) {
+		return errors.New("private directory path must be absolute")
+	}
+	if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
+		return fmt.Errorf("%s is outside %s", path, root)
+	}
+	if err := securePrivateDirectory(root); err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	if relative == "." {
+		return nil
+	}
+	current := root
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		if err := securePrivateDirectory(current); err != nil {
+			return err
+		}
 	}
 	return nil
 }

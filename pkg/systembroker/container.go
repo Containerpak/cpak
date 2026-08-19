@@ -19,6 +19,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"golang.org/x/sys/unix"
 )
 
 const containerOwnerLabel = "io.cpak.owner"
@@ -26,6 +27,10 @@ const containerOwnerLabel = "io.cpak.owner"
 var containerResourcePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 var containerEnvironmentPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=.*$`)
 var containerUserPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$`)
+
+// containerIdentifierPattern is how a backend spells a container identifier,
+// full or shortened to the twelve characters it prints.
+var containerIdentifierPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 
 func executeContainer(ctx context.Context, owner string, capabilities map[string]bool, paths []ContainerPathGrant, request ContainerRequest, stdout, stderr io.Writer) (int, error) {
 	arguments, owned, err := containerArguments(owner, capabilities, paths, request)
@@ -37,10 +42,13 @@ func executeContainer(ctx context.Context, owner string, capabilities map[string
 		return 0, err
 	}
 	if owned {
-		for _, resource := range request.Resources {
-			if err := requireOwnedContainer(ctx, binary, owner, resource); err != nil {
-				return 0, err
-			}
+		resolved, resolveErr := ownedContainerRequest(ctx, binary, owner, request)
+		if resolveErr != nil {
+			return 0, resolveErr
+		}
+		arguments, _, err = containerArguments(owner, capabilities, paths, resolved)
+		if err != nil {
+			return 0, err
 		}
 	}
 	command := exec.CommandContext(ctx, binary, arguments...)
@@ -159,10 +167,11 @@ func containerCreateArguments(owner string, paths []ContainerPathGrant, request 
 		arguments = append(arguments, "--publish", port)
 	}
 	for _, mount := range request.Mounts {
-		if err := validateContainerMount(mount, paths); err != nil {
+		source, err := validateContainerMount(mount, paths)
+		if err != nil {
 			return nil, err
 		}
-		value := mount.Source + ":" + mount.Target
+		value := source + ":" + mount.Target
 		if mount.ReadOnly {
 			value += ":ro"
 		}
@@ -225,6 +234,12 @@ func validateContainerRequest(request ContainerRequest) error {
 	}
 	if request.Name != "" && !containerResourcePattern.MatchString(request.Name) {
 		return errors.New("invalid container name")
+	}
+	// A name is matched before an identifier, so a name spelled like one
+	// stands in front of another container: every stop, rm and exec its owner
+	// issues by that identifier reaches this container instead.
+	if containerIdentifierPattern.MatchString(request.Name) {
+		return errors.New("container name is spelled like a container identifier")
 	}
 	if request.Workdir != "" && (!filepath.IsAbs(request.Workdir) || filepath.Clean(request.Workdir) != request.Workdir) {
 		return errors.New("invalid container working directory")
@@ -304,24 +319,56 @@ func validateContainerShape(request ContainerRequest) error {
 	return nil
 }
 
-func validateContainerMount(mount ContainerMount, grants []ContainerPathGrant) error {
+// validateContainerMount answers with the path the grant was checked against.
+//
+// The backend resolves the source a second time when it binds it, so a source
+// the caller can still rewrite is a different directory there than it was
+// here. The mount is issued against the resolved path instead.
+func validateContainerMount(mount ContainerMount, grants []ContainerPathGrant) (string, error) {
 	if !filepath.IsAbs(mount.Source) || !filepath.IsAbs(mount.Target) || filepath.Clean(mount.Source) != mount.Source || filepath.Clean(mount.Target) != mount.Target {
-		return errors.New("invalid container mount")
+		return "", errors.New("invalid container mount")
+	}
+	// The argument is assembled as src:dst[:opts], so a colon in either half
+	// is a field separator the caller wrote: a target of /data:z hands podman
+	// the relabel option for a host path the broker never meant to expose.
+	if strings.ContainsRune(mount.Source, ':') || strings.ContainsRune(mount.Target, ':') {
+		return "", errors.New("container mount path carries a colon")
 	}
 	resolved, err := filepath.EvalSymlinks(mount.Source)
 	if err != nil {
-		return errors.New("container mount source is unavailable")
+		return "", errors.New("container mount source is unavailable")
+	}
+	if strings.ContainsRune(resolved, ':') {
+		return "", errors.New("container mount path carries a colon")
 	}
 	for _, grant := range grants {
 		if !pathContains(grant.Path, resolved) {
 			continue
 		}
 		if grant.ReadOnly && !mount.ReadOnly {
-			return errors.New("container mount exceeds the granted filesystem access")
+			return "", errors.New("container mount exceeds the granted filesystem access")
 		}
-		return nil
+		if err := confirmContainerMountSource(resolved); err != nil {
+			return "", err
+		}
+		return resolved, nil
 	}
-	return errors.New("container mount is outside the granted filesystem paths")
+	return "", errors.New("container mount is outside the granted filesystem paths")
+}
+
+// confirmContainerMountSource refuses a source whose last component became a
+// symlink after it was resolved.
+//
+// It proves nothing about what the backend will find later, which is why the
+// argument carries the resolved path rather than the one the caller sent; this
+// only catches the swap that happened while the grant was being checked.
+func confirmContainerMountSource(path string) error {
+	fd, err := unix.Open(path, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return errors.New("container mount source is unavailable")
+	}
+	_ = unix.Close(fd)
+	return nil
 }
 
 func pathContains(parent, child string) bool {
@@ -382,14 +429,37 @@ func trustedContainerBinary(backend string) (string, error) {
 	return path, nil
 }
 
-func requireOwnedContainer(ctx context.Context, binary, owner, resource string) error {
-	command := exec.CommandContext(ctx, binary, "inspect", "--format", "{{ index .Config.Labels \""+containerOwnerLabel+"\" }}", resource)
+// ownedContainerRequest answers with the request the backend is asked to run.
+//
+// The backend matches a name before it matches an identifier, so the name that
+// answered the ownership check is not necessarily the container the command
+// reaches. Each name is turned into the identifier it named while it was
+// checked, and the command is issued against that.
+func ownedContainerRequest(ctx context.Context, binary, owner string, request ContainerRequest) (ContainerRequest, error) {
+	resolved := request
+	resolved.Resources = make([]string, 0, len(request.Resources))
+	for _, resource := range request.Resources {
+		identifier, err := requireOwnedContainer(ctx, binary, owner, resource)
+		if err != nil {
+			return ContainerRequest{}, err
+		}
+		resolved.Resources = append(resolved.Resources, identifier)
+	}
+	return resolved, nil
+}
+
+func requireOwnedContainer(ctx context.Context, binary, owner, resource string) (string, error) {
+	command := exec.CommandContext(ctx, binary, "inspect", "--format", "{{ .Id }} {{ index .Config.Labels \""+containerOwnerLabel+"\" }}", resource)
 	output, err := command.Output()
 	if err != nil {
-		return errors.New("managed host container was not found")
+		return "", errors.New("managed host container was not found")
 	}
-	if strings.TrimSpace(string(output)) != owner {
-		return errors.New("host container is not owned by this cpak")
+	identifier, label, found := strings.Cut(strings.TrimSpace(string(output)), " ")
+	if !found || strings.TrimSpace(label) != owner {
+		return "", errors.New("host container is not owned by this cpak")
 	}
-	return nil
+	if !containerIdentifierPattern.MatchString(identifier) {
+		return "", errors.New("managed host container was not found")
+	}
+	return identifier, nil
 }

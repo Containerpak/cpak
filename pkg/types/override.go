@@ -53,7 +53,7 @@ type Override struct {
 	FsHostHome bool     `json:"fsHostHome,omitempty" jsonschema:"description=Legacy v1 host home permission" flag:"fsHostHome,bool"`
 	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Legacy v1 additional paths" flag:"fsExtra,strings"`
 
-	Env            []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,items.pattern=^[A-Za-z_][A-Za-z0-9_]*=.+$,minItems=0" flag:"env,strings"`
+	Env            []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,minItems=0" flag:"env,strings"`
 	Network        bool     `json:"network" jsonschema:"description=Enable network namespace,default=false" flag:"network,bool"`
 	Process        bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
 	UserNamespaces bool     `json:"userNamespaces" jsonschema:"description=Allow nested user namespaces for application sandboxes,default=false" flag:"userNamespaces,bool"`
@@ -64,7 +64,7 @@ type Override struct {
 
 	AsRoot bool `json:"asRoot" jsonschema:"description=Run as root inside container,default=false" flag:"asRoot,bool"`
 
-	AllowedHostCommands []string `json:"allowedHostCommands,omitempty" jsonschema:"description=Legacy host command compatibility field,items.pattern=^[A-Za-z0-9_\\-]+$,minItems=0"`
+	AllowedHostCommands []string `json:"allowedHostCommands,omitempty" jsonschema:"description=Legacy host command compatibility field,minItems=0"`
 }
 
 type FilePickerGrant struct {

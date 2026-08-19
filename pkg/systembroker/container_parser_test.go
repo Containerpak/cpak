@@ -5,6 +5,7 @@
 package systembroker
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -100,16 +101,16 @@ func TestContainerMountsStayWithinFilesystemGrant(t *testing.T) {
 		}
 	}
 	grants := []ContainerPathGrant{{Path: readOnly, ReadOnly: true}, {Path: readWrite}}
-	if err := validateContainerMount(ContainerMount{Source: readOnly, Target: "/data"}, grants); err == nil {
+	if _, err := validateContainerMount(ContainerMount{Source: readOnly, Target: "/data"}, grants); err == nil {
 		t.Fatal("read-only filesystem grant was promoted to read-write")
 	}
-	if err := validateContainerMount(ContainerMount{Source: readOnly, Target: "/data", ReadOnly: true}, grants); err != nil {
+	if _, err := validateContainerMount(ContainerMount{Source: readOnly, Target: "/data", ReadOnly: true}, grants); err != nil {
 		t.Fatalf("read-only mount was rejected: %v", err)
 	}
-	if err := validateContainerMount(ContainerMount{Source: readWrite, Target: "/data"}, grants); err != nil {
+	if _, err := validateContainerMount(ContainerMount{Source: readWrite, Target: "/data"}, grants); err != nil {
 		t.Fatalf("read-write mount was rejected: %v", err)
 	}
-	if err := validateContainerMount(ContainerMount{Source: outside, Target: "/data", ReadOnly: true}, grants); err == nil {
+	if _, err := validateContainerMount(ContainerMount{Source: outside, Target: "/data", ReadOnly: true}, grants); err == nil {
 		t.Fatal("mount outside the filesystem grants was accepted")
 	}
 }
@@ -143,4 +144,150 @@ func TestTrustedContainerBinaryReportsMissingSelectedBackend(t *testing.T) {
 	if _, err := trustedContainerBinary("docker"); err == nil || !strings.Contains(err.Error(), "docker") {
 		t.Fatalf("missing Docker backend error: %v", err)
 	}
+}
+
+func TestContainerMountIsIssuedAgainstTheResolvedSource(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted := filepath.Join(root, "granted")
+	target := filepath.Join(granted, "target")
+	outside := filepath.Join(root, "outside")
+	for _, path := range []string{target, outside} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(granted, "alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	grants := []ContainerPathGrant{{Path: granted}}
+	request := ContainerRequest{Operation: "run", Image: "example.invalid/demo:1", Mounts: []ContainerMount{{Source: alias, Target: "/data"}}}
+	arguments, err := containerCreateArguments("app-id", grants, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The caller owns the source it was checked on and rewrites it, which it
+	// is free to do at any moment between the check and the bind.
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	source, _, found := strings.Cut(containerVolumeArgument(t, arguments), ":")
+	if !found {
+		t.Fatal("the create arguments carry no volume")
+	}
+	bound, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pathContains(granted, bound) {
+		t.Fatalf("container mount reaches %q, outside the granted paths", bound)
+	}
+	if source != target {
+		t.Fatalf("container mount source: got %q, want %q", source, target)
+	}
+}
+
+func TestContainerMountRefusesAColonInEitherHalf(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted := filepath.Join(root, "granted")
+	// A colon is a field separator in the volume argument, and a directory
+	// named with one is a directory the caller may create inside its grant.
+	source := filepath.Join(granted, "a:z")
+	if err := os.MkdirAll(source, 0755); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(granted, "plain")
+	if err := os.MkdirAll(plain, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	grants := []ContainerPathGrant{{Path: granted}}
+	if _, err := validateContainerMount(ContainerMount{Source: source, Target: "/data"}, grants); err == nil {
+		t.Fatal("a mount source carrying a colon was accepted")
+	}
+	if _, err := validateContainerMount(ContainerMount{Source: plain, Target: "/data:z"}, grants); err == nil {
+		t.Fatal("a mount target carrying a podman option was accepted")
+	}
+	if _, err := validateContainerMount(ContainerMount{Source: plain, Target: "/data"}, grants); err != nil {
+		t.Fatalf("an ordinary mount was rejected: %v", err)
+	}
+}
+
+func TestContainerNameSpelledLikeAnIdentifierIsRefused(t *testing.T) {
+	identifier := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	for _, name := range []string{identifier, identifier[:12]} {
+		request := ContainerRequest{Operation: "run", Image: "example.invalid/demo:1", Name: name}
+		if _, _, err := containerArguments("app-id", map[string]bool{types.HostActionContainersManageOwned: true}, nil, request); err == nil {
+			t.Fatalf("a container named %q can stand in front of the container it names", name)
+		}
+	}
+	request := ContainerRequest{Operation: "run", Image: "example.invalid/demo:1", Name: "demo-cafe"}
+	if _, _, err := containerArguments("app-id", map[string]bool{types.HostActionContainersManageOwned: true}, nil, request); err != nil {
+		t.Fatalf("an ordinary container name was refused: %v", err)
+	}
+}
+
+func TestOwnedContainerRequestTargetsTheResolvedIdentifier(t *testing.T) {
+	identifier := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	directory := t.TempDir()
+	recorded := filepath.Join(directory, "inspected")
+	binary := filepath.Join(directory, "podman")
+	script := "#!/bin/sh\nprintf '%s' \"$*\" > " + recorded + "\nprintf '%s app-id\\n' " + identifier + "\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := ownedContainerRequest(context.Background(), binary, "app-id", ContainerRequest{Operation: "stop", Resources: []string{"demo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manage := map[string]bool{types.HostActionContainersManageOwned: true}
+	arguments, owned, err := containerArguments("app-id", manage, nil, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned || !reflect.DeepEqual(arguments, []string{"stop", identifier}) {
+		t.Fatalf("owned container arguments: %v, owned=%t", arguments, owned)
+	}
+	inspected, err := os.ReadFile(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(inspected), " demo") {
+		t.Fatalf("ownership was not checked on the requested name: %q", inspected)
+	}
+}
+
+func TestOwnedContainerRequestRefusesAForeignContainer(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "podman")
+	script := "#!/bin/sh\nprintf '%s other\\n' e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ownedContainerRequest(context.Background(), binary, "app-id", ContainerRequest{Operation: "stop", Resources: []string{"demo"}}); err == nil {
+		t.Fatal("a container owned by another cpak was accepted")
+	}
+}
+
+func containerVolumeArgument(t *testing.T, arguments []string) string {
+	t.Helper()
+	for index, argument := range arguments {
+		if argument == "--volume" && index+1 < len(arguments) {
+			return arguments[index+1]
+		}
+	}
+	t.Fatalf("the create arguments carry no volume: %v", arguments)
+	return ""
 }

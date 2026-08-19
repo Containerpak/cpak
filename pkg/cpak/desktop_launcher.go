@@ -67,7 +67,7 @@ func (c *Cpak) migrateDesktopLaunchers() error {
 	if err := repairDesktopLaunchers(launcher); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	if err := securePrivateDirectoryUnder(c.Options.StorePath, directory); err != nil {
 		return err
 	}
 	return os.WriteFile(marker, []byte(launcher), 0o644)

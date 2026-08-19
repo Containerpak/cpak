@@ -49,7 +49,9 @@ func (c *InstallCmd) Run() error {
 		if err != nil {
 			return err
 		}
-		c.Logger.Info("No version specified, using the default branch: %s", branch)
+		// The branch name is whatever the remote repository calls its default,
+		// so it is somebody else's text like everything printed below it.
+		c.Logger.Info("No version specified, using the default branch: %s", tools.SanitizeForDisplay(branch))
 	}
 
 	manifest, err := cp.FetchManifest(remote, branch, c.Release, c.Commit)

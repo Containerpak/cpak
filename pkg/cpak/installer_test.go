@@ -7,6 +7,7 @@ package cpak
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -70,8 +71,54 @@ func TestExportBinaryForwardsFlagArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "@/usr/local/bin/umu-run -- \"$@\"") {
+	if !strings.Contains(string(content), "'@/usr/local/bin/umu-run' -- \"$@\"") {
 		t.Fatalf("export does not preserve child flags: %q", content)
+	}
+}
+
+func TestExportedWrapperDoesNotRunWhatTheBinaryPathCarries(t *testing.T) {
+	c := newTestCpak(t)
+	directory := t.TempDir()
+	recorded := filepath.Join(directory, "arguments")
+	binary := "/usr/bin/demo$(touch marker)"
+	app := types.Application{Origin: "github.com/containerpak/demo"}
+	if err := c.exportBinary(app, binary); err != nil {
+		t.Fatal(err)
+	}
+
+	exported, err := os.ReadFile(filepath.Join(c.Options.ExportsPath, "github.com", "containerpak", "demo", filepath.Base(binary)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher, err := getCpakBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The launcher the wrapper names is this test binary, so it is swapped for
+	// a shim that reports the arguments it was handed.
+	shim := filepath.Join(directory, "launcher")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+recorded+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(directory, "wrapper")
+	if err := os.WriteFile(wrapper, []byte(strings.Replace(string(exported), launcher, shim, 1)), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("/bin/sh", wrapper)
+	command.Dir = directory
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("the exported wrapper failed: %v: %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "marker")); err == nil {
+		t.Fatal("the exported wrapper ran what the binary path carried")
+	}
+	arguments, err := os.ReadFile(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(arguments), "@"+binary+"\n") {
+		t.Fatalf("the launcher was not handed the binary as one argument: %q", arguments)
 	}
 }
 

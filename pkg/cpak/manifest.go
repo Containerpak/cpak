@@ -35,6 +35,13 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if manifest.Description == "" {
 		return errors.New("description is mandatory and must be populated")
 	}
+	// Before anything else reports on this manifest: several of the checks
+	// below echo the value they rejected back to the terminal with %s, and
+	// everything downstream that writes a manifest string somewhere assumes
+	// the string is inert.
+	if err = validateManifestText(manifest); err != nil {
+		return err
+	}
 	if manifest.Image == "" {
 		return errors.New("image is mandatory and must be populated")
 	}
@@ -55,6 +62,11 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	}
 	if len(manifest.Binaries) == 0 {
 		return errors.New("binaries is mandatory and must be populated")
+	}
+	for _, entry := range manifest.DesktopEntries {
+		if _, err = desktopEntryExportName(entry); err != nil {
+			return err
+		}
 	}
 	for _, dependency := range manifest.Dependencies {
 		if dependency.Mode != "" && dependency.Mode != "nested" && dependency.Mode != "layer" {
@@ -147,12 +159,171 @@ func validateSessions(manifest *types.CpakManifest) error {
 }
 
 func validateSessionText(value string, limit int) error {
-	if value == "" || len(value) > limit || strings.ContainsAny(value, "\x00\r\n") {
+	if value == "" || len(value) > limit || carriesTerminalControl(value) {
 		return errors.New("invalid session text")
 	}
+	return nil
+}
+
+// manifestTextLimit bounds what one string of a manifest can put on a
+// terminal. It is the same for a name, a path, a URL and the description: the
+// description is the only one of them that is prose, and 4096 characters of
+// prose is already more than any published package carries.
+const manifestTextLimit = 4096
+
+// carriesTerminalControl reports whether a string holds a character that drives
+// the terminal rather than printing on it.
+//
+// The set is C0, DEL and C1, U+0080 to U+009F. C1 is the half that is easy to
+// forget: U+009B is CSI, the single-character form of ESC [, and VTE (so GNOME
+// Terminal, Console, Tilix and every emulator built on it) and xterm act on it
+// in UTF-8 mode exactly as they act on the two-character form. It also survives
+// a JSON manifest as a plain U+009B, which encoding/json accepts where it
+// rejects a raw ESC byte, so a rule that stops at 0x7f leaves the whole attack
+// reachable through a second spelling of the same control.
+//
+// tools.SanitizeForDisplay escapes exactly this set on the way to a terminal.
+// The two are held together by TestTheValidatorRefusesWhatThePrinterEscapes,
+// because a validator and a printer that disagree about what a control
+// character is are how the C1 half was missed in the first place.
+func carriesTerminalControl(value string) bool {
 	for _, character := range value {
-		if character < 0x20 || character == 0x7f {
-			return errors.New("invalid session text")
+		if character < 0x20 || (character >= 0x7f && character <= 0x9f) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateManifestText holds every publisher-controlled string in a manifest
+// to the rule a session name already followed: nothing that drives a terminal.
+//
+// It is the second half of the defence, not the first. The install prompt
+// escapes what it writes, because it writes this manifest before this function
+// has ever run; this refuses to install a manifest that carried the sequences
+// at all, so no later code (an error message, a desktop entry, a log line) has
+// to remember to escape them again.
+func validateManifestText(manifest *types.CpakManifest) error {
+	// The description is the one string in a manifest that is prose, and a
+	// package with a two-paragraph description is completely ordinary. A
+	// newline and a tab are allowed here and nowhere else: neither moves the
+	// cursor back over a line that is already written. Length is answered with
+	// a limit rather than with a refusal of the characters prose is made of.
+	if err := validateManifestProse(manifest.Description); err != nil {
+		return errors.New("description contains a control character or is too long")
+	}
+	if err := validateManifestLine(manifest.Name); err != nil {
+		return errors.New("name contains a control character or is too long")
+	}
+	for _, binary := range manifest.Binaries {
+		if err := validateManifestLine(binary); err != nil {
+			return errors.New("a binary path contains a control character or is too long")
+		}
+	}
+	for _, entry := range manifest.DesktopEntries {
+		if err := validateManifestLine(entry); err != nil {
+			return errors.New("a desktop entry contains a control character or is too long")
+		}
+	}
+	// The prompt prints a dependency as the whole struct, so every string in
+	// it reaches the terminal, not only the origin.
+	for _, dependency := range manifest.Dependencies {
+		for _, value := range []string{dependency.Id, dependency.Origin, dependency.Branch, dependency.Release, dependency.Commit, dependency.Mode} {
+			if err := validateManifestLine(value); err != nil {
+				return errors.New("a dependency contains a control character or is too long")
+			}
+		}
+	}
+	for _, source := range manifest.RuntimeSources {
+		for _, value := range []string{source.Name, source.URL, source.SHA256, source.Installer} {
+			if err := validateManifestLine(value); err != nil {
+				return errors.New("a runtime source contains a control character or is too long")
+			}
+		}
+	}
+	for _, addon := range manifest.Addons {
+		if err := validateManifestLine(addon); err != nil {
+			return errors.New("an addon contains a control character or is too long")
+		}
+	}
+	if err := validateOverrideText(manifest.Override); err != nil {
+		return err
+	}
+	// A session override is printed under its own heading in the same prompt,
+	// and the session's own name and kind are on the line above it.
+	for _, session := range manifest.Sessions {
+		if err := validateOverrideText(session.Override); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateOverrideText covers the strings a publisher writes inside a grant.
+// They are printed under the permission heading, which is the last thing the
+// reader looks at before answering.
+func validateOverrideText(override types.Override) error {
+	for _, variable := range override.Env {
+		if err := validateManifestLine(variable); err != nil {
+			return errors.New("an environment variable contains a control character or is too long")
+		}
+	}
+	for _, permission := range override.Filesystem {
+		if err := validateManifestLine(permission.Path); err != nil {
+			return errors.New("a filesystem path contains a control character or is too long")
+		}
+		if err := validateManifestLine(permission.Access); err != nil {
+			return errors.New("a filesystem access mode contains a control character or is too long")
+		}
+	}
+	for _, path := range override.FsExtra {
+		if err := validateManifestLine(path); err != nil {
+			return errors.New("a filesystem path contains a control character or is too long")
+		}
+	}
+	for _, command := range override.AllowedHostCommands {
+		if err := validateManifestLine(command); err != nil {
+			return errors.New("a host command contains a control character or is too long")
+		}
+	}
+	for _, action := range override.HostActions {
+		if err := validateManifestLine(action.Provider); err != nil {
+			return errors.New("a host action provider contains a control character or is too long")
+		}
+		for _, capability := range action.Capabilities {
+			if err := validateManifestLine(capability); err != nil {
+				return errors.New("a host action capability contains a control character or is too long")
+			}
+		}
+	}
+	return nil
+}
+
+// validateManifestLine holds a value that belongs on one line to one line.
+func validateManifestLine(value string) error {
+	if len(value) > manifestTextLimit || carriesTerminalControl(value) {
+		return errors.New("invalid manifest text")
+	}
+	return nil
+}
+
+// validateManifestProse allows the two whitespace characters a paragraph is
+// written with and refuses the rest, C1 included.
+//
+// This is the rule that decides whether an ordinary published package can be
+// installed at all: ValidateManifest runs on install, update, lock and verify
+// alike, so refusing a description for holding a newline does not merely turn
+// away a new package, it makes an installed one impossible to update.
+func validateManifestProse(value string) error {
+	if len(value) > manifestTextLimit {
+		return errors.New("invalid manifest text")
+	}
+	for _, character := range value {
+		if character == '\n' || character == '\t' {
+			continue
+		}
+		if character < 0x20 || (character >= 0x7f && character <= 0x9f) {
+			return errors.New("invalid manifest text")
 		}
 	}
 	return nil

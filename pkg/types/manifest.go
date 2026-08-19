@@ -32,10 +32,10 @@ type CpakManifest struct {
 	ImageRef string `json:"image_ref,omitempty" jsonschema:"enum=source,description=Track the selected Git branch release or commit"`
 
 	// Binaries is the list of exported binaries of the application.
-	Binaries []string `json:"binaries" jsonschema:"minItems=1,items.pattern=^/,description=Absolute paths to binaries"`
+	Binaries []string `json:"binaries" jsonschema:"minItems=1,description=Absolute paths to binaries"`
 
 	// DesktopEntries is the list of exported desktop entries of the application.
-	DesktopEntries []string `json:"desktop_entries,omitempty" jsonschema:"items.pattern=.+\\.desktop$,description=.desktop entry files"`
+	DesktopEntries []string `json:"desktop_entries,omitempty" jsonschema:"description=.desktop entry files"`
 
 	// Sessions are login sessions which can be registered with a display manager.
 	Sessions []Session `json:"sessions,omitempty" jsonschema:"description=Desktop and kiosk login sessions"`
