@@ -236,7 +236,12 @@ func resolveBusNameOwner(address, name string) (string, error) {
 
 func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *connectionState, message *dbus.Message) bool {
 	if message.Type != dbus.TypeMethodCall {
-		return false
+		// Default-deny used to cover method calls and nothing else, so a
+		// confined client's signals, replies and errors went to the real
+		// session bus carrying its unique name as sender. The policy is the
+		// same for every type it can emit. There is nothing to answer a signal
+		// with, so it is dropped rather than refused.
+		return !p.options.AllowSessionBus
 	}
 	path, _ := headerValue[dbus.ObjectPath](message, dbus.FieldPath)
 	interfaceName, _ := headerValue[string](message, dbus.FieldInterface)

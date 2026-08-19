@@ -397,3 +397,22 @@ func waitForPath(t *testing.T, path string) {
 	}
 	t.Fatalf("path did not appear: %s", path)
 }
+
+// With the session bus closed, the default-deny used to cover method calls and
+// nothing else, so a confined application's signals, replies and errors were
+// forwarded to the real bus with its unique name as sender. Every type it can
+// emit is held to the same policy.
+func TestARestrictedClientCannotEmitAnythingButRefusedCalls(t *testing.T) {
+	restricted := &Proxy{options: Options{AllowSessionBus: false}}
+	permitted := &Proxy{options: Options{AllowSessionBus: true}}
+
+	for _, kind := range []dbus.Type{dbus.TypeSignal, dbus.TypeMethodReply, dbus.TypeError} {
+		message := &dbus.Message{Type: kind}
+		if !restricted.intercept(context.Background(), nil, nil, message) {
+			t.Fatalf("a %v from a confined client was forwarded to the session bus", kind)
+		}
+		if permitted.intercept(context.Background(), nil, nil, message) {
+			t.Fatalf("a %v was held back on a connection that is allowed the session bus", kind)
+		}
+	}
+}
