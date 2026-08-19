@@ -146,6 +146,45 @@ func (p FilesystemPermission) String() string {
 	return p.Path + " (" + p.Access + ")"
 }
 
+// WithMigratedFilesystem reads a policy's filesystem grants in one form: the
+// typed grants, with the legacy v1 fields written out as the grants they stand
+// for. It is the whole of what fsHost, fsHostEtc, fsHostHome and fsExtra ever
+// meant, in one place, so that everything asking whether two policies are the
+// same restriction asks it of the same table.
+//
+// A policy that carries none of the legacy fields is returned untouched, which
+// is every policy a v2 manifest can produce.
+//
+// This is a reading, not a rewrite. Nothing that hashes a policy calls it: the
+// hash names the policy an anchor was recorded over, byte for byte, and a
+// reading that moved it would leave every anchor already in the ledger naming
+// something nobody can derive again.
+func (o Override) WithMigratedFilesystem() Override {
+	if !o.FsHost && !o.FsHostEtc && !o.FsHostHome && len(o.FsExtra) == 0 {
+		return o
+	}
+	filesystem := append([]FilesystemPermission{}, o.Filesystem...)
+	if o.FsHost {
+		filesystem = append(filesystem, FilesystemPermission{Path: "host", Access: "read-only"})
+	}
+	if o.FsHostEtc {
+		filesystem = append(filesystem, FilesystemPermission{Path: "/etc", Access: "read-only"})
+	}
+	if o.FsHostHome {
+		filesystem = append(filesystem, FilesystemPermission{Path: "home", Access: "read-write"})
+	}
+	for _, path := range o.FsExtra {
+		filesystem = append(filesystem, FilesystemPermission{Path: path, Access: "read-write"})
+	}
+	migrated := o
+	migrated.Filesystem = filesystem
+	migrated.FsHost = false
+	migrated.FsHostEtc = false
+	migrated.FsHostHome = false
+	migrated.FsExtra = nil
+	return migrated
+}
+
 // Diff returns the manifest permission keys whose effective values changed.
 func (o Override) Diff(next Override) []string {
 	current := reflect.ValueOf(o)

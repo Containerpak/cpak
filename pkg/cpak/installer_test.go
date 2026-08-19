@@ -243,3 +243,89 @@ func TestExportBinaryNamesTheLauncherOutright(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallRefusesAGrantOnTheStoreItActuallyUses drives the real install
+// entry point with the tree relocated, which is what CPAK_INSTALLATION_PATH and
+// the per-path variables do and what cpak itself does to install a local
+// package. A refusal written against the default layout under the home would
+// let this grant through and hand the application every other container, every
+// policy and every broker token in the store.
+func TestInstallRefusesAGrantOnTheStoreItActuallyUses(t *testing.T) {
+	c := newTestCpak(t)
+	manifest := validManifestForTest()
+	manifest.Override.Filesystem = []types.FilesystemPermission{
+		{Path: filepath.Join(c.Options.StorePath, "containers"), Access: "read-write"},
+	}
+	err := c.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", InstallOptions{})
+	if err == nil {
+		t.Fatal("accepted a grant on the store this installation uses")
+	}
+	if !strings.Contains(err.Error(), "cpak's own state") {
+		t.Fatalf("the install failed for another reason: %v", err)
+	}
+}
+
+// TestInstallRefusesASessionGrantOnCpakState covers the same rule for a session,
+// which is launched with grants of its own.
+func TestInstallRefusesASessionGrantOnCpakState(t *testing.T) {
+	c := newTestCpak(t)
+	manifest := validManifestForTest()
+	manifest.Sessions = []types.Session{{
+		ID:         "desk",
+		Name:       "Desk",
+		Kind:       "desktop",
+		Entrypoint: "/usr/bin/test",
+		Override: types.Override{
+			Filesystem: []types.FilesystemPermission{{Path: c.Options.ExportsPath, Access: "read-only"}},
+		},
+	}}
+	err := c.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", InstallOptions{})
+	if err == nil {
+		t.Fatal("accepted a session grant on the exported launchers")
+	}
+	if !strings.Contains(err.Error(), "cpak's own state") {
+		t.Fatalf("the install failed for another reason: %v", err)
+	}
+}
+
+// TestInstallAcceptsAGrantThatMerelyContainsCpakState keeps the refusal narrow:
+// the home holds the state on a default installation, and it is hidden again
+// when it is mounted rather than refused here.
+func TestInstallAcceptsAGrantThatMerelyContainsCpakState(t *testing.T) {
+	c := newTestCpak(t)
+	manifest := validManifestForTest()
+	manifest.Override.Filesystem = []types.FilesystemPermission{{Path: "home", Access: "read-write"}}
+	err := c.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", InstallOptions{})
+	if err != nil && strings.Contains(err.Error(), "cpak's own state") {
+		t.Fatalf("a grant that only contains the state was refused: %v", err)
+	}
+}
+
+// TestInstallRefusesAGrantOnTheDeduplicatedStore covers the root nothing names.
+// The file content of every installed package lives in the deduplication store,
+// and the option that would name it is empty unless a configuration file said
+// so: everything that opens that store resolves it through daBaDeeStoreOptions
+// and takes the layout beside the store path when the option is blank. A
+// refusal that read the option instead would leave the one place the bytes
+// actually are as the one place a grant is still taken.
+func TestInstallRefusesAGrantOnTheDeduplicatedStore(t *testing.T) {
+	c := newTestCpak(t)
+	if c.Options.DaBaDeeStoreOptions.Root != "" {
+		t.Fatal("this test is about the root nothing named, and something named it")
+	}
+	resolved := c.daBaDeeStoreOptions().Root
+	if resolved == "" {
+		t.Fatal("the deduplication store resolved to nowhere")
+	}
+	manifest := validManifestForTest()
+	manifest.Override.Filesystem = []types.FilesystemPermission{
+		{Path: filepath.Join(resolved, "blobs"), Access: "read-write"},
+	}
+	err := c.InstallCpakWithOptions(testOrigin, manifest, "main", "", "", InstallOptions{})
+	if err == nil {
+		t.Fatal("accepted a grant on the deduplicated content of every installed package")
+	}
+	if !strings.Contains(err.Error(), "cpak's own state") {
+		t.Fatalf("the install failed for another reason: %v", err)
+	}
+}

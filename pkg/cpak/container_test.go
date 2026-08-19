@@ -427,7 +427,7 @@ func TestPrivateApplicationHomeIsPersistentAndRestricted(t *testing.T) {
 	if !info.IsDir() || info.Mode().Perm() != 0700 {
 		t.Fatalf("private application home mode: %v", info.Mode())
 	}
-	if filesystemIncludesHostHome(nil) || !filesystemIncludesHostHome([]types.FilesystemPermission{{Path: "home", Access: "read-only"}}) {
+	if filesystemIncludesHostHome(types.Override{}) || !filesystemIncludesHostHome(types.Override{Filesystem: []types.FilesystemPermission{{Path: "home", Access: "read-only"}}}) {
 		t.Fatal("host home permission detection is invalid")
 	}
 }

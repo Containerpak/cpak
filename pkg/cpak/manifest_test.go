@@ -222,3 +222,90 @@ func TestValidateManifestRejectsSessionDesktopInjection(t *testing.T) {
 		t.Fatal("accepted a newline in a session name")
 	}
 }
+
+// TestValidatingAV1ManifestLeavesEveryDigestAlone guards the boundary the
+// migration must not cross. The lock records a package by the hash of its
+// manifest and a publisher signs the same hash, both of them after validation,
+// so a manifest that came back from validation migrated would name a package
+// nobody published and no lock ever wrote.
+func TestValidatingAV1ManifestLeavesEveryDigestAlone(t *testing.T) {
+	manifest, err := DecodeManifest([]byte(`{"manifest_version":"1.0","name":"Demo","description":"Demo application","image":"ghcr.io/containerpak/demo:latest","binaries":["/usr/bin/demo"],"override":{"fsHostHome":true,"fsExtra":["/srv/data"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := manifestDigest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := manifestIdentityDigest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ManifestVersion != "1.0" || !manifest.Override.FsHostHome || len(manifest.Override.FsExtra) != 1 {
+		t.Fatalf("validation rewrote the manifest: %s %+v", manifest.ManifestVersion, manifest.Override)
+	}
+	validated, err := manifestDigest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated != published {
+		t.Fatalf("the lock digest moved across validation: %s became %s", published, validated)
+	}
+	validatedIdentity, err := manifestIdentityDigest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validatedIdentity != identity {
+		t.Fatalf("the identity digest moved across validation: %s became %s", identity, validatedIdentity)
+	}
+}
+
+// TestInstalledOverrideMigratesWithoutTouchingTheManifest is the other half:
+// the legacy fields do stop reaching an installation, they just stop doing it
+// through the manifest.
+func TestInstalledOverrideMigratesWithoutTouchingTheManifest(t *testing.T) {
+	manifest, err := DecodeManifest([]byte(`{"manifest_version":"1.0","name":"Demo","description":"Demo application","image":"ghcr.io/containerpak/demo:latest","binaries":["/usr/bin/demo"],"override":{"fsHostHome":true,"fsExtra":["/srv/data"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	override, err := installedOverride(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []types.FilesystemPermission{
+		{Path: "home", Access: "read-write"},
+		{Path: "/srv/data", Access: "read-write"},
+	}
+	if !reflect.DeepEqual(override.Filesystem, want) {
+		t.Fatalf("migrated grants: got %v, want %v", override.Filesystem, want)
+	}
+	if override.FsHostHome || len(override.FsExtra) != 0 {
+		t.Fatalf("legacy fields survived into the installed override: %+v", override)
+	}
+	if manifest.ManifestVersion != "1.0" || !manifest.Override.FsHostHome {
+		t.Fatalf("the manifest was migrated with it: %s %+v", manifest.ManifestVersion, manifest.Override)
+	}
+}
+
+// TestMigratingAManifestThatGrantedNothingChangesNothing keeps an update of a
+// v1 package from reporting a permission change it does not make: Override.Diff
+// compares the fields whole, and an empty grant list is not the absent one.
+func TestMigratingAManifestThatGrantedNothingChangesNothing(t *testing.T) {
+	manifest, err := DecodeManifest([]byte(`{"manifest_version":"1.0","name":"Demo","description":"Demo application","image":"ghcr.io/containerpak/demo:latest","binaries":["/usr/bin/demo"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	override, err := installedOverride(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes := manifest.Override.Diff(override); len(changes) != 0 {
+		t.Fatalf("migrating a manifest that granted nothing reported %v", changes)
+	}
+}

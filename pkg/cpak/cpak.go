@@ -12,6 +12,7 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/mirkobrombin/go-foundation/v2/core/configuration"
 	configenv "github.com/mirkobrombin/go-foundation/v2/core/configuration/source/env"
@@ -72,6 +73,34 @@ func NewCpak() (cpak Cpak, err error) {
 		logger.Printf("Warning: could not update desktop launchers: %v", migrationErr)
 	}
 	return
+}
+
+// cpakStateDirectories names the directories this installation keeps its own
+// state in. Every one of them comes from the options cpak resolved rather than
+// from the default layout under the home, because CPAK_INSTALLATION_PATH and
+// the per-path variables beside it move them independently, and cpak itself
+// moves the whole tree to install a local package.
+func (c *Cpak) cpakStateDirectories() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	return types.CpakStateDirectories(
+		home,
+		c.Options.StorePath,
+		c.Options.ExportsPath,
+		c.Options.BinPath,
+		c.Options.ManifestsPath,
+		c.Options.CachePath,
+		// The deduplication store is read through the same resolver everything
+		// that opens it uses. Options.DaBaDeeStoreOptions.Root is empty in the
+		// cases that matter -- a configuration that never named it, a caller
+		// that built Options itself -- and the file content of every installed
+		// package lives under the root that resolver falls back to, so asking
+		// the field would leave exactly those installations unmasked.
+		c.daBaDeeStoreOptions().Root,
+		filepath.Dir(c.Options.RegistryAuthPath),
+	)
 }
 
 func getCpakOptions() (options Options, err error) {

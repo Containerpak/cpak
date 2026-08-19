@@ -298,3 +298,79 @@ func TestAnAnchorMayStateNoDigestsAtAll(t *testing.T) {
 		t.Fatalf("an anchor written before the digests existed was refused: %v", err)
 	}
 }
+
+// A package installed from a v1 manifest was enrolled under fsHostHome and is
+// offered again under the typed grant that field stands for. That is one
+// restriction written twice, and an order that cannot see it answers "wider",
+// which is the administrator's password: cpak would be asking for one because
+// it changed the shape of its own manifest, and an owner asked for nothing
+// stops reading the question by the time it is asked for something.
+func TestTheMigratedFormOfAPolicyIsTheSameRestriction(t *testing.T) {
+	legacy := types.Override{
+		SocketWayland: true,
+		FsHostHome:    true,
+		FsExtra:       []string{"/srv/data"},
+	}
+	migrated := types.Override{
+		SocketWayland: true,
+		Filesystem: []types.FilesystemPermission{
+			{Path: "home", Access: "read-write"},
+			{Path: "/srv/data", Access: "read-write"},
+		},
+	}
+	if !Restricts(legacy, migrated) {
+		t.Fatal("the migrated form of a policy was read as a widening of it")
+	}
+	if !Restricts(migrated, legacy) {
+		t.Fatal("the legacy form of a policy was read as a widening of its own migration")
+	}
+
+	for name, candidate := range map[string]types.Override{
+		"the same grants, read-only": {
+			SocketWayland: true,
+			Filesystem: []types.FilesystemPermission{
+				{Path: "home", Access: "read-only"},
+				{Path: "/srv/data", Access: "read-only"},
+			},
+		},
+		"a directory inside one of them": {
+			SocketWayland: true,
+			Filesystem:    []types.FilesystemPermission{{Path: "/srv/data/cache", Access: "read-write"}},
+		},
+		"nothing at all": {SocketWayland: true},
+	} {
+		if !Restricts(legacy, candidate) {
+			t.Fatalf("%s was read as a widening of the v1 policy it narrows", name)
+		}
+	}
+}
+
+// The equivalence narrows nothing else. What the legacy fields never granted is
+// still a widening whichever spelling asks for it.
+func TestTheMigratedFormStillHasToBeCovered(t *testing.T) {
+	for name, test := range map[string]struct {
+		current   types.Override
+		candidate types.Override
+	}{
+		"the home, from a policy that only held /etc": {
+			current:   types.Override{FsHostEtc: true},
+			candidate: types.Override{Filesystem: []types.FilesystemPermission{{Path: "home", Access: "read-write"}}},
+		},
+		"writing the host, from a policy that only read it": {
+			current:   types.Override{FsHost: true},
+			candidate: types.Override{Filesystem: []types.FilesystemPermission{{Path: "home", Access: "read-write"}}},
+		},
+		"a legacy field, from a policy that granted nothing": {
+			current:   types.Override{SocketWayland: true},
+			candidate: types.Override{SocketWayland: true, FsHostHome: true},
+		},
+		"a path beside the one that was granted": {
+			current:   types.Override{FsExtra: []string{"/srv/data"}},
+			candidate: types.Override{Filesystem: []types.FilesystemPermission{{Path: "/srv/data-other", Access: "read-write"}}},
+		},
+	} {
+		if Restricts(test.current, test.candidate) {
+			t.Fatalf("%s was read as a restriction", name)
+		}
+	}
+}

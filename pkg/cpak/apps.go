@@ -230,8 +230,13 @@ func (c *Cpak) preflightUpdate(app types.Application, deps updateDeps) (result t
 	if err = c.ValidateManifest(manifest); err != nil {
 		return failedUpdate(result, err)
 	}
-	result.PermissionChanges = app.ParsedOverride.Diff(manifest.Override)
-	result.PermissionAdditions = app.ParsedOverride.Additions(manifest.Override)
+	override, err := installedOverride(manifest)
+	if err != nil {
+		return failedUpdate(result, err)
+	}
+	stored := installedRecordOverride(app)
+	result.PermissionChanges = stored.Diff(override)
+	result.PermissionAdditions = stored.Additions(override)
 	sessionChanges, sessionAdditions := sessionPermissionChanges(app.ParsedSessions, manifest.Sessions)
 	result.PermissionChanges = append(result.PermissionChanges, sessionChanges...)
 	result.PermissionAdditions = append(result.PermissionAdditions, sessionAdditions...)
@@ -287,8 +292,16 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 	if err = c.ValidateManifest(manifest); err != nil {
 		return failedUpdate(result, err)
 	}
-	result.PermissionChanges = app.ParsedOverride.Diff(manifest.Override)
-	result.PermissionAdditions = app.ParsedOverride.Additions(manifest.Override)
+	override, err := installedOverride(manifest)
+	if err != nil {
+		return failedUpdate(result, err)
+	}
+	if err = c.refuseCpakStateGrants(override, manifest.Sessions); err != nil {
+		return failedUpdate(result, err)
+	}
+	stored := installedRecordOverride(app)
+	result.PermissionChanges = stored.Diff(override)
+	result.PermissionAdditions = stored.Additions(override)
 	sessionChanges, sessionAdditions := sessionPermissionChanges(app.ParsedSessions, manifest.Sessions)
 	result.PermissionChanges = append(result.PermissionChanges, sessionChanges...)
 	result.PermissionAdditions = append(result.PermissionAdditions, sessionAdditions...)
@@ -357,7 +370,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		Config:               config,
 		Image:                image,
 		ImageDigest:          imageDigest,
-		ParsedOverride:       manifest.Override,
+		ParsedOverride:       override,
 	}
 	if deps.prepareStorage != nil {
 		if err = deps.prepareStorage(updated); err != nil {

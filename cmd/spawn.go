@@ -68,6 +68,7 @@ type SpawnCmd struct {
 	Env            []string `cli:"env,e" help:"set environment variables"`
 	Layers         string   `cli:"layers" help:"set the layers"`
 	StateDir       string   `cli:"state-dir" help:"set the state directory"`
+	MaskState      []string `cli:"mask-state" help:"a directory holding cpak's own state, to hide inside any grant that contains it"`
 	ImageDir       string   `cli:"image-dir" help:"set the image directory"`
 	LayersDir      string   `cli:"layers-dir" help:"set the layers directory"`
 	LowerDir       string   `cli:"lower-dir" help:"set the prepared lower directory"`
@@ -432,6 +433,9 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		if err = tools.MountBindReadOnlyPrepared("/", destination, true); err != nil {
 			return nil, fmt.Errorf("mount:/run/host: %w", err)
 		}
+		if err = c.maskCpakState(rootFs, "/", "/run/host", true); err != nil {
+			return nil, err
+		}
 		grants = append(grants, sandbox.PathGrant{Path: "/run/host", ReadOnly: true})
 	}
 	for _, permission := range filesystem {
@@ -486,6 +490,11 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		}
 		if err != nil {
 			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", mount, err)
+		}
+		// This is what a legacy fsHostHome produces: a plain mount that never
+		// meets the typed grants, and so was bound with no mask at all.
+		if err = c.maskCpakState(rootFs, filepath.Clean(mount), filepath.Clean(mount), filepath.Clean(mount) == "/etc"); err != nil {
+			return nil, err
 		}
 		grants = append(grants, sandbox.PathGrant{Path: filepath.Clean(mount), ReadOnly: filepath.Clean(mount) == "/etc"})
 	}
@@ -664,6 +673,14 @@ func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.Fil
 		}
 		return sandbox.PathGrant{}, false, err
 	}
+	// An application installed before cpak refused these still carries one, and
+	// the refusal belongs where a grant is granted, not here: what a launch can
+	// do is leave the mount out. The application starts, and reaches nothing it
+	// should not have been given.
+	if types.PathIsCpakState(source, c.maskedStateDirectories()) {
+		c.spawnVerbose("(filesystem) Leaving out a grant on cpak's own state: ", permission.Path)
+		return sandbox.PathGrant{}, false, nil
+	}
 	if _, err := os.Stat(source); err != nil {
 		if os.IsNotExist(err) && strings.HasPrefix(permission.Path, "xdg-") {
 			c.spawnVerbose("(filesystem) XDG directory is unavailable, ignoring: ", source)
@@ -683,57 +700,120 @@ func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.Fil
 	} else if err := tools.MountBindPrepared(source, destination); err != nil {
 		return sandbox.PathGrant{}, false, fmt.Errorf("mount filesystem %s: %w", source, err)
 	}
-	if err := c.maskCpakState(rootFs, target); err != nil {
+	if err := c.maskCpakState(rootFs, source, target, permission.Access == "read-only"); err != nil {
 		return sandbox.PathGrant{}, false, err
 	}
 	return sandbox.PathGrant{Path: target, ReadOnly: permission.Access == "read-only"}, true, nil
+}
+
+// maskedStateDirectories is where this installation keeps its own state, as
+// cpak resolved it and passed it down. The default layout is the fallback for a
+// spawn started without the flag, so the protection is never quietly empty.
+func (c *SpawnCmd) maskedStateDirectories() []string {
+	if len(c.MaskState) > 0 {
+		return c.MaskState
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return types.CpakStateDirectories(home, filepath.Join(home, ".local", "share", "cpak"))
+}
+
+// maskedCpakPath is one piece of cpak's own state as a grant exposes it: where
+// it lives on the host, and where the container would read it.
+type maskedCpakPath struct {
+	host      string
+	container string
+	directory bool
+}
+
+// cpakStateMasks maps cpak's own state onto the container side of a grant that
+// binds source at target. The two differ, and that difference is the hole: the
+// host scope binds / at /run/host, where the store of every other application
+// is a subdirectory away, so asking where the state lives on the host answers
+// the wrong question and matched nothing.
+func cpakStateMasks(directories []string, home, source, target string) []maskedCpakPath {
+	masks := []maskedCpakPath{}
+	for _, directory := range directories {
+		if container, ok := grantedContainerPath(source, target, directory); ok {
+			masks = append(masks, maskedCpakPath{host: directory, container: container, directory: true})
+		}
+	}
+	if home == "" {
+		return masks
+	}
+	binaries, err := filepath.Glob(filepath.Join(home, ".local", "bin", "cpak*"))
+	if err != nil {
+		return masks
+	}
+	for _, binary := range binaries {
+		if container, ok := grantedContainerPath(source, target, binary); ok {
+			masks = append(masks, maskedCpakPath{host: binary, container: container})
+		}
+	}
+	return masks
+}
+
+func grantedContainerPath(source, target, path string) (string, bool) {
+	if !pathWithin(source, path) {
+		return "", false
+	}
+	relative, err := filepath.Rel(source, path)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(target, relative), true
 }
 
 // maskCpakState hides cpak's own state from a grant that happens to contain it.
 // The store, the policies, the exported launchers and the cpak binaries are not
 // application data: reaching them from inside one application means reaching
 // every other one, and the process that would have checked them.
-func (c *SpawnCmd) maskCpakState(rootFs, target string) error {
+//
+// A read-only grant is masked only where the state already exists, because it
+// is bound from a tree that refuses the directory a mask would otherwise have
+// to create, and a read-only mount cannot be used to plant state either.
+func (c *SpawnCmd) maskCpakState(rootFs, source, target string, readOnly bool) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil
+		home = ""
 	}
-	for _, directory := range []string{
-		filepath.Join(home, ".local", "share", "cpak"),
-		filepath.Join(home, ".config", "cpak"),
-		filepath.Join(home, ".local", "share", "applications"),
-	} {
-		if !pathWithin(target, directory) {
+	empty := ""
+	for _, masked := range cpakStateMasks(c.maskedStateDirectories(), home, source, target) {
+		if readOnly {
+			if _, statErr := os.Stat(masked.host); statErr != nil {
+				continue
+			}
+		}
+		c.spawnVerbose("(filesystem) Masking: ", masked.container)
+		if masked.directory {
+			destination, prepareErr := prepareRootfsDirectory(rootFs, masked.container)
+			if prepareErr != nil {
+				return fmt.Errorf("prepare masked directory %s: %w", masked.container, prepareErr)
+			}
+			if err := tools.MountTmpfsPrepared(destination); err != nil {
+				return fmt.Errorf("mask %s: %w", masked.container, err)
+			}
 			continue
 		}
-		destination, prepareErr := prepareRootfsDirectory(rootFs, directory)
+		// The empty file is written once per call and only when it is absent,
+		// because the mask now runs from several call sites and the file it
+		// binds over is mode 0444.
+		if empty == "" {
+			empty = filepath.Join(c.StateDir, "masked")
+			if _, statErr := os.Stat(empty); statErr != nil {
+				if err := os.WriteFile(empty, nil, 0444); err != nil {
+					return fmt.Errorf("prepare mask source: %w", err)
+				}
+			}
+		}
+		destination, prepareErr := prepareRootfsFile(rootFs, masked.container)
 		if prepareErr != nil {
-			return fmt.Errorf("prepare masked directory %s: %w", directory, prepareErr)
+			return fmt.Errorf("prepare masked file %s: %w", masked.container, prepareErr)
 		}
-		c.spawnVerbose("(filesystem) Masking: ", directory)
-		if err := tools.MountTmpfsPrepared(destination); err != nil {
-			return fmt.Errorf("mask %s: %w", directory, err)
-		}
-	}
-	binaries, err := filepath.Glob(filepath.Join(home, ".local", "bin", "cpak*"))
-	if err != nil || len(binaries) == 0 {
-		return nil
-	}
-	empty := filepath.Join(c.StateDir, "masked")
-	if err := os.WriteFile(empty, nil, 0444); err != nil {
-		return fmt.Errorf("prepare mask source: %w", err)
-	}
-	for _, binary := range binaries {
-		if !pathWithin(target, binary) {
-			continue
-		}
-		destination, prepareErr := prepareRootfsFile(rootFs, binary)
-		if prepareErr != nil {
-			return fmt.Errorf("prepare masked file %s: %w", binary, prepareErr)
-		}
-		c.spawnVerbose("(filesystem) Masking: ", binary)
 		if err := tools.MountFileBindPrepared(empty, destination, true, true); err != nil {
-			return fmt.Errorf("mask %s: %w", binary, err)
+			return fmt.Errorf("mask %s: %w", masked.container, err)
 		}
 	}
 	return nil

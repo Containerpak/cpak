@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -293,7 +295,10 @@ func TestUpdateRejectsAdditionalPermissionsBeforeMutation(t *testing.T) {
 	if results[0].Status != types.UpdateStatusPermissionDenied {
 		t.Fatalf("expected permission denial, got %q", results[0].Status)
 	}
-	if len(results[0].PermissionAdditions) != 1 || results[0].PermissionAdditions[0] != "fsExtra" {
+	// An installation is configured from the migrated manifest, so the addition
+	// is named by the typed grant the legacy field became. The denial is the
+	// same one.
+	if len(results[0].PermissionAdditions) != 1 || results[0].PermissionAdditions[0] != "filesystem" {
 		t.Fatalf("unexpected permission additions: %v", results[0].PermissionAdditions)
 	}
 	if stub.pulled != 0 || stub.exported != 0 || stub.stopped != 0 {
@@ -976,5 +981,152 @@ func TestCreateExportsReportsMissingDesktopEntry(t *testing.T) {
 
 	if err := c.createExports(app); err == nil {
 		t.Fatalf("expected a missing desktop entry to fail export creation")
+	}
+}
+
+// TestUpdateStoresTheMigratedOverrideOfAV1Manifest goes through the real update
+// entry point. Nothing downstream reads fsHostHome as a permission: it becomes
+// a plain mount that never meets the typed grants, so it is neither masked nor
+// weighed. An installation configured from a v1 manifest has to end up holding
+// the typed grant instead.
+func TestUpdateStoresTheMigratedOverrideOfAV1Manifest(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:         testCpakId("branch", "main"),
+		Name:           "demo",
+		Version:        "main",
+		Branch:         "main",
+		Origin:         testOrigin,
+		ParsedLayers:   []string{"oldlayer"},
+		ParsedBinaries: []string{"/usr/bin/demo"},
+		Config:         "{}",
+	})
+
+	manifest := newTestManifest()
+	manifest.ManifestVersion = "1.0"
+	manifest.Override.FsHostHome = true
+	stub := &updateStub{manifest: manifest, layers: []string{"newlayer"}, config: "{}"}
+	results, err := c.updateWithOptions(testOrigin, stub.deps(), UpdateOptions{
+		ConfirmPermissions: func([]types.UpdateResult) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if results[0].Status != types.UpdateStatusUpdated {
+		t.Fatalf("expected status updated, got %q (%s)", results[0].Status, results[0].Reason)
+	}
+
+	apps := storedApplications(t, c)
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 stored application, got %d", len(apps))
+	}
+	stored := apps[0].ParsedOverride
+	if stored.FsHostHome {
+		t.Fatalf("the legacy home mount survived into the installed record: %+v", stored)
+	}
+	want := []types.FilesystemPermission{{Path: "home", Access: "read-write"}}
+	if !reflect.DeepEqual(stored.Filesystem, want) {
+		t.Fatalf("installed grants: got %v, want %v", stored.Filesystem, want)
+	}
+}
+
+// TestUpdateOfAV1PackageAsksForNothingNew is the other side of the same change:
+// once the stored override is the migrated one, the fetched manifest has to be
+// weighed in the same form, or every update of a v1 package would report its
+// own permissions as an addition and stop for approval.
+func TestUpdateOfAV1PackageAsksForNothingNew(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:         testCpakId("branch", "main"),
+		Name:           "demo",
+		Version:        "main",
+		Branch:         "main",
+		Origin:         testOrigin,
+		ParsedLayers:   []string{"oldlayer"},
+		ParsedBinaries: []string{"/usr/bin/demo"},
+		Config:         "{}",
+		ParsedOverride: types.Override{
+			Filesystem: []types.FilesystemPermission{{Path: "home", Access: "read-write"}},
+		},
+	})
+
+	manifest := newTestManifest()
+	manifest.ManifestVersion = "1.0"
+	manifest.Override.FsHostHome = true
+	stub := &updateStub{manifest: manifest, layers: []string{"newlayer"}, config: "{}"}
+	results, err := c.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if len(results[0].PermissionAdditions) != 0 {
+		t.Fatalf("an update that grants nothing new asked for %v", results[0].PermissionAdditions)
+	}
+	if results[0].Status == types.UpdateStatusPermissionDenied {
+		t.Fatalf("the update was denied: %s", results[0].Reason)
+	}
+}
+
+// TestUpdatingAPackageInstalledBeforeTheMigrationLeavesItLaunchable starts from
+// the record an installation made before cpak migrated the legacy filesystem
+// fields. That is the only shape that proves anything: a store seeded with the
+// migrated form is the world after this change and not the upgrade into it.
+//
+// Three things have to hold at once, and each one of them is a way for the
+// application to stop working. The update must not report a permission nobody
+// added. The record it leaves must hold the migrated grants, because that is
+// what the rest of cpak reads and what the mask and the ceiling weigh. And the
+// anchor it enrols must name the launch the gate then derives from that record:
+// a launch the ledger cannot recognise is refused at every enforcement level
+// there is, including off.
+func TestUpdatingAPackageInstalledBeforeTheMigrationLeavesItLaunchable(t *testing.T) {
+	cp := newTestCpak(t)
+	useEnrolmentAuthority(t)
+	useEnforcement(t, systemauthority.EnforcementRefuse)
+	installed := enrolledApplication(t, cp)
+	installed.ParsedOverride = types.Override{FsHostHome: true}
+	seedApplication(t, cp, installed)
+
+	manifest := newTestManifest()
+	manifest.ManifestVersion = "1.0"
+	manifest.Override.FsHostHome = true
+	stub := &updateStub{
+		manifest:    manifest,
+		layers:      installed.ParsedLayers,
+		config:      installed.Config,
+		imageDigest: installed.ImageDigest,
+	}
+	results, err := cp.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d", len(results))
+	}
+	if len(results[0].PermissionAdditions) != 0 {
+		t.Fatalf("an update that grants nothing new asked for %v", results[0].PermissionAdditions)
+	}
+	if results[0].Status == types.UpdateStatusPermissionDenied {
+		t.Fatalf("the update was denied: %s", results[0].Reason)
+	}
+
+	stored := storedApplications(t, cp)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored application, got %d", len(stored))
+	}
+	override := stored[0].ParsedOverride
+	if override.FsHostHome {
+		t.Fatalf("the legacy home mount survived into the installed record: %+v", override)
+	}
+	want := []types.FilesystemPermission{{Path: "home", Access: "read-write"}}
+	if !reflect.DeepEqual(override.Filesystem, want) {
+		t.Fatalf("installed grants: got %v, want %v", override.Filesystem, want)
+	}
+
+	identity, err := cp.gateLaunch(stored[0], resolvedOverride(stored[0]), nil, nil)
+	if err != nil {
+		t.Fatalf("the gate refused the launch the update had just enrolled: %v", err)
+	}
+	if identity.Verdict != LaunchRecognised {
+		t.Fatalf("got verdict %s, want the updated launch to be recognised", identity.Verdict)
 	}
 }

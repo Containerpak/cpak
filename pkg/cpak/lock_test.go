@@ -91,3 +91,36 @@ func TestVerifyManifestLockUsesEmbeddedManifests(t *testing.T) {
 		t.Fatal("tampered embedded manifest was accepted")
 	}
 }
+
+// TestALockOverAV1PackageStillVerifies is the published-artefact side of the
+// same boundary. A lock names each package by the hash of its manifest and
+// re-checks it the same way when the package is installed, so a migration
+// inside validation would move only the second of the two and every
+// cpak.lock.json already published for a v1 package would be refused as
+// inconsistent.
+func TestALockOverAV1PackageStillVerifies(t *testing.T) {
+	v1Manifest := func() *types.CpakManifest {
+		manifest := validManifestForTest()
+		manifest.ManifestVersion = "1.0"
+		manifest.Override.FsHostHome = true
+		manifest.Override.FsExtra = []string{"/srv/data"}
+		return manifest
+	}
+	// The lock as it was written: the manifest as the publisher wrote it, and
+	// the hash of exactly that.
+	digest, err := manifestDigest(v1Manifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := types.LockedPackage{
+		Origin:         "github.com/example/root",
+		Branch:         "main",
+		ManifestSHA256: digest,
+		Image:          "ghcr.io/example/test:latest",
+		ResolvedImage:  "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64),
+		Manifest:       v1Manifest(),
+	}
+	if err = (&Cpak{}).validateLockedPackage(locked); err != nil {
+		t.Fatalf("a lock published for a v1 package no longer verifies: %v", err)
+	}
+}

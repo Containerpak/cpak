@@ -258,3 +258,36 @@ func TestNormalizeOrigin(t *testing.T) {
 		}
 	}
 }
+
+// TestTheStateOfAV1PackageNamesTheManifestAsPublished is the signing side of
+// the digest boundary. What a signed state binds is the hash of the manifest,
+// taken once validation has filled the defaults in, and the installing cpak
+// takes the same hash the same way. A manifest that came back from validation
+// migrated would be hashed here as something the publisher never wrote, and
+// every state already signed for a v1 package would stop binding.
+func TestTheStateOfAV1PackageNamesTheManifestAsPublished(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "cpak.json")
+	body := `{"manifest_version":"1.0","name":"Demo","description":"Demo application","image":"ghcr.io/example/app:latest","binaries":["/usr/bin/demo"],"override":{"fsHostHome":true,"fsExtra":["/srv/data"]}}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	published, err := cpak.DecodeManifest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := canonicalDigest(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, got, err := readManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("the signed digest of a v1 manifest moved: %s became %s", want, got)
+	}
+	if manifest.ManifestVersion != "1.0" || !manifest.Override.FsHostHome {
+		t.Fatalf("the manifest signing read was rewritten: %s %+v", manifest.ManifestVersion, manifest.Override)
+	}
+}

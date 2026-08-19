@@ -416,6 +416,12 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--container-id", container.CpakId)
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
+	// The mask has to be told where this installation keeps its state, because
+	// spawn runs as its own process and resolves nothing: the paths come from
+	// the options cpak loaded, which the environment can move one by one.
+	for _, directory := range c.cpakStateDirectories() {
+		cmds = append(cmds, "--mask-state", directory)
+	}
 	cmds = append(cmds, "--layers", layers)
 	cmds = append(cmds, "--layers-dir", c.GetInStoreDir("layers"))
 	if override.AsRoot {
@@ -429,7 +435,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		grantSocketPath = filepath.Join(container.StatePath, "grant.sock")
 	}
 	cmds = append(cmds, "--grant-socket", grantSocketPath)
-	if !filesystemIncludesHostHome(override.Filesystem) {
+	if !filesystemIncludesHostHome(override) {
 		privateHome, homeErr := c.privateApplicationHome(app.CpakId)
 		if homeErr != nil {
 			return "", 0, "", homeErr
@@ -1183,9 +1189,25 @@ func (c *Cpak) privateApplicationHome(applicationID string) (string, error) {
 	return path, nil
 }
 
-func filesystemIncludesHostHome(permissions []types.FilesystemPermission) bool {
-	for _, permission := range permissions {
+// filesystemIncludesHostHome answers whether an application already holds the
+// real home. The legacy fields count: an application installed before cpak
+// migrated them still mounts the home as a plain mount, and a private home
+// handed out beside it is mounted over rather than isolating anything.
+func filesystemIncludesHostHome(override types.Override) bool {
+	if override.FsHostHome {
+		return true
+	}
+	for _, permission := range override.Filesystem {
 		if permission.Path == "home" {
+			return true
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	for _, path := range override.FsExtra {
+		if filepath.Clean(path) == filepath.Clean(home) {
 			return true
 		}
 	}

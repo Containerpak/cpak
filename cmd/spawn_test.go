@@ -290,3 +290,111 @@ func TestPathWithinBoundsAGrant(t *testing.T) {
 		}
 	}
 }
+
+// TestCpakStateMasksFollowTheGrantIntoTheContainer covers the case the mask was
+// blind to. The host scope binds the whole host at /run/host, so the store of
+// every other application is a subdirectory away from a grant that names none
+// of it, and comparing the grant against where the state lives on the host
+// answered the wrong question and matched nothing.
+func TestCpakStateMasksFollowTheGrantIntoTheContainer(t *testing.T) {
+	home := t.TempDir()
+	// The tree is where this installation put it, which is what
+	// CPAK_INSTALLATION_PATH and the per-path variables decide.
+	store := filepath.Join(t.TempDir(), "store")
+	directories := types.CpakStateDirectories(home, store)
+	binary := filepath.Join(home, ".local/bin/cpak")
+	if err := os.MkdirAll(filepath.Dir(binary), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, nil, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := []string{}
+	for _, masked := range cpakStateMasks(directories, home, "/", "/run/host") {
+		got = append(got, masked.container)
+	}
+	want := []string{
+		filepath.Join("/run/host", store),
+		filepath.Join("/run/host", home, ".config/cpak"),
+		filepath.Join("/run/host", home, ".local/share/applications"),
+		filepath.Join("/run/host", binary),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("host scope masks: got %v, want %v", got, want)
+	}
+
+	got = got[:0]
+	for _, masked := range cpakStateMasks(directories, home, home, home) {
+		got = append(got, masked.container)
+	}
+	want = []string{
+		filepath.Join(home, ".config/cpak"),
+		filepath.Join(home, ".local/share/applications"),
+		binary,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("home grant masks: got %v, want %v", got, want)
+	}
+
+	if masks := cpakStateMasks(directories, home, "/etc", "/etc"); len(masks) != 0 {
+		t.Fatalf("a grant that holds no cpak state was masked: %v", masks)
+	}
+}
+
+// TestAGrantOnCpakStateIsLeftOutOfTheContainer is how a launch answers a grant
+// that is refused at install time but was installed before the refusal existed.
+// It is left unmounted, with a line saying so: the application starts and
+// reaches nothing it should not have been given.
+func TestAGrantOnCpakStateIsLeftOutOfTheContainer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store := filepath.Join(t.TempDir(), "store")
+	if err := os.MkdirAll(filepath.Join(store, "containers"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	c := &SpawnCmd{MaskState: types.CpakStateDirectories(home, store)}
+	rootFs := t.TempDir()
+
+	grant, mounted, err := c.mountFilesystemPermission(rootFs, types.FilesystemPermission{
+		Path:   filepath.Join(store, "containers"),
+		Access: "read-write",
+	})
+	if err != nil {
+		t.Fatalf("a stale grant stopped the container from starting: %v", err)
+	}
+	if mounted || grant.Path != "" {
+		t.Fatalf("a grant on cpak's own state was mounted: %+v", grant)
+	}
+	if _, err := os.Stat(filepath.Join(rootFs, store)); !os.IsNotExist(err) {
+		t.Fatalf("the grant left a target behind in the rootfs: %v", err)
+	}
+}
+
+// TestAStaleCpakStateGrantStillDecodesAtLaunch walks the launch path itself.
+// Every grant an application was installed with is decoded and validated again
+// here, at every launch, so a refusal placed in the shared validator would not
+// narrow an application installed before the rule existed: it would stop it
+// from starting, and nothing short of uninstalling would clear it.
+func TestAStaleCpakStateGrantStillDecodesAtLaunch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	encoded := []string{}
+	for _, permission := range []types.FilesystemPermission{
+		{Path: "home/.local/share/cpak/store", Access: "read-write"},
+		{Path: filepath.Join(home, ".local/share/applications"), Access: "read-write"},
+	} {
+		value, err := types.EncodeFilesystemPermission(permission)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded = append(encoded, value)
+	}
+	permissions, err := decodeFilesystemPermissions(encoded)
+	if err != nil {
+		t.Fatalf("an installed application stopped launching: %v", err)
+	}
+	if len(permissions) != 2 {
+		t.Fatalf("decoded grants: %v", permissions)
+	}
+}

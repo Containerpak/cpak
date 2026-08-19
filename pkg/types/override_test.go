@@ -101,3 +101,46 @@ func TestAManifestThatNamesEveryPermissionHasNothingMissing(t *testing.T) {
 		t.Fatalf("a manifest naming every permission was told it omits %v", missing)
 	}
 }
+
+// The legacy fields are one table with three readers: the migration that
+// rewrites a v1 manifest, the ordering that decides whether a policy widens,
+// and the update that weighs a stored override against a fetched one. This is
+// that table. A policy carrying none of them comes back untouched, which is
+// what keeps the reading out of every v2 policy's way.
+func TestWithMigratedFilesystemIsTheOneTableTheLegacyFieldsMean(t *testing.T) {
+	migrated := Override{
+		SocketWayland: true,
+		Filesystem:    []FilesystemPermission{{Path: "xdg-documents", Access: "read-only"}},
+		FsHost:        true,
+		FsHostEtc:     true,
+		FsHostHome:    true,
+		FsExtra:       []string{"/srv/data", "/srv/media"},
+	}.WithMigratedFilesystem()
+
+	want := []FilesystemPermission{
+		{Path: "xdg-documents", Access: "read-only"},
+		{Path: "host", Access: "read-only"},
+		{Path: "/etc", Access: "read-only"},
+		{Path: "home", Access: "read-write"},
+		{Path: "/srv/data", Access: "read-write"},
+		{Path: "/srv/media", Access: "read-write"},
+	}
+	if !reflect.DeepEqual(migrated.Filesystem, want) {
+		t.Fatalf("migrated grants: got %v, want %v", migrated.Filesystem, want)
+	}
+	if migrated.FsHost || migrated.FsHostEtc || migrated.FsHostHome || migrated.FsExtra != nil {
+		t.Fatalf("a legacy field survived the reading: %+v", migrated)
+	}
+	if !migrated.SocketWayland {
+		t.Fatal("the rest of the policy did not come through")
+	}
+
+	// A policy that granted nothing keeps an absent list rather than an empty
+	// one. Diff compares the fields whole, and an empty list is not the absent
+	// one: an update of a package that grants nothing would report a change it
+	// did not make.
+	untouched := Override{SocketWayland: true}
+	if got := untouched.WithMigratedFilesystem(); !reflect.DeepEqual(got, untouched) {
+		t.Fatalf("a policy with no legacy field was rewritten: %+v", got)
+	}
+}

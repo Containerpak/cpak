@@ -93,10 +93,11 @@ func buildState(arguments []string) error {
 
 // readManifest returns the manifest and the hash the signed state names it by.
 //
-// Validation runs first because it is what fills the defaults in and migrates
-// the fields cpak no longer reads. The installing side hashes the manifest only
-// after the same validation ran, so a hash taken before it would name a
-// manifest no installation ever sees.
+// Validation runs first because it is what fills the defaults in. It leaves the
+// manifest otherwise as the publisher wrote it, and the installing side hashes
+// it at exactly this point, so the two name one manifest. A hash taken before
+// validation would miss the defaults; one taken after anything rewrote the
+// manifest would name a package nobody published.
 func readManifest(path string) (*types.CpakManifest, string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {

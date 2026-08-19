@@ -103,6 +103,18 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		return
 	}
 
+	// This is where an installation is configured, and it is the only place
+	// the migration belongs: validation is what the lock and the publisher's
+	// signature both hash after, so migrating there would change the manifest
+	// every digest is taken over.
+	override, err := installedOverride(manifest)
+	if err != nil {
+		return
+	}
+	if err = c.refuseCpakStateGrants(override, manifest.Sessions); err != nil {
+		return
+	}
+
 	var version string
 	var sourceType string
 	switch {
@@ -190,7 +202,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		Image:                image,
 		ImageDigest:          imageDigest,
 		ManifestDigest:       manifestDigest,
-		ParsedOverride:       manifest.Override,
+		ParsedOverride:       override,
 	}
 	if err = c.PrepareApplicationStorage(app); err != nil {
 		return
@@ -224,12 +236,32 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 	return nil
 }
 
+// refuseCpakStateGrants keeps an installation out of cpak's own tree. It runs
+// here, where an installation is configured, and not inside the shared
+// validator: that one also runs at every launch over the grants an application
+// already has, so the same rule there would stop an application installed
+// before the rule existed from starting at all. A stale grant is hidden by the
+// mask instead, which is what the mask is for.
+func (c *Cpak) refuseCpakStateGrants(override types.Override, sessions []types.Session) error {
+	directories := c.cpakStateDirectories()
+	if err := types.RefuseCpakStateGrants(override.Filesystem, directories); err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		if err := types.RefuseCpakStateGrants(session.Override.Filesystem, directories); err != nil {
+			return fmt.Errorf("session %s: %w", session.ID, err)
+		}
+	}
+	return nil
+}
+
 // manifestIdentityDigest names the manifest an installation was made from, as
-// it stands once cpak has validated and migrated it, which is the manifest that
-// was applied and not the one that was published. The decoded manifest is
-// hashed rather than the bytes that were fetched, because an installation
-// resolved from a lock never sees those bytes and both paths must name the same
-// manifest.
+// the publisher wrote it: validation fills the defaults in and changes nothing
+// else, and what an installation applies on top of it is decided afterwards.
+// The lock and the publisher's signature both hash the manifest at this same
+// point, so all three name one thing. The decoded manifest is hashed rather
+// than the bytes that were fetched, because an installation resolved from a
+// lock never sees those bytes and both paths must name the same manifest.
 func manifestIdentityDigest(manifest *types.CpakManifest) (string, error) {
 	encoded, err := json.Marshal(manifest)
 	if err != nil {

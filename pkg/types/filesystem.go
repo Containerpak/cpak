@@ -90,6 +90,89 @@ func decodeFilesystemJSON(data []byte, value any) error {
 	return nil
 }
 
+// CpakStateDirectories names the directories that hold cpak's own state, given
+// the roots this installation actually resolved. They are handed in rather than
+// assumed: CPAK_INSTALLATION_PATH and the per-path variables beside it move
+// every one of them, and cpak relocates the whole tree itself to install a
+// local package, so a list that guessed the default layout would be guarding a
+// tree nothing is written to.
+//
+// Two home directories are added on top. The configuration is read before cpak
+// knows where anything else lives, and the exported launchers are what the
+// desktop menu runs.
+func CpakStateDirectories(home string, roots ...string) []string {
+	directories := []string{}
+	for _, root := range roots {
+		directories = appendStateDirectory(directories, root)
+	}
+	if usableAbsolutePath(home) {
+		directories = appendStateDirectory(directories, filepath.Join(home, ".config", "cpak"))
+		directories = appendStateDirectory(directories, filepath.Join(home, ".local", "share", "applications"))
+	}
+	return directories
+}
+
+func appendStateDirectory(directories []string, path string) []string {
+	if !usableAbsolutePath(path) {
+		return directories
+	}
+	path = filepath.Clean(path)
+	for _, existing := range directories {
+		if existing == path {
+			return directories
+		}
+	}
+	return append(directories, path)
+}
+
+func usableAbsolutePath(path string) bool {
+	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) != "/"
+}
+
+// PathIsCpakState answers whether a path is one of the directories that hold
+// cpak's own state, or lives inside one.
+func PathIsCpakState(path string, directories []string) bool {
+	if path == "" {
+		return false
+	}
+	path = filepath.Clean(path)
+	for _, directory := range directories {
+		if path == directory {
+			return true
+		}
+		if strings.HasPrefix(path, strings.TrimSuffix(directory, string(filepath.Separator))+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// RefuseCpakStateGrants keeps a grant out of cpak's own state. A grant that
+// merely contains that state is hidden again when it is mounted, but a grant
+// that resolves inside it is the state: there would be nothing left to hide,
+// and honouring it hands one application the containers, the policies and the
+// broker tokens of every other one.
+//
+// It is deliberately not part of ValidateFilesystemPermissions. That function
+// runs again at every launch, over the grants an application was already
+// installed with, so a refusal placed there would stop an application that
+// predates the rule from starting at all rather than narrow what it reaches.
+// Refusing belongs where a grant is granted; the launch hides what it can.
+func RefuseCpakStateGrants(permissions []FilesystemPermission, directories []string) error {
+	for _, permission := range permissions {
+		source, _, err := ResolveFilesystemPermission(permission)
+		if err != nil {
+			// Where a grant resolves to is decided again when it is mounted,
+			// and that is where a resolution failure is reported.
+			continue
+		}
+		if PathIsCpakState(source, directories) {
+			return fmt.Errorf("filesystem path resolves inside cpak's own state: %q", permission.Path)
+		}
+	}
+	return nil
+}
+
 func ValidateFilesystemPermissions(permissions []FilesystemPermission) error {
 	paths := make(map[string]struct{}, len(permissions))
 	for _, permission := range permissions {

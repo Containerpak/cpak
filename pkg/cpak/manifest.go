@@ -203,36 +203,64 @@ func MigrateManifest(manifest *types.CpakManifest) error {
 	if manifest.ManifestVersion != "1.0" {
 		return fmt.Errorf("unsupported manifest version: %s", manifest.ManifestVersion)
 	}
-	override := manifest.Override
-	filesystem := make([]types.FilesystemPermission, 0, len(override.FsExtra)+3)
-	if override.FsHost {
-		filesystem = append(filesystem, types.FilesystemPermission{Path: "host", Access: "read-only"})
-	}
-	if override.FsHostEtc {
-		filesystem = append(filesystem, types.FilesystemPermission{Path: "/etc", Access: "read-only"})
-	}
-	if override.FsHostHome {
-		filesystem = append(filesystem, types.FilesystemPermission{Path: "home", Access: "read-write"})
-	}
-	for _, path := range override.FsExtra {
-		filesystem = append(filesystem, types.FilesystemPermission{Path: path, Access: "read-write"})
-	}
-	if err := types.ValidateFilesystemPermissions(filesystem); err != nil {
+	// What the legacy fields stand for is written down once, in pkg/types,
+	// because the migration is not the only reader of it: the ledger has to
+	// recognise a policy it recorded in the legacy shape and one offered in the
+	// migrated shape as the same restriction, and an update has to weigh a
+	// stored override against a fetched one without reporting the change of
+	// shape as a change of permission. A second copy of the table here would be
+	// a second answer waiting to disagree with the first.
+	//
+	// The list stays absent when the manifest granted nothing, so migrating a
+	// manifest that named no mount leaves an override equal to the one already
+	// installed rather than one that merely reads the same. Override.Diff
+	// compares the fields whole, and an empty list is not the absent one.
+	override := manifest.Override.WithMigratedFilesystem()
+	if err := types.ValidateFilesystemPermissions(override.Filesystem); err != nil {
 		return fmt.Errorf("migrate filesystem permissions: %w", err)
 	}
-	override.Filesystem = filesystem
-	override.FsHost = false
-	override.FsHostEtc = false
-	override.FsHostHome = false
-	override.FsExtra = nil
 	if err := migrateLegacyHostCommands(&override); err != nil {
 		return err
 	}
 	manifest.ManifestVersion = "2.0"
 	manifest.Override = override
 	manifest.SetLegacyFilesystemFields(nil)
-	manifest.SetFilesystemDeclared(len(filesystem) > 0)
+	manifest.SetFilesystemDeclared(len(override.Filesystem) > 0)
 	return nil
+}
+
+// installedOverride is the override an installation applies: the legacy
+// filesystem fields of a v1 manifest turned into the typed grants the rest of
+// cpak reads. Nothing downstream reads fsHostHome, fsHost, fsHostEtc or
+// fsExtra as permissions; they become plain mounts that never meet the typed
+// grants, so they are neither masked nor weighed against a ceiling.
+//
+// The manifest itself is left exactly as it was published. It is what the lock
+// records a package by and what a publisher's signature is taken over, both of
+// them after validation, so a manifest that changed while cpak read it would
+// hash to a package nobody ever signed and to a lock nobody ever wrote.
+func installedOverride(manifest *types.CpakManifest) (types.Override, error) {
+	migrated := *manifest
+	if err := MigrateManifest(&migrated); err != nil {
+		return types.Override{}, err
+	}
+	return migrated.Override, nil
+}
+
+// installedRecordOverride is the override an installation already holds, read
+// the way the one it is being offered is read.
+//
+// A package installed before cpak migrated the legacy fields still carries them
+// in its record. Comparing that record with a migrated override field by field
+// reports every legacy field as a removal and every grant it stands for as an
+// addition, so an update that changes nothing at all stops and asks the user to
+// approve permissions the publisher never added.
+//
+// Reading the record is not rewriting it. It is rewritten by the update that
+// weighed it, in the same step that enrols the anchor over it, because a record
+// that stays behind the ledger describes a launch the ledger does not recognise.
+func installedRecordOverride(app types.Application) types.Override {
+	return app.ParsedOverride.WithMigratedFilesystem()
 }
 
 func migrateLegacyHostCommands(override *types.Override) error {

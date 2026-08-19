@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -175,5 +176,73 @@ func TestResolveFilesystemPermission(t *testing.T) {
 func TestDecodeFilesystemPermissionsJSONRejectsUnknownFields(t *testing.T) {
 	if _, err := DecodeFilesystemPermissionsJSON([]byte(`[{"path":"home","access":"read-write","unexpected":true}]`)); err == nil {
 		t.Fatal("accepted unknown field")
+	}
+}
+
+// TestValidateFilesystemPermissionsStillTakesAStaleCpakStateGrant guards the
+// launch path. ValidateFilesystemPermissions runs again on every launch, over
+// the grants an application was already installed with, so refusing a grant on
+// cpak's own state here would stop an application installed before the rule
+// existed from starting at all. The refusal belongs where a grant is granted;
+// the launch leaves the mount out instead.
+func TestValidateFilesystemPermissionsStillTakesAStaleCpakStateGrant(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, permission := range []FilesystemPermission{
+		{Path: "home/.local/share/cpak/store", Access: "read-write"},
+		{Path: filepath.Join(home, ".config/cpak"), Access: "read-only"},
+		{Path: filepath.Join(home, ".local/share/applications"), Access: "read-write"},
+	} {
+		if err := ValidateFilesystemPermissions([]FilesystemPermission{permission}); err != nil {
+			t.Fatalf("an installed grant stopped validating: %s: %v", permission.Path, err)
+		}
+	}
+}
+
+func TestRefuseCpakStateGrantsFollowsTheResolvedRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// The tree is where cpak put it, not where it puts it by default.
+	store := filepath.Join(t.TempDir(), "store")
+	directories := CpakStateDirectories(home, store)
+
+	for _, permission := range []FilesystemPermission{
+		{Path: store, Access: "read-write"},
+		{Path: filepath.Join(store, "containers"), Access: "read-only"},
+		{Path: filepath.Join(home, ".config/cpak"), Access: "read-write"},
+		{Path: filepath.Join(home, ".local/share/applications"), Access: "read-write"},
+	} {
+		if err := RefuseCpakStateGrants([]FilesystemPermission{permission}, directories); err == nil {
+			t.Fatalf("accepted a grant inside cpak's own state: %s", permission.Path)
+		}
+	}
+
+	// A grant that merely contains the state is masked when it is mounted, and
+	// the default layout holds nothing once the tree has been moved.
+	for _, permission := range []FilesystemPermission{
+		{Path: "home", Access: "read-write"},
+		{Path: "host", Access: "read-only"},
+		{Path: "home/.local/share/cpak", Access: "read-write"},
+		{Path: filepath.Join(store + "-other"), Access: "read-write"},
+	} {
+		if err := RefuseCpakStateGrants([]FilesystemPermission{permission}, directories); err != nil {
+			t.Fatalf("refused a grant that holds no cpak state: %s: %v", permission.Path, err)
+		}
+	}
+}
+
+func TestCpakStateDirectoriesDropWhatCannotBeARoot(t *testing.T) {
+	home := t.TempDir()
+	got := CpakStateDirectories(home, "", ".", "/", "relative/path", "/srv/store", "/srv/store/")
+	want := []string{
+		"/srv/store",
+		filepath.Join(home, ".config", "cpak"),
+		filepath.Join(home, ".local", "share", "applications"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("state directories: got %v, want %v", got, want)
+	}
+	if CpakStateDirectories("", "/srv/store")[0] != "/srv/store" || len(CpakStateDirectories("", "/srv/store")) != 1 {
+		t.Fatal("an unusable home should contribute nothing")
 	}
 }

@@ -1487,3 +1487,42 @@ func TestTheAnchorAndTheSignedStateAgreeOnHowADigestIsWritten(t *testing.T) {
 		t.Fatalf("the digests a state accepts are not the digests an anchor accepts: %v", err)
 	}
 }
+
+// The first update of a package installed from a v1 manifest offers the policy
+// cpak migrated out of the legacy fields the record still holds. The
+// application may do exactly what it could do before, so nothing may be asked of
+// the machine owner: widen-anchor is auth_admin in the shipped policy, and a
+// password demanded because cpak changed the shape of its own manifest is a
+// password nobody reads the next time it is asked for something real.
+func TestMigratingAV1PolicyIsNotAWidening(t *testing.T) {
+	legacy := types.Override{SocketWayland: true, FsHostHome: true, FsExtra: []string{"/srv/data"}}
+	migrated := types.Override{
+		SocketWayland: true,
+		Filesystem: []types.FilesystemPermission{
+			{Path: "home", Access: "read-write"},
+			{Path: "/srv/data", Access: "read-write"},
+		},
+	}
+	ledger := testAnchorLedger(t)
+	recorded := Enrolment{Anchor: anchorOver(t, legacy, strings.Repeat("a1", 32), 2), Policy: &legacy}
+	if err := ledger.Record(recorded); err != nil {
+		t.Fatal(err)
+	}
+	// The policy roots differ, which is the point: what is hashed is the policy
+	// as it stands, so the two shapes cannot be told apart by the root and the
+	// ordering is what has to recognise them.
+	offered := Enrolment{Anchor: anchorOver(t, migrated, strings.Repeat("d4", 32), 3), Policy: &migrated}
+	if offered.PolicyRoot == recorded.PolicyRoot {
+		t.Fatal("the two shapes hash alike, so this test proves nothing")
+	}
+	action, err := ledger.authorizationFor(offered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != ActionEnrolAnchor {
+		t.Fatalf("the migration of a v1 policy asks for %s, want %s", action, ActionEnrolAnchor)
+	}
+	if err = ledger.Record(offered); err != nil {
+		t.Fatalf("the ledger refused the migrated policy: %v", err)
+	}
+}

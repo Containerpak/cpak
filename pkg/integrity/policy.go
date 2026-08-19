@@ -26,7 +26,21 @@ func PolicyRoot(override types.Override) (string, error) {
 // Restricts reports whether candidate grants no more than current. Two policies
 // that cannot be ordered are not a restriction: the safe answer is that the
 // owner has to be asked, so an unrecognised difference always widens.
+//
+// Both sides are read with their filesystem grants in one form first. A v1
+// package was enrolled under fsHostHome and is installed again under
+// {path: home, access: read-write}, and those are one restriction written twice:
+// asked in the two shapes, no held grant covers the wanted one, the pair cannot
+// be ordered, and cpak asks for an administrator password because it changed
+// the shape of its own manifest. Nobody should be asked that question, and an
+// owner asked it for nothing is an owner who stops reading it.
+//
+// PolicyRoot deliberately does not do this. What is hashed is the policy as it
+// stands, so that an anchor names a value the gate can derive again; what is
+// ordered is what the policy means, which is this.
 func Restricts(current, candidate types.Override) bool {
+	current = current.WithMigratedFilesystem()
+	candidate = candidate.WithMigratedFilesystem()
 	for _, pair := range [][2]bool{
 		{candidate.SocketX11, current.SocketX11},
 		{candidate.SocketWayland, current.SocketWayland},
@@ -57,9 +71,6 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.Process, current.Process},
 		{candidate.UserNamespaces, current.UserNamespaces},
 		{candidate.AsRoot, current.AsRoot},
-		{candidate.FsHost, current.FsHost},
-		{candidate.FsHostEtc, current.FsHostEtc},
-		{candidate.FsHostHome, current.FsHostHome},
 		{candidate.FilePicker.OpenFile, current.FilePicker.OpenFile},
 		{candidate.FilePicker.OpenFolder, current.FilePicker.OpenFolder},
 		{candidate.FilePicker.SaveFile, current.FilePicker.SaveFile},
@@ -83,9 +94,10 @@ func Restricts(current, candidate types.Override) bool {
 			return false
 		}
 	}
-	if !subset(candidate.FsExtra, current.FsExtra) {
-		return false
-	}
+	// fsHost, fsHostEtc, fsHostHome and fsExtra are not compared here. They are
+	// filesystem grants written in the older spelling and they were read as
+	// such above, which is also what lets a path inside one of them count as
+	// the narrowing it is rather than as a name nobody held.
 	if !subset(candidate.AllowedHostCommands, current.AllowedHostCommands) {
 		return false
 	}
