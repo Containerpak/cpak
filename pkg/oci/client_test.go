@@ -369,3 +369,24 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
 }
+
+// Platform selection reads only the platform fields, and the digest it returns
+// goes to a fetch that verifies the body against the identifier only when that
+// identifier is a sha256 reference. An index naming a child by a tag therefore
+// turned a reference pinned to a digest into one that is not.
+func TestAnIndexChildThatIsNotADigestIsRefused(t *testing.T) {
+	for name, child := range map[string]Descriptor{
+		"a tag instead of a digest": {MediaType: mediaOCIManifest, Digest: "latest", Size: 3},
+		"an empty digest":           {MediaType: mediaOCIManifest, Digest: "", Size: 3},
+		"a digest of another kind":  {MediaType: mediaOCIManifest, Digest: "md5:abc", Size: 3},
+		"a negative size":           {MediaType: mediaOCIManifest, Digest: "sha256:" + strings.Repeat("a", 64), Size: -1},
+	} {
+		if validDescriptor(child) {
+			t.Fatalf("%s was accepted as an index child", name)
+		}
+	}
+	good := Descriptor{MediaType: mediaOCIManifest, Digest: "sha256:" + strings.Repeat("a", 64), Size: 3}
+	if !validDescriptor(good) {
+		t.Fatal("a real descriptor was refused")
+	}
+}

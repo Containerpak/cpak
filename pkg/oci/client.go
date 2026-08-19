@@ -128,6 +128,17 @@ func (c *Client) Resolve(ctx context.Context, value string) (Image, error) {
 		if err = json.Unmarshal(body, &index); err != nil {
 			return Image{}, fmt.Errorf("oci: decode image index: %w", err)
 		}
+		// Every entry is checked before one is chosen. Selection reads only the
+		// platform fields, and the digest it returns goes straight to a fetch
+		// that verifies the body against the identifier only when that
+		// identifier is a sha256 reference. An index naming its child by a tag
+		// therefore turned a reference pinned to a digest into one that is not,
+		// and the identifier reached the wire as a raw path segment.
+		for _, child := range index.Manifests {
+			if !validDescriptor(child) {
+				return Image{}, fmt.Errorf("oci: invalid manifest descriptor in image index")
+			}
+		}
 		descriptor, found := platformManifest(index.Manifests)
 		if !found {
 			return Image{}, fmt.Errorf("oci: image has no linux/%s manifest", runtime.GOARCH)
