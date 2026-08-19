@@ -92,7 +92,14 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          # Go stamps the revision by shelling out to git, and inside the build
+          # container git refuses the checkout: the safe.directory entry the
+          # checkout added lives in a temporary global config this step does not
+          # read. The version is stamped through ldflags either way, so the
+          # stamp is not worth a release that does not build.
+          GOFLAGS: -buildvcs=false
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
           mkdir -p dist
           make installer VERSION="${VERSION}" UI_ADAPTERS=all
           make sign
