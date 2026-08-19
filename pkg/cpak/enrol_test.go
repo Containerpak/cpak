@@ -1407,3 +1407,37 @@ func TestTheAnchorAnEnrolmentBuildsStatesWhatASignatureIsCheckedAgainst(t *testi
 		t.Fatalf("the anchor an enrolment built is not one the authority accepts: %v", err)
 	}
 }
+
+// Enabling an addon changes what a launch composes and re-enrols, but it
+// fetches nothing, so there is no manifest to hash. A signed package was then
+// refused for stating no manifest digest, which took the enrolment away from
+// the one kind of package that had the most to prove.
+func TestAReEnrolmentKeepsTheDigestsTheLedgerAlreadyHolds(t *testing.T) {
+	cp := newSignatureCpak(t)
+	authority := useEnrolmentAuthority(t)
+	registry := newSignatureRegistry()
+	digest := contentDigest([]byte("the image that was signed"))
+	attachSigned(t, registry, digest, 3, []byte("a bundle"))
+	app := installedFromRegistry(t, cp, registry, digest)
+	useSignatureVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
+		return signature.Verified{State: state, Identity: publisherIdentity(testOrigin)}, nil
+	})
+
+	first := cp.EnrolPublishedApplication(app, publishedTestPackage(t))
+	if !first.Signature.Verified {
+		t.Fatalf("the install did not enrol it as signed: %+v", first.Signature)
+	}
+	if authority.records[app.Origin].Anchor.ManifestDigest == "" {
+		t.Fatal("the install recorded no manifest digest, so this proves nothing")
+	}
+
+	// The composition changed and nothing was fetched, which is what enabling
+	// an addon does.
+	again := cp.EnrolApplication(app)
+	if again.Reason != nil {
+		t.Fatalf("a re-enrolment of a signed package failed: %v", again.Reason)
+	}
+	if got := authority.records[app.Origin].Anchor.ManifestDigest; got == "" {
+		t.Fatal("the re-enrolment dropped the manifest digest the ledger held")
+	}
+}

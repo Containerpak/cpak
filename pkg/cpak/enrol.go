@@ -258,6 +258,15 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 		}
 		anchor.ManifestDigest = configured
 	}
+	// A re-enrolment holds no published package: enabling an addon changes what
+	// a launch composes without fetching anything, so there is no manifest here
+	// to hash. The digest the ledger already holds is that same hash, taken from
+	// the manifest at install time and kept somewhere the user cannot write, so
+	// carrying it forward keeps the signature checkable. Reading it out of the
+	// signature instead would be comparing a value with itself.
+	if anchor.ManifestDigest == "" && carried != nil && held {
+		anchor.ManifestDigest = recorded.ManifestDigest
+	}
 	if err := anchor.ValidateDigests(); err != nil {
 		return undescribedEnrolment(enrolment, err, "")
 	}
