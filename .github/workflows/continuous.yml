@@ -66,37 +66,27 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    # The toolkits the desktop adapters compile against live in this image
+    # rather than being installed here. Installing them on the runner hung the
+    # release twice for forty minutes without ever saying what it waited for,
+    # and a pull either works or fails in seconds.
+    container:
+      image: ghcr.io/containerpak/ci-adapters:main-${{ matrix.arch }}
+      # The image is published by the organisation and is not public, so the
+      # pull is authenticated with the run's own token rather than relying on
+      # the package being open.
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: go.mod
-
-      - name: Install desktop adapter toolkits
-        timeout-minutes: 20
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # This step has hung for forty minutes at a time and taken the release
-          # with it, twice, without ever saying what it was waiting for. Every
-          # call is bounded so a hang becomes a failure that can be read, and
-          # the whole thing is attempted again because the ones seen so far did
-          # not survive a retry.
-          install_toolkits() {
-            timeout 300 sudo apt-get -o DPkg::Lock::Timeout=120 update || return 1
-            timeout 600 sudo apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends \
-              build-essential pkg-config libgtk-3-dev libadwaita-1-dev qt6-base-dev || return 1
-          }
-          for attempt in 1 2 3; do
-            if install_toolkits; then
-              exit 0
-            fi
-            echo "::warning::toolkit installation attempt ${attempt} did not finish"
-            sleep 15
-          done
-          echo "::error::the desktop adapter toolkits could not be installed"
-          exit 1
 
       - name: Build
         env:
