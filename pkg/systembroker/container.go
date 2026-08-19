@@ -96,6 +96,16 @@ func containerArguments(owner string, capabilities map[string]bool, paths []Cont
 	}
 }
 
+// containerFormatJSON is the only value --format may carry.
+//
+// In podman and docker that flag is a Go template, so what arrived here as a
+// string the caller chose was a template engine on the far side of the broker,
+// reachable from inside a sandbox. Nothing was exploitable through it today,
+// because a caller holding read can already run inspect and see the same
+// fields, but a provider hands back data and does not take a program that says
+// how to render it. A caller that wants a field parses the object.
+const containerFormatJSON = "json"
+
 func containerReadArguments(request ContainerRequest) []string {
 	arguments := []string{}
 	if request.All {
@@ -210,8 +220,8 @@ func validateContainerRequest(request ContainerRequest) error {
 			return errors.New("invalid container environment")
 		}
 	}
-	if request.Format != "" && (len(request.Format) > 1024 || strings.ContainsAny(request.Format, "\x00\r\n")) {
-		return errors.New("invalid container format")
+	if request.Format != "" && request.Format != containerFormatJSON {
+		return errors.New("the only container output format is " + containerFormatJSON)
 	}
 	if request.Name != "" && !containerResourcePattern.MatchString(request.Name) {
 		return errors.New("invalid container name")
