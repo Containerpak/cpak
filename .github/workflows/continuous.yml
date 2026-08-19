@@ -65,6 +65,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
@@ -73,9 +74,16 @@ jobs:
           go-version-file: go.mod
 
       - name: Install desktop adapter toolkits
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev libadwaita-1-dev qt6-base-dev
+          # The runner boots with unattended-upgrades holding the dpkg lock, and
+          # apt waits for it with no bound, which has hung this job for hours at
+          # a time. A lock timeout turns that into a failure that can be read
+          # and retried instead of a build nobody is told about.
+          sudo apt-get -o DPkg::Lock::Timeout=600 update
+          sudo apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends \
+            build-essential pkg-config libgtk-3-dev libadwaita-1-dev qt6-base-dev
 
       - name: Build
         env:
