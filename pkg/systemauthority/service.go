@@ -236,6 +236,35 @@ func (s *Service) ForgetAnchor(sender dbus.Sender, uid uint32, origin string) *d
 	return nil
 }
 
+// ClearForgottenAnchor gives up what a removal left behind. There is no cheaper
+// question here for one's own account, the way there is for forgetting an
+// anchor, and the caller's uid is not consulted at all. Forgetting an anchor
+// leaves an application with less than it had; this hands back the floor the
+// ledger was keeping against a generation going backwards, against a signature
+// being dropped and against a widening. Whose account the floor was kept for
+// does not change what giving it up costs.
+func (s *Service) ClearForgottenAnchor(sender dbus.Sender, uid uint32, origin string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
+	if err := validateOrigin(origin); err != nil {
+		return invalidRequest(err)
+	}
+	if s.Authorizer == nil {
+		return denied(errors.New("authorization service is unavailable"))
+	}
+	if err := s.Authorizer.Authorize(sender, ActionClearRemoval, map[string]string{
+		"package-origin": origin,
+		"target-uid":     strconv.FormatUint(uint64(uid), 10),
+	}); err != nil {
+		return denied(err)
+	}
+	if err := s.Anchors.ClearForgotten(uid, origin); err != nil {
+		return failed(err)
+	}
+	return nil
+}
+
 // Serve answers on every transport the host offers. The socket is always
 // available, so a machine without a system bus keeps a working authority
 // instead of none, and the bus is taken as an extra when it is there because it

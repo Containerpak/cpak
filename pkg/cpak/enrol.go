@@ -41,9 +41,10 @@ import (
 // and never through a second copy that looks the same, because an anchor the
 // gate cannot reproduce would refuse the installation that wrote it.
 
-// recordAnchor, forgetAnchor and recordedAnchor are the ledger as an install
-// sees it. They are variables so that a test can hold a ledger of its own; the
-// only thing cpak ever puts in them is the system authority.
+// recordAnchor, forgetAnchor, recordedAnchor, forgottenAnchor and asksTheOwner
+// are the ledger as an install sees it. They are variables so that a test can
+// hold a ledger of its own; the only thing cpak ever puts in them is the system
+// authority.
 //
 // The policy and the signature travel with the anchor because an installer is
 // the one caller that holds them. Without the policy the authority sees two
@@ -55,6 +56,8 @@ var (
 	recordAnchor    = systemauthority.EnrolAnchorWithSignature
 	forgetAnchor    = systemauthority.ForgetAnchor
 	recordedAnchor  = systemauthority.RecordedAnchor
+	forgottenAnchor = systemauthority.ForgottenAnchor
+	asksTheOwner    = systemauthority.EnrolmentAsksTheOwner
 	signaturePolicy = systemauthority.Signatures
 )
 
@@ -68,6 +71,17 @@ const (
 	authorityAdvice = "Run cpak system setup to install the system authority, then install or update the application again to enrol it."
 	unsignedAdvice  = "This host enrols only packages a publisher signed. Ask the publisher to sign its releases, or run cpak system set-signatures optional to take unsigned packages again."
 )
+
+// clearRemovalAdvice names the way out of a refusal that came from what the
+// removal of this application left behind rather than from anything the
+// installation on disk did. Nothing an installer can do answers that one: the
+// floor is measured against an application that is gone, and reinstalling,
+// updating and reverting all meet it again. A person told only that their
+// installation was refused for a signature it never carried is a person with
+// nothing to type, which is the whole defect this exists to close.
+func clearRemovalAdvice(origin string) string {
+	return fmt.Sprintf("This is what the removal of %s left behind and not what has just been installed: the ledger keeps the generation an application had reached and whether a publisher had ever answered for it, so that removing it cannot be a way of putting something older or unsigned in its place. Run cpak system clear-removal %s to give that up, which asks for an administrator password, and then install the application again.", origin, origin)
+}
 
 // EnrolmentOutcome is what one attempt to enrol an application concluded. The
 // zero value is deliberately not a conclusion, so an outcome nobody filled in
@@ -195,7 +209,22 @@ type ApplicationEnrolment struct {
 // one the first time somebody changed an override or enabled an addon, and on a
 // host that takes only signed packages that would unenrol working software.
 func (c *Cpak) EnrolApplication(app types.Application) ApplicationEnrolment {
-	return c.enrolApplication(app, PublishedPackage{}, c.carriedSignature(app))
+	return c.enrolApplication(app, PublishedPackage{}, c.carriedSignature(app), false)
+}
+
+// enrolTakeover is the enrolment a removal makes on behalf of the installation
+// that remains. It is the same enrolment in every respect but one: it is not
+// offered at all if the ledger would put it to the owner of the machine.
+//
+// Uninstalling software is not a moment to ask anybody for an administrator
+// password. It is also not a moment to grant one: the installation that remains
+// is enrolled over the record of the one that went, so the ledger measures it
+// against that record, and two installations of one origin whose policies
+// differ meet the widening question in the middle of an uninstall. Asking the
+// ledger first, where nobody is prompted, keeps both halves: no prompt, and no
+// widening that slipped through because a prompt was skipped.
+func (c *Cpak) enrolTakeover(app types.Application) ApplicationEnrolment {
+	return c.enrolApplication(app, PublishedPackage{}, c.carriedSignature(app), true)
 }
 
 // EnrolPublishedApplication is what an install and an update call. It is the
@@ -210,10 +239,10 @@ func (c *Cpak) EnrolApplication(app types.Application) ApplicationEnrolment {
 // is already on disk and working. What it must not be is quiet, so every
 // outcome other than a recorded anchor is reported to the user as it happens.
 func (c *Cpak) EnrolPublishedApplication(app types.Application, published PublishedPackage) ApplicationEnrolment {
-	return c.enrolApplication(app, published, nil)
+	return c.enrolApplication(app, published, nil, false)
 }
 
-func (c *Cpak) enrolApplication(app types.Application, published PublishedPackage, carried *systemauthority.SignedState) ApplicationEnrolment {
+func (c *Cpak) enrolApplication(app types.Application, published PublishedPackage, carried *systemauthority.SignedState, takeover bool) ApplicationEnrolment {
 	enrolment := ApplicationEnrolment{Origin: app.Origin, UID: uint32(os.Getuid())}
 	components, addons, err := c.launchComposition(app)
 	if err != nil {
@@ -238,11 +267,22 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 		// either refused as a downgrade or accepted as one.
 		return unrecordableEnrolment(enrolment, err)
 	}
+	// The generation is a counter the ledger keeps and never a version the
+	// package carries, so it is picked up from whatever the ledger still has of
+	// this application, and from one place rather than two: the record while
+	// one is held, and what a removal left behind once it is gone. Starting
+	// over at one after a removal would be offering a generation this origin
+	// has already been past, and the ledger refuses those whether or not the
+	// record they were reached through survived.
+	floor, err := enrolmentFloor(enrolment.UID, app.Origin, recorded, held)
+	if err != nil {
+		return unrecordableEnrolment(enrolment, err)
+	}
 	anchor := integrity.Anchor{
 		ABI:         integrity.ABIVersion,
 		UID:         enrolment.UID,
 		Origin:      app.Origin,
-		Generation:  1,
+		Generation:  floor + 1,
 		ImageDigest: app.ImageDigest,
 		PackageRoot: packageRoot,
 		PolicyRoot:  policyRoot,
@@ -282,9 +322,24 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 			enrolment.Signature = c.heldSignature(app.Origin, enrolment.UID)
 			return enrolment
 		}
-		anchor.Generation = recorded.Generation + 1
 	}
 	enrolment.Anchor = anchor
+	// A takeover asks the ledger what it would ask the user, and stops here
+	// rather than offering an enrolment that would cost a password. The
+	// question is asked after the launch is described, because there is nothing
+	// to ask about until the policy root is known, and before the registry is
+	// asked anything, because an enrolment that will not be offered is not
+	// worth a network round trip.
+	if takeover {
+		asks, askErr := asksTheOwner(anchor, &policy)
+		if askErr != nil {
+			return unrecordableEnrolment(enrolment, askErr)
+		}
+		if asks {
+			return unofferedEnrolment(enrolment, fmt.Errorf(
+				"%s asks for more than the installation that was removed was enrolled for, and a removal is not the moment to put that to the owner of this machine", app.Origin))
+		}
+	}
 
 	// The signature is resolved after the launch is described and before the
 	// authority is asked. An application nothing can describe is not enrolled
@@ -308,6 +363,30 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 		logger.Printf("%s is enrolled for verified launch at generation %d", app.Origin, anchor.Generation)
 	}
 	return enrolment
+}
+
+// enrolmentFloor is the highest generation this origin has already reached on
+// this account, wherever the ledger still keeps it.
+//
+// Both halves are asked, and not one or the other. The record is the obvious
+// one, and the tombstone is the one a removal leaves: an application that was
+// forgotten and is being installed again is not a first install, and neither is
+// one whose record survived a removal of a sibling installation. Reading only
+// the half that happens to exist would put the whole counter at the mercy of
+// which of the two paths ran last.
+func enrolmentFloor(uid uint32, origin string, recorded integrity.Anchor, held bool) (uint64, error) {
+	floor := uint64(0)
+	if held {
+		floor = recorded.Generation
+	}
+	buried, entombed, err := forgottenAnchor(uid, origin)
+	if err != nil {
+		return 0, err
+	}
+	if entombed && buried.Generation > floor {
+		floor = buried.Generation
+	}
+	return floor, nil
 }
 
 // packageSignature answers with the signature this enrolment is recorded
@@ -586,37 +665,52 @@ func signedBefore(uid uint32, origin string) bool {
 	return recorded.Signature != nil
 }
 
-// forgetEnrolment drops the anchor of an application that has just been
-// removed. An anchor is filed under the origin alone, so an origin that still
-// has one installation left is enrolled again from the one that remains, and
-// an origin that has several is left with none: nothing in a single anchor can
-// name which of them it is about, and picking one would enrol an application
-// the user did not ask about.
+// forgetEnrolment settles the ledger after an application has been removed. An
+// anchor is filed under the origin alone, so an origin that still has one
+// installation left is enrolled again from the one that remains, and an origin
+// that has several is left with none: nothing in a single anchor can name which
+// of them it is about, and picking one would enrol an application the user did
+// not ask about.
+//
+// The installation that remains is enrolled again over the record of the one
+// that went, and the record is only dropped if that did not work. The order is
+// the point. The record is the only place the publisher signature and the
+// manifest it was checked against are kept, so dropping it first would hand the
+// installation that remains an anchor saying nobody ever published it, and the
+// ledger, which keeps what a removal reached, is right to refuse an anchor that
+// says that. Removing one of two installations is not a way of unsigning the
+// one that is left.
+//
+// The cost of that order is that the ledger measures the installation that
+// remains against the record of the one that went, and the two are not always
+// the same size: different branches ask for different permissions, and one of
+// them may carry an override of its own. So the enrolment goes through
+// enrolTakeover, which asks the ledger the question first and declines to offer
+// an enrolment the owner of the machine would be asked about. An uninstall must
+// never stop on a password prompt, and it must not quietly widen an application
+// either, which is what asking somewhere nobody is prompted buys.
+//
+// What is left when the takeover does not happen is an origin the ledger no
+// longer answers for, said out loud, because the installation is on disk and a
+// host that refuses unenrolled launches will not start it.
 func (c *Cpak) forgetEnrolment(app types.Application) {
 	uid := uint32(os.Getuid())
-	// What the ledger holds is read before it is dropped, because the
-	// installation that remains is enrolled again from a record that no longer
-	// exists by then, and it would otherwise be recorded as unsigned.
-	recorded, held, recordErr := recordedAnchor(uid, app.Origin)
+	remaining, err := c.installationsOf(app.Origin)
+	if err != nil {
+		logger.Warnf("The remaining installations of %s could not be read, so none of them was enrolled again: %v", app.Origin, err)
+	} else if len(remaining) == 1 {
+		taken := c.enrolTakeover(remaining[0])
+		switch taken.Outcome {
+		case EnrolmentRecorded, EnrolmentUnchanged:
+			return
+		}
+		logger.Warnf("The installation of %s that remains could not take over the integrity anchor of the one that was removed, so the origin is left unenrolled: %v. Install or update it again to enrol it, which is also the only way to prove its publisher signature afresh.", app.Origin, taken.Reason)
+	}
 	if err := forgetAnchor(uid, app.Origin); err != nil {
 		logger.Warnf("The integrity anchor of %s was not removed: %v. Until it is, the ledger answers for an application that is not installed.", app.Origin, err)
 		return
 	}
-	remaining, err := c.installationsOf(app.Origin)
-	if err != nil {
-		logger.Warnf("The remaining installations of %s could not be read, so none of them was enrolled again: %v", app.Origin, err)
-		return
-	}
-	switch len(remaining) {
-	case 0:
-		return
-	case 1:
-		var carried *systemauthority.SignedState
-		if recordErr == nil && held && recorded.Signature != nil && recorded.Signature.State.ImageDigest == remaining[0].ImageDigest {
-			carried = recorded.Signature
-		}
-		c.enrolApplication(remaining[0], PublishedPackage{}, carried)
-	default:
+	if len(remaining) > 1 {
 		logger.Warnf("%d installations of %s remain and the ledger holds one anchor per origin, so none of them is enrolled for verified launch.", len(remaining), app.Origin)
 	}
 }
@@ -715,10 +809,44 @@ func undescribedEnrolment(enrolment ApplicationEnrolment, err error, advice stri
 func unrecordableEnrolment(enrolment ApplicationEnrolment, err error) ApplicationEnrolment {
 	enrolment.Outcome = EnrolmentUnrecordable
 	enrolment.Reason = err
-	if errors.Is(err, systemauthority.ErrNoAuthority) {
+	switch {
+	case errors.Is(err, systemauthority.ErrNoAuthority):
 		enrolment.Advice = authorityAdvice
+	case refusedByARemoval(enrolment.UID, enrolment.Origin, err):
+		enrolment.Advice = clearRemovalAdvice(enrolment.Origin)
 	}
 	return reportEnrolment(enrolment)
+}
+
+// refusedByARemoval says whether the ledger refused this enrolment over
+// something a removal left behind rather than over a record. The two carry the
+// same refusals and they are not the same situation: one measured against a
+// record is answered by the installation that record describes, and one
+// measured against a tombstone is answered by nothing at all until somebody
+// gives the tombstone up. Only the second is worth naming an administrative
+// action for, and naming it in the first case would send a user to give up a
+// floor that is not what refused them.
+func refusedByARemoval(uid uint32, origin string, err error) bool {
+	if !errors.Is(err, systemauthority.ErrAnchorDowngrade) &&
+		!errors.Is(err, systemauthority.ErrSignatureLost) &&
+		!errors.Is(err, systemauthority.ErrSignatureDowngrade) {
+		return false
+	}
+	if _, held, recordErr := recordedAnchor(uid, origin); recordErr != nil || held {
+		return false
+	}
+	_, entombed, tombErr := forgottenAnchor(uid, origin)
+	return tombErr == nil && entombed
+}
+
+// unofferedEnrolment is an enrolment that was never put to the authority at
+// all. It is not reported here: the caller that decided against offering it is
+// the one that knows why it was making the offer, and it says so once rather
+// than the user reading two messages about one thing.
+func unofferedEnrolment(enrolment ApplicationEnrolment, reason error) ApplicationEnrolment {
+	enrolment.Outcome = EnrolmentUnrecordable
+	enrolment.Reason = reason
+	return enrolment
 }
 
 // unsignedEnrolment is the host policy answered here as well as by the

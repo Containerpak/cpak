@@ -111,7 +111,8 @@ func TestEveryServedMethodChecksForStaleness(t *testing.T) {
 	guarded := map[string]bool{
 		"RegisterSession": true, "RemoveSession": true, "EnrolAnchor": true,
 		"EnrolSignedAnchor": true, "SetEnforcement": true, "ForgetAnchor": true,
-		"SetTrustPolicy": true, "SetSignaturePolicy": true,
+		"ClearForgottenAnchor": true,
+		"SetTrustPolicy":       true, "SetSignaturePolicy": true,
 	}
 	for _, method := range introspect.Methods(&Service{}) {
 		if !guarded[method.Name] {

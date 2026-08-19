@@ -35,6 +35,14 @@ type enrolmentAuthority struct {
 	records   map[string]systemauthority.Enrolment
 	recorded  int
 	forgotten int
+
+	// asked counts the enrolments that reached this side and would have been
+	// put to the owner of the machine, which on a real host is a password
+	// prompt. The real authority decides that with the ledger and polkit; this
+	// side decides it with the same ledger and counts it, so a test can say
+	// that a step nobody should be prompted during prompted nobody.
+	asked int
+
 	policy    *types.Override
 	signature *systemauthority.SignedState
 	signed    int
@@ -47,14 +55,24 @@ func useEnrolmentAuthority(t *testing.T) *enrolmentAuthority {
 	authority := &enrolmentAuthority{ledger: useAnchorLedger(t), records: map[string]systemauthority.Enrolment{}}
 	savedRecord, savedForget := recordAnchor, forgetAnchor
 	savedRecorded, savedPolicy := recordedAnchor, signaturePolicy
+	savedForgotten, savedAsks := forgottenAnchor, asksTheOwner
 	t.Cleanup(func() {
 		recordAnchor = savedRecord
 		forgetAnchor = savedForget
 		recordedAnchor = savedRecorded
+		forgottenAnchor = savedForgotten
+		asksTheOwner = savedAsks
 		signaturePolicy = savedPolicy
 	})
 	recordAnchor = func(anchor integrity.Anchor, policy *types.Override, signed *systemauthority.SignedState) error {
 		authority.recorded++
+		asks, err := authority.ledger.AsksTheOwner(systemauthority.Enrolment{Anchor: anchor, Policy: policy})
+		if err != nil {
+			return err
+		}
+		if asks {
+			authority.asked++
+		}
 		authority.policy = policy
 		authority.signature = signed
 		if signed != nil {
@@ -74,7 +92,14 @@ func useEnrolmentAuthority(t *testing.T) *enrolmentAuthority {
 		if authority.refusal != nil {
 			return authority.refusal
 		}
-		return authority.ledger.Forget(uid, origin)
+		if err := authority.ledger.Forget(uid, origin); err != nil {
+			return err
+		}
+		// The signature this side keeps beside the ledger goes with the record
+		// it belongs to. Leaving it would let a forgotten origin still answer
+		// for who published it, which the authority does not do.
+		delete(authority.records, origin)
+		return nil
 	}
 	// Records are read back from what this authority took, and not from the
 	// ledger file: the authority proves a bundle for real before it writes one
@@ -82,6 +107,16 @@ func useEnrolmentAuthority(t *testing.T) *enrolmentAuthority {
 	// anchor still goes through the real ledger, so the gate still finds what
 	// an enrolment recorded.
 	recordedAnchor = authority.recordOf
+	// The tombstones belong to the ledger and not to this side, so they are
+	// read off the same ledger the anchors are written to. Reading the host's
+	// would make an install answer to whatever that machine happens to hold.
+	forgottenAnchor = authority.ledger.Forgotten
+	// The question of how hard the owner of the machine would be asked is the
+	// ledger's, so it is asked of the same ledger everything else here is
+	// written to rather than of whatever the host running the test holds.
+	asksTheOwner = func(anchor integrity.Anchor, policy *types.Override) (bool, error) {
+		return authority.ledger.AsksTheOwner(systemauthority.Enrolment{Anchor: anchor, Policy: policy})
+	}
 	signaturePolicy = func() systemauthority.SignaturePolicy { return systemauthority.SignaturesOptional }
 	return authority
 }
@@ -149,6 +184,74 @@ func TestEnrolApplicationRecordsTheLaunchTheGateThenRecognises(t *testing.T) {
 	}
 	if identity.LaunchRoot != enrolment.Anchor.LaunchRoot {
 		t.Fatal("the gate derived a launch root the enrolment did not record, so the two do not agree by construction")
+	}
+}
+
+// Removing an application and installing it again is the ordinary thing to do
+// after removing it, and the ledger keeps the generation the application had
+// reached even once its record is gone. An installer that started over at one
+// would be offering a generation this origin has already been past, and the
+// authority refuses those whether or not the record is still there.
+func TestEnrolApplicationCarriesOnFromAForgottenGeneration(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	app := enrolledApplication(t, cp)
+
+	first := cp.EnrolApplication(app)
+	if first.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the application to be enrolled", first.Outcome, first.Reason)
+	}
+	if err := forgetAnchor(first.UID, app.Origin); err != nil {
+		t.Fatal(err)
+	}
+	again := cp.EnrolApplication(app)
+	if again.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want a forgotten application to be enrolled again", again.Outcome, again.Reason)
+	}
+	if again.Anchor.Generation <= first.Anchor.Generation {
+		t.Fatalf("got generation %d, want it past the %d the removal left behind", again.Anchor.Generation, first.Anchor.Generation)
+	}
+	anchor, held := authority.holds(t, app.Origin)
+	if !held || anchor.Generation != again.Anchor.Generation {
+		t.Fatalf("the ledger holds %+v, want the enrolment that was just recorded", anchor)
+	}
+}
+
+// The counter has to keep climbing after the reinstall as well as through it.
+// A record that a removal pushed past one is a record every later enrolment is
+// ordered against, so enabling an addon or changing an override on a reinstalled
+// application must not offer the authority a generation it has already had.
+func TestEnrolApplicationKeepsClimbingAfterAReinstall(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	app := enrolledApplication(t, cp)
+
+	if enrolment := cp.EnrolApplication(app); enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the application to be enrolled", enrolment.Outcome, enrolment.Reason)
+	}
+	if err := forgetAnchor(uint32(os.Getuid()), app.Origin); err != nil {
+		t.Fatal(err)
+	}
+	reinstalled := cp.EnrolApplication(app)
+	if reinstalled.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want a forgotten application to be enrolled again", reinstalled.Outcome, reinstalled.Reason)
+	}
+
+	// The record is held now, and this is the ordinary change that follows a
+	// reinstall: an override the user set, which moves the launch root and so
+	// has to be recorded afresh.
+	app.ParsedOverride = types.Override{SocketWayland: true}
+	changed := cp.EnrolApplication(app)
+	if changed.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the change over the reinstalled record to be enrolled", changed.Outcome, changed.Reason)
+	}
+	if changed.Anchor.Generation <= reinstalled.Anchor.Generation {
+		t.Fatalf("got generation %d over a record at %d, want the counter to keep climbing",
+			changed.Anchor.Generation, reinstalled.Anchor.Generation)
+	}
+	anchor, held := authority.holds(t, app.Origin)
+	if !held || anchor.Generation != changed.Anchor.Generation {
+		t.Fatalf("the ledger holds %+v, want the enrolment that was just recorded", anchor)
 	}
 }
 
@@ -939,9 +1042,11 @@ func TestAnUnchangedEnrolmentStillReportsWhoSignedIt(t *testing.T) {
 }
 
 // An anchor is filed under the origin alone, so removing one of two
-// installations enrols the one that remains from a record that no longer
-// exists by then. The signature has to survive that, or removing a branch
-// would quietly turn a signed application into an unsigned one.
+// installations hands the anchor to the one that remains. It is handed over
+// rather than dropped and written again: the record is the only place the
+// signature and the manifest it was checked against are kept, and the ledger
+// keeps what a removal reached, so an origin that went through a removal
+// unsigned would be an origin the ledger then refuses to enrol at all.
 func TestRemoveCarriesTheSignatureToTheInstallationThatRemains(t *testing.T) {
 	cp := newSignatureCpak(t)
 	authority := useEnrolmentAuthority(t)
@@ -970,19 +1075,43 @@ func TestRemoveCarriesTheSignatureToTheInstallationThatRemains(t *testing.T) {
 	useSignatureVerifier(t, func(_ []byte, state signature.State) (signature.Verified, error) {
 		return signature.Verified{State: state, Identity: publisherIdentity(testOrigin)}, nil
 	})
-	if enrolment := cp.EnrolPublishedApplication(removed, publishedTestPackage(t)); enrolment.Outcome != EnrolmentRecorded {
+	enrolment := cp.EnrolPublishedApplication(removed, publishedTestPackage(t))
+	if enrolment.Outcome != EnrolmentRecorded {
 		t.Fatalf("got outcome %s (%v), want the signed installation to be enrolled first", enrolment.Outcome, enrolment.Reason)
 	}
+	removedRoot := enrolment.Anchor.PackageRoot
 	authority.signature = nil
 
 	if err := cp.Remove(testOrigin, "main", "", ""); err != nil {
 		t.Fatalf("the removal failed: %v", err)
 	}
-	if authority.forgotten != 1 {
-		t.Fatalf("the authority was asked %d times to forget the anchor, want once", authority.forgotten)
-	}
 	if authority.signature == nil || string(authority.signature.Bundle) != string(bundle) {
 		t.Fatalf("the installation that remains was enrolled with %+v, want the signature the removed one had proven", authority.signature)
+	}
+	// The signature alone is not enough to record. A signed anchor has to say
+	// which manifest the signature was checked against, and that value lives
+	// nowhere but the record, so an enrolment that reached the authority after
+	// the record was dropped would carry a signature the authority refuses as
+	// unbound.
+	record, enrolled, err := authority.recordOf(uint32(os.Getuid()), testOrigin)
+	if err != nil || !enrolled {
+		t.Fatalf("the ledger answers for nothing after the removal: %v, %v", enrolled, err)
+	}
+	signedManifest, err := manifestDigest(publishedTestPackage(t).Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ManifestDigest != signedManifest {
+		t.Fatalf("got manifest digest %q, want the anchor of the installation that remains to say what its signature was checked against", record.ManifestDigest)
+	}
+	if record.PackageRoot == removedRoot {
+		t.Fatal("the ledger still describes the installation that was removed")
+	}
+	// And it is one enrolment over the record, not a removal followed by a
+	// first install. The two are the same thing to a reader of the ledger and
+	// not at all the same thing to the ledger itself.
+	if authority.forgotten != 0 {
+		t.Fatalf("the anchor was forgotten %d times, want the installation that remains to take it over instead", authority.forgotten)
 	}
 }
 
@@ -1439,5 +1568,143 @@ func TestAReEnrolmentKeepsTheDigestsTheLedgerAlreadyHolds(t *testing.T) {
 	}
 	if got := authority.records[app.Origin].Anchor.ManifestDigest; got == "" {
 		t.Fatal("the re-enrolment dropped the manifest digest the ledger held")
+	}
+}
+
+// Removing one of two installations is not a moment to ask anybody for an
+// administrator password. The installation that remains is enrolled over the
+// record of the one that went, so the ledger measures it against that record,
+// and two branches that ask for different permissions are a widening as far as
+// the ledger is concerned. The question is put to the ledger, where nobody is
+// prompted, and the enrolment is not offered at all when the answer is yes.
+func TestRemovingOneInstallationNeverAsksTheOwnerOfTheMachine(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	removed := enrolledApplication(t, cp)
+	removed.CpakId = testCpakId("branch", "main")
+	removed.Version = "main"
+	seedApplication(t, cp, removed)
+
+	// The branch that remains asks for more than the one being removed, which
+	// is the ordinary shape of two branches of one application.
+	kept := removed
+	kept.CpakId = testCpakId("branch", "stable")
+	kept.Version = "stable"
+	kept.Branch = "stable"
+	kept.ParsedOverride = types.Override{FsHostHome: true}
+	seedApplication(t, cp, kept)
+
+	if enrolment := cp.EnrolApplication(removed); enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the application to be enrolled first", enrolment.Outcome, enrolment.Reason)
+	}
+	if authority.asked != 0 {
+		t.Fatalf("the first enrolment was put to the owner of the machine %d times", authority.asked)
+	}
+	if err := cp.Remove(testOrigin, "main", "", ""); err != nil {
+		t.Fatalf("the removal failed: %v", err)
+	}
+	if authority.asked != 0 {
+		t.Fatalf("removing one installation asked the owner of the machine %d times, want an uninstall never to", authority.asked)
+	}
+	// It is not offered, so the origin is left unenrolled rather than widened
+	// behind a prompt nobody answered. That is the state the warning names and
+	// installing the branch that remains again is what leaves it.
+	if authority.forgotten != 1 {
+		t.Fatalf("the anchor was forgotten %d times, want the removal to fall back to forgetting it", authority.forgotten)
+	}
+	if _, held := authority.holds(t, testOrigin); held {
+		t.Fatal("the ledger answers for an installation the owner of the machine was never asked about")
+	}
+}
+
+// The same removal when the two installations are the same size: nothing is
+// asked and nothing is forgotten either, because the takeover is the ordinary
+// course of installing software and goes through.
+func TestRemovingOneInstallationStillHandsTheAnchorOver(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	removed := enrolledApplication(t, cp)
+	removed.CpakId = testCpakId("branch", "main")
+	removed.Version = "main"
+	seedApplication(t, cp, removed)
+
+	kept := removed
+	kept.CpakId = testCpakId("branch", "stable")
+	kept.Version = "stable"
+	kept.Branch = "stable"
+	kept.ParsedLayers = []string{verifiedBaseLayer}
+	seedApplication(t, cp, kept)
+
+	if enrolment := cp.EnrolApplication(removed); enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the application to be enrolled first", enrolment.Outcome, enrolment.Reason)
+	}
+	if err := cp.Remove(testOrigin, "main", "", ""); err != nil {
+		t.Fatalf("the removal failed: %v", err)
+	}
+	if authority.asked != 0 {
+		t.Fatalf("an uninstall asked the owner of the machine %d times", authority.asked)
+	}
+	if authority.forgotten != 0 {
+		t.Fatalf("the anchor was forgotten %d times, want the installation that remains to take it over", authority.forgotten)
+	}
+	if _, held := authority.holds(t, testOrigin); !held {
+		t.Fatal("the origin still has an installation and the ledger holds nothing for it")
+	}
+}
+
+// A refusal that comes from what a removal left behind is the one refusal an
+// ordinary user cannot answer: reinstalling meets it again, and so does every
+// version of the application there is. The message has to name what clears it,
+// or the user is told their installation was refused and given nothing to type.
+func TestARefusalARemovalLeftBehindNamesTheWayOutOfIt(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	app := enrolledApplication(t, cp)
+	seedApplication(t, cp, app)
+
+	if enrolment := cp.EnrolApplication(app); enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the application to be enrolled first", enrolment.Outcome, enrolment.Reason)
+	}
+	if err := forgetAnchor(uint32(os.Getuid()), testOrigin); err != nil {
+		t.Fatal(err)
+	}
+	// The publisher stopped signing between the removal and this install, so
+	// the ledger refuses an enrolment that can present nothing.
+	authority.refusal = fmt.Errorf("record the anchor of %s: %w", testOrigin, systemauthority.ErrSignatureLost)
+
+	enrolment := cp.EnrolApplication(app)
+	if enrolment.Outcome != EnrolmentUnrecordable {
+		t.Fatalf("got outcome %s, want the enrolment to be refused", enrolment.Outcome)
+	}
+	wanted := "cpak system clear-removal " + testOrigin
+	if !strings.Contains(enrolment.Advice, wanted) {
+		t.Fatalf("the user is told %q, want it to name %q", enrolment.Advice, wanted)
+	}
+}
+
+// And the same refusal measured against a record does not name it. That one is
+// answered by the installation the record describes, and sending the user to
+// give up a floor that is not what refused them would cost them a protection
+// for nothing.
+func TestARefusalFromARecordDoesNotNameTheRemovalAction(t *testing.T) {
+	cp := newTestCpak(t)
+	authority := useEnrolmentAuthority(t)
+	app := enrolledApplication(t, cp)
+	seedApplication(t, cp, app)
+
+	if enrolment := cp.EnrolApplication(app); enrolment.Outcome != EnrolmentRecorded {
+		t.Fatalf("got outcome %s (%v), want the application to be enrolled first", enrolment.Outcome, enrolment.Reason)
+	}
+	authority.refusal = fmt.Errorf("record the anchor of %s: %w", testOrigin, systemauthority.ErrSignatureLost)
+	changed := app
+	changed.ParsedOverride = types.Override{FsHostHome: true}
+	seedApplication(t, cp, changed)
+
+	enrolment := cp.EnrolApplication(changed)
+	if enrolment.Outcome != EnrolmentUnrecordable {
+		t.Fatalf("got outcome %s, want the enrolment to be refused", enrolment.Outcome)
+	}
+	if strings.Contains(enrolment.Advice, "clear-removal") {
+		t.Fatalf("the user is sent to give up a floor that did not refuse them: %q", enrolment.Advice)
 	}
 }

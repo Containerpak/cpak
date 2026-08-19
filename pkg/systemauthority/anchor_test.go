@@ -446,9 +446,10 @@ func TestAnchorMethodsAreCarriedByTheBusInterface(t *testing.T) {
 		arguments[method.Name] = taken
 	}
 	for name, want := range map[string]string{
-		"EnrolAnchor":    "iustssssss",
-		"ForgetAnchor":   "us",
-		"SetEnforcement": "s",
+		"EnrolAnchor":          "iustssssss",
+		"ForgetAnchor":         "us",
+		"ClearForgottenAnchor": "us",
+		"SetEnforcement":       "s",
 	} {
 		if arguments[name] != want {
 			t.Fatalf("%s takes %q on the bus, want %q", name, arguments[name], want)
@@ -457,7 +458,7 @@ func TestAnchorMethodsAreCarriedByTheBusInterface(t *testing.T) {
 }
 
 func TestAnchorActionsAreDeclaredInThePolkitPolicy(t *testing.T) {
-	for _, action := range []string{ActionEnrolAnchor, ActionWidenAnchor, ActionForgetAnchor} {
+	for _, action := range []string{ActionEnrolAnchor, ActionWidenAnchor, ActionForgetAnchor, ActionClearRemoval} {
 		declaration := `<action id="` + action + `">`
 		if !strings.Contains(string(polkitPolicy), declaration) {
 			t.Fatalf("%s is not declared in the polkit policy", action)
@@ -733,6 +734,10 @@ func TestAnchorActionsAskTheDesktopUserTheRightQuestion(t *testing.T) {
 		ActionEnrolAnchor:  {"no", "no", "yes"},
 		ActionWidenAnchor:  {"no", "no", "auth_admin"},
 		ActionForgetAnchor: {"no", "no", "yes"},
+		// Giving up what a removal left behind is not part of removing one's
+		// own software: it hands back a floor that was standing against a
+		// downgrade, an unsigning and a widening at once.
+		ActionClearRemoval: {"no", "no", "auth_admin"},
 	} {
 		if defaults[action] != want {
 			t.Fatalf("%s is declared as %v, want %v", action, defaults[action], want)
@@ -1524,5 +1529,463 @@ func TestMigratingAV1PolicyIsNotAWidening(t *testing.T) {
 	}
 	if err = ledger.Record(offered); err != nil {
 		t.Fatalf("the ledger refused the migrated policy: %v", err)
+	}
+}
+
+// Everything below is the tombstone: what a removal leaves where the record
+// used to be, and why forgetting one's own anchor buys nothing.
+//
+// Forgetting is the one mutation an account may make to its own record without
+// being asked anything, so a floor that a removal took with it would be a floor
+// anybody could step over for free.
+
+// The counters survive the record they were reached through. A generation and a
+// publisher generation this application has already left stay left, and a
+// signature it has already had stays had.
+func TestForgettingAnAnchorKeepsTheFloorItHadReached(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	origin := testAnchor().Origin
+	acceptSignaturesOf(t, origin)
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 4), Policy: &policy, Signature: testSignedState(5)}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := ledger.Recorded(held.UID, origin); err != nil || found {
+		t.Fatalf("the record survived its removal: %v, %v", found, err)
+	}
+
+	older := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 3), Policy: &policy, Signature: testSignedState(5)}
+	if err := ledger.Record(older); !errors.Is(err, ErrAnchorDowngrade) {
+		t.Fatalf("got %v, want a generation the application had left to stay left", err)
+	}
+	unsigned := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 5), Policy: &policy}
+	if err := ledger.Record(unsigned); !errors.Is(err, ErrSignatureLost) {
+		t.Fatalf("got %v, want a forgotten signature to still be a signature on record", err)
+	}
+	replay := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 5), Policy: &policy, Signature: testSignedState(4)}
+	if err := ledger.Record(replay); !errors.Is(err, ErrSignatureDowngrade) {
+		t.Fatalf("got %v, want the replay of a signed state the publisher replaced to be refused", err)
+	}
+	if _, found, err := ledger.Recorded(held.UID, origin); err != nil || found {
+		t.Fatalf("a refused enrolment reached the ledger: %v, %v", found, err)
+	}
+
+	// Installing the application again is the ordinary thing to do after
+	// removing it, and it is open: only what goes backwards is refused.
+	again := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 5), Policy: &policy, Signature: testSignedState(5)}
+	if err := ledger.Record(again); err != nil {
+		t.Fatalf("installing a forgotten application again was refused: %v", err)
+	}
+}
+
+// A removal is not a way of becoming a first install again. What the owner of
+// the machine was going to be asked about is still what they are asked about.
+func TestForgettingAnAnchorDoesNotMakeAWideningFree(t *testing.T) {
+	narrow := types.Override{SocketWayland: true}
+	wider := types.Override{SocketWayland: true, FsHostHome: true}
+	held := Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("a1", 32), 2), Policy: &narrow}
+
+	for name, offered := range map[string]struct {
+		enrolment Enrolment
+		want      string
+	}{
+		"a widening after the removal": {
+			enrolment: Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("d4", 32), 3), Policy: &wider},
+			want:      ActionWidenAnchor,
+		},
+		"a widening nobody stated the policy of": {
+			enrolment: Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("d4", 32), 3)},
+			want:      ActionWidenAnchor,
+		},
+		"a generation that goes backwards": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("d4", 32), 1), Policy: &narrow},
+			want:      ActionWidenAnchor,
+		},
+		"the same policy again": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("d4", 32), 3), Policy: &narrow},
+			want:      ActionEnrolAnchor,
+		},
+	} {
+		ledger := testAnchorLedger(t)
+		if err := ledger.Record(held); err != nil {
+			t.Fatal(err)
+		}
+		if err := ledger.Forget(held.UID, held.Origin); err != nil {
+			t.Fatal(err)
+		}
+		action, err := ledger.authorizationFor(offered.enrolment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action != offered.want {
+			t.Fatalf("%s asks for %s, want %s", name, action, offered.want)
+		}
+	}
+}
+
+// Forgetting an application twice must not walk the floor back down, and the
+// second removal has no record left to take a floor from at all.
+func TestForgettingAnAnchorTwiceKeepsTheFirstFloor(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 6), Policy: &policy}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := ledger.Forget(held.UID, held.Origin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	older := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 5), Policy: &policy}
+	if err := ledger.Record(older); !errors.Is(err, ErrAnchorDowngrade) {
+		t.Fatalf("got %v, want the second removal to leave the first floor standing", err)
+	}
+}
+
+// A tombstone is a file of the ledger's own and never one an origin can name,
+// or forgetting one application would rewrite the record of another.
+func TestATombstoneCannotBeMistakenForARecord(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	uid := uint32(os.Getuid())
+	tombstone, err := ledger.tombstonePath(uid, "github.com/acme/tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{"github.com/acme/tool", "github.com/acme/tool.forgotten", "github.com/acme/tool-forgotten"} {
+		record, err := ledger.anchorPath(uid, origin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record == tombstone {
+			t.Fatalf("the record of %s is the tombstone of another application", origin)
+		}
+	}
+}
+
+// The tombstone is written where nobody but the ledger's owner can reach it,
+// because it decides the same refusals the record it replaced decided.
+func TestATombstoneAnybodyCanWriteIsNotRead(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 6), Policy: &policy}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, held.Origin); err != nil {
+		t.Fatal(err)
+	}
+	path, err := ledger.tombstonePath(held.UID, held.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ledger.Forgotten(held.UID, held.Origin); err == nil {
+		t.Fatal("a tombstone anybody may write was read as the ledger's own")
+	}
+}
+
+// A tombstone states a policy for the same reason a record does, and it is
+// believed for the same reason: because it hashes to the root it is filed
+// under. One that states a narrow policy under the root of a wide one would
+// answer the widening question with a policy nobody ever enrolled.
+func TestATombstonePolicyIsBelievedOnlyBecauseItHashesToItsRoot(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	narrow := types.Override{SocketWayland: true}
+	wider := types.Override{SocketWayland: true, FsHostHome: true}
+	held := Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("a1", 32), 2), Policy: &wider}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, held.Origin); err != nil {
+		t.Fatal(err)
+	}
+	path, err := ledger.tombstonePath(held.UID, held.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buried, entombed, err := ledger.Forgotten(held.UID, held.Origin)
+	if err != nil || !entombed {
+		t.Fatalf("the removal left no tombstone to rewrite: %v, %v", entombed, err)
+	}
+	buried.Policy = &narrow
+	data, err := json.Marshal(buried)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ledger.Forgotten(held.UID, held.Origin); err == nil {
+		t.Fatal("a tombstone whose policy does not hash to its root was read")
+	}
+}
+
+// A floor outlives the evidence it was derived from, and that is the whole
+// reason it is a floor. It also means an origin can be refused for something no
+// installation of it can ever produce again, which is the state this walks: a
+// signed application, removed, and a publisher that has since stopped signing.
+// Nothing an installer does answers that refusal, and clearing the removal does.
+func TestClearingARemovalIsTheWayOutOfARefusalItOutlived(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	origin := testAnchor().Origin
+	acceptSignaturesOf(t, origin)
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 4), Policy: &policy, Signature: testSignedState(5)}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+
+	// The refusal the user meets: the publisher stopped signing, so the
+	// installation on disk can present nothing, and the ledger remembers that
+	// one was presented once.
+	unsigned := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 5), Policy: &policy}
+	if err := ledger.Record(unsigned); !errors.Is(err, ErrSignatureLost) {
+		t.Fatalf("got %v, want the removal to still refuse an unsigned enrolment", err)
+	}
+
+	if err := ledger.ClearForgotten(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	if _, entombed, err := ledger.Forgotten(held.UID, origin); err != nil || entombed {
+		t.Fatalf("the removal is still in the ledger: %v, %v", entombed, err)
+	}
+	if err := ledger.Record(unsigned); err != nil {
+		t.Fatalf("the origin is still refused after its removal was cleared: %v", err)
+	}
+	// And it starts again from nothing, which is what was given up: the floor
+	// is gone rather than lowered by one.
+	first := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 1), Policy: &policy}
+	if err := ledger.ClearForgotten(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.ClearForgotten(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Record(first); err != nil {
+		t.Fatalf("a cleared removal still holds a generation back: %v", err)
+	}
+}
+
+// Clearing a removal gives up what a removal kept and never what a launch is
+// recognised by. The two live side by side and an origin can hold both.
+func TestClearingARemovalLeavesTheRecordAlone(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	origin := testAnchor().Origin
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 3), Policy: &policy}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	again := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("d4", 32), 4), Policy: &policy}
+	if err := ledger.Record(again); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.ClearForgotten(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	recorded, found, err := ledger.Recorded(held.UID, origin)
+	if err != nil || !found {
+		t.Fatalf("the record went with the removal it outlived: %v, %v", found, err)
+	}
+	if recorded.PackageRoot != again.PackageRoot {
+		t.Fatalf("the ledger holds %q, want the record that was written over the removal", recorded.PackageRoot)
+	}
+	// The record still orders what comes next. Only the removal was given up.
+	older := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("e5", 32), 3), Policy: &policy}
+	if err := ledger.Record(older); !errors.Is(err, ErrAnchorDowngrade) {
+		t.Fatalf("got %v, want the record to still refuse a generation it left", err)
+	}
+}
+
+// Clearing a removal that is not there is the state a user reaches by typing
+// the wrong origin, or by clearing twice. It is nothing to do, not a failure.
+func TestClearingARemovalThatIsNotThereIsNotAFailure(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	if err := ledger.ClearForgotten(uint32(os.Getuid()), testAnchor().Origin); err != nil {
+		t.Fatalf("clearing a removal nothing left behind failed: %v", err)
+	}
+}
+
+// Every other action here has a cheaper form for one's own account. This one
+// does not, and that is the decision: what is given up is the same protection
+// whoever the ledger was keeping it for.
+func TestClearingARemovalIsAlwaysTheOwnerOfTheMachinesCall(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	origin := testAnchor().Origin
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 3), Policy: &policy}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+
+	denied := &testAuthorizer{err: errors.New("denied")}
+	refusing := testAnchorService(ledger, denied)
+	if dbusErr := refusing.ClearForgottenAnchor(":1.20", held.UID, origin); dbusErr == nil {
+		t.Fatal("the authorization denial was ignored")
+	}
+	if denied.action != ActionClearRemoval {
+		t.Fatalf("clearing a removal asked for %s, want %s", denied.action, ActionClearRemoval)
+	}
+	if _, entombed, err := ledger.Forgotten(held.UID, origin); err != nil || !entombed {
+		t.Fatalf("a denied clearance took the floor away anyway: %v, %v", entombed, err)
+	}
+
+	authorizer := &testAuthorizer{}
+	clearing := testAnchorService(ledger, authorizer)
+	if dbusErr := clearing.ClearForgottenAnchor(":1.20", held.UID, origin); dbusErr != nil {
+		t.Fatal(dbusErr)
+	}
+	// The account it is about is the caller's own, which is the case every
+	// other action here softens. This one does not soften it.
+	if authorizer.action != ActionClearRemoval || authorizer.details["package-origin"] != origin {
+		t.Fatalf("unexpected clearance request: %s %#v", authorizer.action, authorizer.details)
+	}
+	if _, entombed, err := ledger.Forgotten(held.UID, origin); err != nil || entombed {
+		t.Fatalf("the authorized clearance left the floor standing: %v, %v", entombed, err)
+	}
+}
+
+// A host with no system bus still has to be able to answer this, or the way out
+// exists only on a desktop. Over the socket the caller is already root, which
+// is the same guarantee the bus reaches through polkit.
+func TestClearingARemovalTravelsTheSocket(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true}
+	origin := testAnchor().Origin
+	held := Enrolment{Anchor: anchorOver(t, policy, strings.Repeat("a1", 32), 3), Policy: &policy}
+	if err := ledger.Record(held); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Forget(held.UID, origin); err != nil {
+		t.Fatal(err)
+	}
+	path := startAuthoritySocket(t, socketService{
+		Anchors:   ledger,
+		Authorize: func(*unix.Ucred) error { return nil },
+	})
+	if err := requestOverSocket(path, socketRequest{Action: anchorClearAction, Origin: origin, UID: held.UID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, entombed, err := ledger.Forgotten(held.UID, origin); err != nil || entombed {
+		t.Fatalf("the removal survived being cleared over the socket: %v, %v", entombed, err)
+	}
+	if err := requestOverSocket(path, socketRequest{Action: anchorClearAction, Origin: "../../etc"}); err == nil {
+		t.Fatal("an origin that is a path was cleared")
+	}
+}
+
+// AsksTheOwner is the same question the authority asks itself, answered where
+// nobody is prompted by it. A caller that reads it wrong either asks for a
+// password it did not need or offers an enrolment that meets one, so it is
+// pinned against the authorization the ledger actually decides.
+func TestAsksTheOwnerAnswersWhatTheLedgerWouldAsk(t *testing.T) {
+	narrow := types.Override{SocketWayland: true}
+	wider := types.Override{SocketWayland: true, FsHostHome: true}
+	held := Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("a1", 32), 2), Policy: &narrow}
+
+	for name, offered := range map[string]struct {
+		enrolment Enrolment
+		forget    bool
+		want      bool
+	}{
+		"the same policy over the record": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("d4", 32), 3), Policy: &narrow},
+		},
+		"a narrowing over the record": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("d4", 32), 3), Policy: &narrow},
+		},
+		"a widening over the record": {
+			enrolment: Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("d4", 32), 3), Policy: &wider},
+			want:      true,
+		},
+		"the same policy over a removal": {
+			enrolment: Enrolment{Anchor: anchorOver(t, narrow, strings.Repeat("d4", 32), 3), Policy: &narrow},
+			forget:    true,
+		},
+		"a widening over a removal": {
+			enrolment: Enrolment{Anchor: anchorOver(t, wider, strings.Repeat("d4", 32), 3), Policy: &wider},
+			forget:    true,
+			want:      true,
+		},
+	} {
+		ledger := testAnchorLedger(t)
+		if err := ledger.Record(held); err != nil {
+			t.Fatal(err)
+		}
+		if offered.forget {
+			if err := ledger.Forget(held.UID, held.Origin); err != nil {
+				t.Fatal(err)
+			}
+		}
+		asks, err := ledger.AsksTheOwner(offered.enrolment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		action, err := ledger.authorizationFor(offered.enrolment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if asks != offered.want || asks != (action == ActionWidenAnchor) {
+			t.Fatalf("%s reads as asking %v, want %v, and the ledger asks for %s", name, asks, offered.want, action)
+		}
+	}
+}
+
+// recordingBusObject is the bus as the client half sees it: something a method
+// name is spoken to. Only Call is answered, because only Call is the thing
+// being pinned.
+type recordingBusObject struct {
+	dbus.BusObject
+	method string
+}
+
+func (o *recordingBusObject) Call(method string, _ dbus.Flags, _ ...any) *dbus.Call {
+	o.method = method
+	return &dbus.Call{}
+}
+
+// The client and the server are the same program, so a method the client calls
+// and the server does not serve is a call that fails on hosts with a system bus
+// and nowhere else. That is the one class of mistake no other test here catches:
+// the socket path would keep working throughout.
+func TestEveryAnchorCallNamesAMethodTheServiceServes(t *testing.T) {
+	served := map[string]bool{}
+	for _, method := range introspect.Methods(&Service{}) {
+		served[method.Name] = true
+	}
+	anchor := testAnchor()
+	for name, message := range map[string]socketRequest{
+		"an enrolment":          {Action: anchorEnrolAction, Anchor: &anchor},
+		"a removal":             {Action: anchorForgetAction, UID: anchor.UID, Origin: anchor.Origin},
+		"clearing a removal":    {Action: anchorClearAction, UID: anchor.UID, Origin: anchor.Origin},
+		"the enforcement level": {Action: enforcementSetAction, Level: string(EnforcementWarn)},
+	} {
+		object := &recordingBusObject{}
+		if _, err := integrityCall(object, message); err != nil {
+			t.Fatalf("%s could not be put on the bus: %v", name, err)
+		}
+		method, isOurs := strings.CutPrefix(object.method, InterfaceName+".")
+		if !isOurs || !served[method] {
+			t.Fatalf("%s calls %q, which the authority does not serve", name, object.method)
+		}
 	}
 }

@@ -22,8 +22,8 @@ import (
 )
 
 type SystemCmd struct {
-	Action string `arg:"action" help:"Action: setup, remove, status, enforcement, set-enforcement, signatures, set-signatures, trust, set-trust, ceiling, set-ceiling, explain, register-session or remove-session"`
-	Target string `arg:"target" help:"Enforcement level for set-enforcement, signature policy for set-signatures, policy file for set-trust and set-ceiling, installed package origin for explain"`
+	Action string `arg:"action" help:"Action: setup, remove, status, enforcement, set-enforcement, signatures, set-signatures, trust, set-trust, ceiling, set-ceiling, explain, clear-removal, register-session or remove-session"`
+	Target string `arg:"target" help:"Enforcement level for set-enforcement, signature policy for set-signatures, policy file for set-trust and set-ceiling, package origin for explain and clear-removal"`
 
 	ID          string `cli:"id" help:"Session identifier for the session actions"`
 	Origin      string `cli:"origin" help:"Package origin for the session actions"`
@@ -81,6 +81,8 @@ func (c *SystemCmd) Run() error {
 		return c.setSignaturePolicy()
 	case "explain":
 		return c.explain()
+	case "clear-removal":
+		return c.clearRemoval()
 	case "register-session", "remove-session":
 		// These carry a step already validated against the store of the user
 		// who asked for it, so they only ever run through the escalation.
@@ -297,6 +299,73 @@ func enforcementLevel(value string) (systemauthority.EnforcementLevel, error) {
 		return systemauthority.EnforcementRefuse, nil
 	}
 	return "", fmt.Errorf("unsupported enforcement level %q: use off, warn or refuse", value)
+}
+
+// clearRemoval gives up what the removal of an application left in the ledger.
+//
+// It is the way out of the one refusal an ordinary user cannot answer. The
+// ledger keeps the generation an application had reached and whether a
+// publisher had ever answered for it, so that removing it and installing
+// something older or unsigned in its place is not a way past either rule. That
+// is right, and it also outlives what it was derived from: a publisher that
+// stops signing, a key that rotated, a repository that changed hands. From then
+// on every install of that origin is refused for a signature no installation of
+// it can produce, and nothing an installer does answers that. This does, and it
+// asks for an administrator password, because what it gives up is a protection
+// every account on the machine was under.
+//
+// It takes the origin as it was printed in the refusal, and it does not require
+// the application to be installed: the state this exists for is one where the
+// installation was refused enrolment, and it is just as reachable with nothing
+// on disk at all.
+func (c *SystemCmd) clearRemoval() error {
+	if err := refuseSudoedStore(); err != nil {
+		return err
+	}
+	if c.Target == "" {
+		return errors.New("name the application whose removal is to be cleared: cpak system clear-removal ORIGIN")
+	}
+	cp, err := cpak.NewCpak()
+	if err != nil {
+		return err
+	}
+	origin, err := cp.ResolveOrigin(c.Target)
+	if err != nil {
+		return err
+	}
+	uid := uint32(os.Getuid())
+	buried, entombed, err := systemauthority.ForgottenAnchor(uid, origin)
+	if err != nil {
+		return fmt.Errorf("read what the removal of %s left behind: %w", origin, err)
+	}
+	if !entombed {
+		c.Logger.Info("The removal of %s left nothing in the ledger: there is nothing to clear.", origin)
+		c.Logger.Info("An installation refused for something other than a removal is explained by cpak system explain %s.", origin)
+		return nil
+	}
+	// Said before anybody is asked to authenticate, because an administrator
+	// typing a password is entitled to know what it buys, and this one buys a
+	// protection being given up rather than a permission being granted.
+	c.reportRemovalFloor(origin, buried)
+	if err := systemauthority.ClearForgottenAnchor(uid, origin); err != nil {
+		return fmt.Errorf("clear what the removal of %s left behind: %w", origin, err)
+	}
+	c.Logger.Success("The ledger holds nothing from the removal of %s any more. Install it again to enrol it.", origin)
+	return nil
+}
+
+// reportRemovalFloor says what is about to be given up, in the terms the next
+// install will meet it in.
+func (c *SystemCmd) reportRemovalFloor(origin string, buried systemauthority.Tombstone) {
+	c.Logger.Warning("Clearing this gives up what the ledger kept when %s was removed:", origin)
+	c.Logger.Info("  generation %d, which every enrolment of it has to stay above", buried.Generation)
+	if buried.Signed {
+		c.Logger.Info("  a publisher signature at generation %d, which every enrolment of it has to carry and not go below", buried.SignatureGeneration)
+	} else {
+		c.Logger.Info("  no publisher signature: nothing had ever signed this origin when it was removed")
+	}
+	c.Logger.Info("Once it is cleared, installing %s again can enrol it at any generation, under any policy and with no publisher signature at all, and none of that will be put to anybody. What it cannot do is reach past this host's trust policy, its ceiling or its signature policy, which decide separately and are not touched by this.", origin)
+	c.Logger.Info("An anchor recorded since the removal is left exactly as it is: this gives up what a removal kept, never what a launch is recognised by.")
 }
 
 // explain puts what the ledger holds for one application next to what a launch

@@ -164,7 +164,7 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 			return err
 		}
 		return s.Registry.Remove(message.ID, message.Origin)
-	case anchorEnrolAction, anchorForgetAction:
+	case anchorEnrolAction, anchorForgetAction, anchorClearAction:
 		return applyAnchor(s.Anchors, message)
 	case enforcementSetAction:
 		return applyEnforcement(s.Enforcement, message)

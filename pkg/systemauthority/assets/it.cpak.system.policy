@@ -82,6 +82,23 @@
     </defaults>
   </action>
 
+  <!-- Giving up what the removal of an application left in the ledger: the
+       generation it had reached, and whether a publisher had ever answered for
+       it. That floor is what stops a removal being a way of installing
+       something older, or unsigned, in its place, so handing it back is the
+       owner of the machine's decision and never the ordinary course of
+       installing software. It is asked the same way for one's own account as
+       for anybody else's, because what is given up is the same either way. -->
+  <action id="it.cpak.system.clear-removal">
+    <description>Clear what the removal of a cpak application left in the integrity ledger</description>
+    <message>Authentication is required to let this cpak application be installed again with no memory of what its removal left behind</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
   <!-- Whether this host enrols packages no publisher signed. Turning it on
        stops software installing into the ledger for every account on the
        machine, and turning it off takes that protection away again, so both

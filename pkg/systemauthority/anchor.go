@@ -43,8 +43,25 @@ const (
 	// behalf is.
 	ActionForgetAnchorOther = "it.cpak.system.forget-anchor-other"
 
+	// Giving up what a removal left behind is the owner of the machine's call
+	// whoever the ledger was keeping it for, and it is the only action here
+	// with no cheaper form for one's own account. Forgetting an anchor leaves
+	// an application with less than it had; this hands back a floor that was
+	// standing against a generation going backwards, against a signature being
+	// dropped and against a widening, all at once.
+	//
+	// It exists because a floor can outlive what it was derived from. A
+	// publisher that stops signing, a key that rotated, a repository that
+	// changed hands: the tombstone still remembers that somebody once answered
+	// for this origin, and nothing that happens afterwards makes that
+	// rememberable fact false. Without a way to give it up, an origin enrolled
+	// signed and then removed is refused at every install from then on, and a
+	// refusal with no way out is not a protection anybody can keep.
+	ActionClearRemoval = "it.cpak.system.clear-removal"
+
 	anchorEnrolAction  = "enrol"
 	anchorForgetAction = "forget"
+	anchorClearAction  = "clear-removal"
 
 	// A policy travels beside the anchor its policy root was taken over, so a
 	// request is the size of one anchor plus one policy.
@@ -58,6 +75,14 @@ const (
 	// anchorSizeLimit bounds the whole record: the anchor, the policy and the
 	// bundle together.
 	anchorSizeLimit = 512 << 10
+
+	// forgottenSuffix names the tombstone of an application beside the record
+	// it replaces. An origin part is drawn from [a-z0-9._-] and the parts are
+	// joined with a colon, so a plus sign is a character no origin can put in a
+	// file name and no record can ever be mistaken for a tombstone or the other
+	// way round. Nothing walks this directory, so a reader written before
+	// tombstones existed opens the files it always opened and finds no more.
+	forgottenSuffix = "+forgotten.json"
 )
 
 var anchorRootPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -119,6 +144,55 @@ type Enrolment struct {
 type SignedState struct {
 	State  signature.State `json:"state"`
 	Bundle []byte          `json:"bundle"`
+}
+
+// Tombstone is what a forgotten application leaves behind: how far it had come
+// by the time its record was removed. It is the anti-rollback floor on its own,
+// standing where the record used to, so that removing a record gives back no
+// generation, no signed state and no policy the owner of the machine had
+// already been asked about.
+//
+// It holds what those questions are answered from and nothing else. There is no
+// bundle here and no launch root, because a tombstone recognises no launch: an
+// application with only a tombstone is unenrolled, which is what forgetting it
+// was for.
+type Tombstone struct {
+	UID        uint32 `json:"uid"`
+	Origin     string `json:"origin"`
+	Generation uint64 `json:"generation"`
+
+	// PolicyRoot and Policy are kept for the reason the record keeps them: two
+	// hashes cannot be ordered against each other, so without the policy a
+	// narrowing that went missing along with the record would be a change
+	// nobody can order and would be put to the owner every time.
+	PolicyRoot string          `json:"policy_root"`
+	Policy     *types.Override `json:"policy,omitempty"`
+
+	// Signed says a publisher had answered for this application, which is the
+	// fact the record was the only place of. SignatureGeneration says which
+	// signed state it had reached. Together they are what stops a removal from
+	// turning a signed application into one anybody may enrol unsigned, or at
+	// a release the publisher has since replaced.
+	Signed              bool   `json:"signed"`
+	SignatureGeneration uint64 `json:"signature_generation,omitempty"`
+}
+
+// raisedBy keeps the higher of every half, and the policy of whichever of the
+// two came later. Nothing about a tombstone may ever move backwards, so the two
+// are merged rather than one replacing the other.
+func (t Tombstone) raisedBy(other Tombstone) Tombstone {
+	if other.Generation > t.Generation {
+		t.Generation = other.Generation
+		t.PolicyRoot = other.PolicyRoot
+		t.Policy = other.Policy
+	}
+	if other.Signed {
+		t.Signed = true
+	}
+	if other.SignatureGeneration > t.SignatureGeneration {
+		t.SignatureGeneration = other.SignatureGeneration
+	}
+	return t
 }
 
 // Signer is who signed this enrolment, checked here and now rather than read
@@ -238,6 +312,19 @@ func (l AnchorLedger) Record(enrolment Enrolment) error {
 			return err
 		}
 	}
+	// The record is not the only thing an enrolment is ordered against. What a
+	// removal left behind is ordered against too, and both have to be
+	// satisfied, so a floor is never lowered by forgetting the record it was
+	// derived from.
+	buried, entombed, err := l.Forgotten(enrolment.UID, enrolment.Origin)
+	if err != nil {
+		return err
+	}
+	if entombed {
+		if err := ordersAfterRemoval(buried, enrolment); err != nil {
+			return err
+		}
+	}
 	// A record that states no policy keeps the one already held for the same
 	// policy root: what was proven once stays proven, and dropping it would
 	// make the next narrowing look like a change nobody can order.
@@ -285,6 +372,40 @@ func ordersAfter(recorded, offered Enrolment) error {
 	return nil
 }
 
+// ordersAfterRemoval asks the same three questions of what a removal left
+// behind. They are the same questions because they are about the same
+// counters: a tombstone exists so that forgetting an anchor hands back neither
+// the generation, nor the signed state, nor the signature the application had
+// already left. It says where they were forgotten rather than what is
+// recorded, because there is nothing recorded to speak of.
+func ordersAfterRemoval(buried Tombstone, offered Enrolment) error {
+	if offered.Generation < buried.Generation {
+		return fmt.Errorf("%w: forgotten at %d, offered %d", ErrAnchorDowngrade, buried.Generation, offered.Generation)
+	}
+	if !buried.Signed {
+		return nil
+	}
+	if offered.Signature == nil {
+		return fmt.Errorf("%w: %s", ErrSignatureLost, offered.Origin)
+	}
+	if offered.Signature.State.Generation < buried.SignatureGeneration {
+		return fmt.Errorf("%w: forgotten at %d, offered %d", ErrSignatureDowngrade,
+			buried.SignatureGeneration, offered.Signature.State.Generation)
+	}
+	return nil
+}
+
+// Forget takes the record away and leaves a tombstone where it was. Removing
+// the record is the whole point of forgetting, and it is also the only thing
+// the rules against going backwards are derived from: with nothing left in its
+// place, a removal turns the next enrolment into a first one, with a lower
+// generation, a lost signature and a widening all reading as the ordinary
+// course of installing software. That is a permission and not a cleanup, and
+// forgetting one's own anchor asks for none.
+//
+// The tombstone is written before the record is unlinked. A removal that stops
+// halfway then leaves the floor standing twice over, which costs nothing,
+// where the other order would leave it standing not at all.
 func (l AnchorLedger) Forget(uid uint32, origin string) error {
 	path, err := l.anchorPath(uid, origin)
 	if err != nil {
@@ -293,10 +414,135 @@ func (l AnchorLedger) Forget(uid uint32, origin string) error {
 	if present, err := l.trustedDirectories(path); err != nil || !present {
 		return err
 	}
+	recorded, found, err := l.Recorded(uid, origin)
+	if err != nil {
+		return err
+	}
+	if found {
+		if err := l.entomb(recorded); err != nil {
+			return err
+		}
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove enrolled anchor: %w", err)
 	}
 	return nil
+}
+
+// entomb writes what the removal leaves behind. It never lowers a tombstone
+// that is already there: a record cannot be enrolled below the one it was
+// enrolled over, but nothing is gained by trusting that here, and forgetting
+// an application twice must not walk the floor back down either.
+func (l AnchorLedger) entomb(recorded Enrolment) error {
+	buried := Tombstone{
+		UID:        recorded.UID,
+		Origin:     recorded.Origin,
+		Generation: recorded.Generation,
+		PolicyRoot: recorded.PolicyRoot,
+		Policy:     recorded.Policy,
+	}
+	if recorded.Signature != nil {
+		buried.Signed = true
+		buried.SignatureGeneration = recorded.Signature.State.Generation
+	}
+	standing, entombed, err := l.Forgotten(recorded.UID, recorded.Origin)
+	if err != nil {
+		return err
+	}
+	if entombed {
+		buried = buried.raisedBy(standing)
+	}
+	path, err := l.tombstonePath(recorded.UID, recorded.Origin)
+	if err != nil {
+		return err
+	}
+	if err := ensureDirectory(filepath.Dir(path), l.OwnerUID); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(buried, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode tombstone: %w", err)
+	}
+	if err := writeAtomic(path, append(data, '\n'), 0644); err != nil {
+		return fmt.Errorf("write tombstone: %w", err)
+	}
+	return nil
+}
+
+// Forgotten reads what a removal left behind. It is read the way the record it
+// stands in for is read, from a file of the ledger's own owner that nobody else
+// may write, because it decides the same refusals that record decided.
+func (l AnchorLedger) Forgotten(uid uint32, origin string) (Tombstone, bool, error) {
+	path, err := l.tombstonePath(uid, origin)
+	if err != nil {
+		return Tombstone{}, false, err
+	}
+	present, err := l.trustedDirectories(path)
+	if err != nil || !present {
+		return Tombstone{}, false, err
+	}
+	data, found, err := readTrusted(path, l.OwnerUID, anchorSizeLimit, "forgotten anchor")
+	if err != nil || !found {
+		return Tombstone{}, false, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	buried := Tombstone{}
+	if err := decoder.Decode(&buried); err != nil {
+		return Tombstone{}, false, fmt.Errorf("decode forgotten anchor: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return Tombstone{}, false, errors.New("forgotten anchor contains multiple JSON values")
+	}
+	if buried.UID != uid || buried.Origin != origin {
+		return Tombstone{}, false, errors.New("forgotten anchor does not match its file")
+	}
+	if err := validateTombstone(buried); err != nil {
+		return Tombstone{}, false, err
+	}
+	return buried, true, nil
+}
+
+// ClearForgotten takes away what a removal left behind, and only that. A record
+// written over the tombstone since is left exactly where it is: this gives up
+// the floor a removal kept, never the enrolment a launch is recognised by.
+//
+// It is the way out of a refusal that has outlived the evidence it was derived
+// from. The floor is right and it is also permanent, which is a combination
+// that can only be undone by somebody: an origin that was enrolled signed, then
+// removed, then published unsigned meets ErrSignatureLost at every install from
+// then on, and nothing an installer does can answer it. What answers it is the
+// owner of the machine deciding that this origin starts again from nothing.
+func (l AnchorLedger) ClearForgotten(uid uint32, origin string) error {
+	path, err := l.tombstonePath(uid, origin)
+	if err != nil {
+		return err
+	}
+	if present, err := l.trustedDirectories(path); err != nil || !present {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clear what the removal of %s left behind: %w", origin, err)
+	}
+	return nil
+}
+
+// AsksTheOwner says whether an enrolment offered now would be put to the owner
+// of the machine instead of being recorded as the ordinary course of installing
+// software. It reads the ledger, which anybody may read, and it decides
+// nothing: the authority asks itself the same question when the enrolment
+// actually arrives, and that answer is the one that counts.
+//
+// It is here so that a caller can decline to ask at all. Not every moment is a
+// moment to put a password prompt in front of somebody, and a removal is
+// emphatically not one: a caller that can tell beforehand can leave the
+// enrolment unoffered and say what it did instead.
+func (l AnchorLedger) AsksTheOwner(enrolment Enrolment) (bool, error) {
+	action, err := l.authorizationFor(enrolment)
+	if err != nil {
+		return false, err
+	}
+	return action != ActionEnrolAnchor, nil
 }
 
 // admitSignature is where a signature stops being the caller's word.
@@ -346,23 +592,42 @@ func (l AnchorLedger) authorizationFor(enrolment Enrolment) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if found {
+		return authorizationAgainst(recorded.Generation, recorded.PolicyRoot, recorded.Policy, enrolment), nil
+	}
+	buried, entombed, err := l.Forgotten(enrolment.UID, enrolment.Origin)
+	if err != nil {
+		return "", err
+	}
+	// Forgetting an application is not a way of becoming a first install
+	// again. The tombstone says what it had already come to, so a re-enrolment
+	// is measured against that, and a narrowing that went missing with the
+	// record still costs a widening.
+	if entombed {
+		return authorizationAgainst(buried.Generation, buried.PolicyRoot, buried.Policy, enrolment), nil
+	}
 	// Nothing is being replaced, so nothing can be widened. This is trust on
 	// first install: what is on disk is recorded as what the application is.
-	if !found {
-		return ActionEnrolAnchor, nil
-	}
+	return ActionEnrolAnchor, nil
+}
+
+// authorizationAgainst is the comparison itself, asked of whatever the
+// application had already come to: the record still in the ledger, or the
+// tombstone a removal left in its place. Both answer the same two questions,
+// so both get the same answers out of them.
+func authorizationAgainst(generation uint64, policyRoot string, policy *types.Override, enrolment Enrolment) string {
 	// A lower generation puts the application back to something it already
 	// left, and what it goes back to is not ordered against what is recorded.
-	if enrolment.Generation < recorded.Generation {
-		return ActionWidenAnchor, nil
+	if enrolment.Generation < generation {
+		return ActionWidenAnchor
 	}
 	// The package root may change freely as long as the policy does not: that
 	// is what an update is.
-	if enrolment.PolicyRoot == recorded.PolicyRoot {
-		return ActionEnrolAnchor, nil
+	if enrolment.PolicyRoot == policyRoot {
+		return ActionEnrolAnchor
 	}
-	if recorded.Policy != nil && enrolment.Policy != nil && integrity.Restricts(*recorded.Policy, *enrolment.Policy) {
-		return ActionEnrolAnchor, nil
+	if policy != nil && enrolment.Policy != nil && integrity.Restricts(*policy, *enrolment.Policy) {
+		return ActionEnrolAnchor
 	}
 	// A widening is the owner of the machine's call and a publisher cannot
 	// make it for them, however recently it signed. What a publisher signs is
@@ -370,7 +635,7 @@ func (l AnchorLedger) authorizationFor(enrolment Enrolment) (string, error) {
 	// being enrolled: that policy is the user's own override whenever they set
 	// one, so a counter moving forward over an unchanged manifest would be
 	// read as consent to a widening the publisher never saw.
-	return ActionWidenAnchor, nil
+	return ActionWidenAnchor
 }
 
 // trustedDirectories proves the ledger root along with the directory holding
@@ -390,18 +655,31 @@ func (l AnchorLedger) trustedDirectories(path string) (bool, error) {
 	return true, nil
 }
 
-// anchorPath keeps the origin a package coordinate and never a path: it is
+func (l AnchorLedger) anchorPath(uid uint32, origin string) (string, error) {
+	return l.recordPath(uid, origin, ".json")
+}
+
+// tombstonePath is where the floor of a forgotten application is kept. It lies
+// beside the record it replaces rather than in a tree of its own, so the proof
+// the ledger already does of the directory covers it as well, and it is told
+// from a record by a suffix built out of a character an origin may not contain.
+func (l AnchorLedger) tombstonePath(uid uint32, origin string) (string, error) {
+	return l.recordPath(uid, origin, forgottenSuffix)
+}
+
+// recordPath keeps the origin a package coordinate and never a path: it is
 // validated first, then flattened with a separator no origin part may contain,
 // so two origins can never claim the same file and none of them can name a
-// directory of its own.
-func (l AnchorLedger) anchorPath(uid uint32, origin string) (string, error) {
+// directory of its own. The suffix is subject to the same rule, or one origin's
+// tombstone would be another origin's record.
+func (l AnchorLedger) recordPath(uid uint32, origin, suffix string) (string, error) {
 	if !filepath.IsAbs(l.Directory) {
 		return "", errors.New("system authority anchor path must be absolute")
 	}
 	if err := validateOrigin(origin); err != nil {
 		return "", err
 	}
-	name := strings.ReplaceAll(origin, "/", ":") + ".json"
+	name := strings.ReplaceAll(origin, "/", ":") + suffix
 	if name != filepath.Base(name) {
 		return "", errors.New("invalid package origin")
 	}
@@ -480,6 +758,31 @@ func validateEnrolment(enrolment Enrolment) error {
 	}
 	if root != enrolment.PolicyRoot {
 		return errors.New("enrolment policy does not hash to its policy root")
+	}
+	return nil
+}
+
+// validateTombstone stops the policy of a forgotten application from being
+// believed for any reason other than the one the record's policy is believed
+// for, that it hashes to the policy root it is filed under. A tombstone stating
+// a narrow policy under a wide root would answer the widening question with
+// something nobody ever enrolled.
+func validateTombstone(buried Tombstone) error {
+	if err := validateOrigin(buried.Origin); err != nil {
+		return err
+	}
+	if !anchorRootPattern.MatchString(buried.PolicyRoot) {
+		return errors.New("invalid forgotten anchor policy root")
+	}
+	if buried.Policy == nil {
+		return nil
+	}
+	root, err := integrity.PolicyRoot(*buried.Policy)
+	if err != nil {
+		return fmt.Errorf("derive the policy root of the forgotten anchor: %w", err)
+	}
+	if root != buried.PolicyRoot {
+		return errors.New("forgotten anchor policy does not hash to its policy root")
 	}
 	return nil
 }
@@ -740,6 +1043,43 @@ func RecordedAnchor(uid uint32, origin string) (Enrolment, bool, error) {
 	return DefaultAnchorLedger().Recorded(uid, origin)
 }
 
+// ForgottenAnchor answers with what a removal left behind, and reads it where
+// it lies for the same reason RecordedAnchor does.
+//
+// An installer is the caller that needs it. The generation is a counter the
+// ledger keeps and never a version a package carries, so an application that
+// was forgotten and is being installed again has to carry on from where it
+// stopped: an installer that started over at one would be offering the ledger
+// a generation this origin has already been past, and the ledger refuses those
+// whether or not the record they were reached through is still there.
+func ForgottenAnchor(uid uint32, origin string) (Tombstone, bool, error) {
+	if err := validateOrigin(origin); err != nil {
+		return Tombstone{}, false, err
+	}
+	return DefaultAnchorLedger().Forgotten(uid, origin)
+}
+
+// ClearForgottenAnchor gives up what the removal of an application left in the
+// ledger, over the transports every other change to the ledger walks. It is
+// what a person runs after being refused an installation over a floor no
+// installation of theirs can satisfy any more.
+func ClearForgottenAnchor(uid uint32, origin string) error {
+	if err := validateOrigin(origin); err != nil {
+		return err
+	}
+	return dispatchIntegrity(socketRequest{Action: anchorClearAction, Origin: origin, UID: uid})
+}
+
+// EnrolmentAsksTheOwner is AsksTheOwner against the ledger of this host, for a
+// caller that holds an anchor and the policy its root was taken over. It reads
+// and it changes nothing, so it takes no privilege and walks no transport.
+func EnrolmentAsksTheOwner(anchor integrity.Anchor, policy *types.Override) (bool, error) {
+	if err := validateOrigin(anchor.Origin); err != nil {
+		return false, err
+	}
+	return DefaultAnchorLedger().AsksTheOwner(Enrolment{Anchor: anchor, Policy: policy})
+}
+
 // dispatchIntegrity walks the transports the way the session client does and
 // for the same reason: root already holds the privilege the authority exists to
 // lend, and a transport that answered is final.
@@ -794,6 +1134,8 @@ func integrityCall(object dbus.BusObject, message socketRequest) (*dbus.Call, er
 			anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, policy), nil
 	case message.Action == anchorForgetAction:
 		return object.Call(InterfaceName+".ForgetAnchor", 0, message.UID, message.Origin), nil
+	case message.Action == anchorClearAction:
+		return object.Call(InterfaceName+".ClearForgottenAnchor", 0, message.UID, message.Origin), nil
 	case message.Action == enforcementSetAction:
 		return object.Call(InterfaceName+".SetEnforcement", 0, message.Level), nil
 	}
@@ -806,6 +1148,8 @@ func integritySubject(action string) string {
 		return "enrol integrity anchor"
 	case anchorForgetAction:
 		return "forget integrity anchor"
+	case anchorClearAction:
+		return "clear what the removal of an application left in the integrity ledger"
 	}
 	return "set the integrity enforcement level"
 }
@@ -861,6 +1205,11 @@ func applyAnchor(ledger AnchorLedger, message socketRequest) error {
 			return err
 		}
 		return ledger.Forget(message.UID, message.Origin)
+	case anchorClearAction:
+		if err := validateOrigin(message.Origin); err != nil {
+			return err
+		}
+		return ledger.ClearForgotten(message.UID, message.Origin)
 	default:
 		return errors.New("unsupported system authority action")
 	}
