@@ -300,7 +300,7 @@ func SetTrustPolicy(policy trustpolicy.Policy) error {
 	if os.Geteuid() == 0 {
 		return DefaultTrustStore().Set(policy)
 	}
-	err := trustPolicyOverBus(policy)
+	err := retryPastStale(func() error { return trustPolicyOverBus(policy) })
 	if errors.Is(err, errTransportUnavailable) {
 		return ErrNoAuthority
 	}
@@ -336,6 +336,9 @@ func trustPolicyOverBus(policy trustpolicy.Policy) error {
 // and an authentication prompt that scrolled a fleet policy past them would be
 // read by nobody.
 func (s *Service) SetTrustPolicy(sender dbus.Sender, document string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	policy, err := decodeTrustPolicy(document)
 	if err != nil {
 		return invalidRequest(err)

@@ -48,13 +48,25 @@ func dispatch(message socketRequest) error {
 	if os.Geteuid() == 0 {
 		return applyLocally(message)
 	}
-	if err := requestOverBus(message); !errors.Is(err, errTransportUnavailable) {
+	if err := retryPastStale(func() error { return requestOverBus(message) }); !errors.Is(err, errTransportUnavailable) {
 		return err
 	}
 	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
 		return err
 	}
 	return ErrNoAuthority
+}
+
+// retryPastStale runs a call that may meet an authority the host has since
+// replaced. That one refusal means the service stepped aside, so asking again
+// reaches the one on disk. It is the only error worth repeating: everything
+// else is an answer.
+func retryPastStale(call func() error) error {
+	err := call()
+	if !staleOnBus(err) {
+		return err
+	}
+	return call()
 }
 
 func applyLocally(message socketRequest) error {

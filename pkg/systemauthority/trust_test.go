@@ -425,7 +425,7 @@ func TestTheTrustPolicyIsEnforcedOnEveryTransport(t *testing.T) {
 	// allow still records nothing.
 	service := testAnchorService(ledger, &testAuthorizer{})
 	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
 	if dbusErr == nil {
 		t.Fatal("the bus recorded an unapproved origin")
 	}

@@ -382,7 +382,7 @@ func TestServiceAuthorizesEveryAnchorMutation(t *testing.T) {
 	service := testAnchorService(ledger, authorizer)
 	anchor := testAnchor()
 	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
 	if dbusErr != nil {
 		t.Fatal(dbusErr)
 	}
@@ -408,7 +408,7 @@ func TestServiceRejectsAnInvalidAnchorBeforeAuthorization(t *testing.T) {
 	service := testAnchorService(testAnchorLedger(t), authorizer)
 	anchor := testAnchor()
 	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, strings.Repeat("c3", 32), "")
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, strings.Repeat("c3", 32), "")
 	if dbusErr == nil {
 		t.Fatal("an anchor with a launch root of its own was accepted")
 	}
@@ -422,7 +422,7 @@ func TestServiceDenialDoesNotEnrolAnAnchor(t *testing.T) {
 	service := testAnchorService(ledger, &testAuthorizer{err: errors.New("denied")})
 	anchor := testAnchor()
 	dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "")
 	if dbusErr == nil {
 		t.Fatal("authorization denial was ignored")
 	}
@@ -446,7 +446,7 @@ func TestAnchorMethodsAreCarriedByTheBusInterface(t *testing.T) {
 		arguments[method.Name] = taken
 	}
 	for name, want := range map[string]string{
-		"EnrolAnchor":    "iustssss",
+		"EnrolAnchor":    "iustssssss",
 		"ForgetAnchor":   "us",
 		"SetEnforcement": "s",
 	} {
@@ -636,7 +636,7 @@ func TestServiceAsksTheOwnerOnlyWhenAnEnrolmentWidens(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, encoded); dbusErr != nil {
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, encoded); dbusErr != nil {
 		t.Fatal(dbusErr)
 	}
 	if authorizer.action != ActionEnrolAnchor {
@@ -650,7 +650,7 @@ func TestServiceAsksTheOwnerOnlyWhenAnEnrolmentWidens(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dbusErr := service.EnrolAnchor(":1.20", int32(widened.ABI), widened.UID, widened.Origin,
-		widened.Generation, widened.PackageRoot, widened.PolicyRoot, widened.LaunchRoot, encodedWider); dbusErr != nil {
+		widened.Generation, widened.ImageDigest, widened.ManifestDigest, widened.PackageRoot, widened.PolicyRoot, widened.LaunchRoot, encodedWider); dbusErr != nil {
 		t.Fatal(dbusErr)
 	}
 	if authorizer.action != ActionWidenAnchor {
@@ -671,7 +671,7 @@ func TestServiceTreatsAnEnrolmentForAnotherAccountAsWidening(t *testing.T) {
 	anchor := testAnchor()
 	anchor.UID++
 	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, ""); dbusErr != nil {
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, ""); dbusErr != nil {
 		t.Fatal(dbusErr)
 	}
 	if authorizer.action != ActionWidenAnchor {
@@ -679,7 +679,7 @@ func TestServiceTreatsAnEnrolmentForAnotherAccountAsWidening(t *testing.T) {
 	}
 	service.CallerUID = nil
 	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, ""); dbusErr != nil {
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, ""); dbusErr != nil {
 		t.Fatal(dbusErr)
 	}
 	if authorizer.action != ActionWidenAnchor {
@@ -692,7 +692,7 @@ func TestServiceRejectsAPolicyItCannotDecode(t *testing.T) {
 	service := testAnchorService(testAnchorLedger(t), authorizer)
 	anchor := testAnchor()
 	if dbusErr := service.EnrolAnchor(":1.20", int32(anchor.ABI), anchor.UID, anchor.Origin,
-		anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "{not a policy"); dbusErr == nil {
+		anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, "{not a policy"); dbusErr == nil {
 		t.Fatal("a policy that is not JSON was accepted")
 	}
 	if authorizer.action != "" {
@@ -1114,7 +1114,7 @@ func TestTheSignedEnrolmentIsCarriedByTheBusInterface(t *testing.T) {
 	for name, want := range map[string]string{
 		"EnrolSignedAnchor":  "iustssssssss",
 		"SetSignaturePolicy": "s",
-		"EnrolAnchor":        "iustssss",
+		"EnrolAnchor":        "iustssssss",
 	} {
 		if arguments[name] != want {
 			t.Fatalf("%s takes %q on the bus, want %q", name, arguments[name], want)

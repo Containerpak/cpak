@@ -36,6 +36,9 @@ type Service struct {
 }
 
 func (s *Service) RegisterSession(sender dbus.Sender, id, origin, name, description, kind string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	session := Session{ID: id, Origin: origin, Name: name, Description: description, Kind: kind}
 	if err := session.Validate(); err != nil {
 		return invalidRequest(err)
@@ -57,6 +60,9 @@ func (s *Service) RegisterSession(sender dbus.Sender, id, origin, name, descript
 }
 
 func (s *Service) RemoveSession(sender dbus.Sender, id, origin string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	if len(id) == 0 || len(id) > 96 || !sessionIDPattern.MatchString(id) {
 		return invalidRequest(errors.New("invalid session identifier"))
 	}
@@ -81,20 +87,25 @@ func (s *Service) RemoveSession(sender dbus.Sender, id, origin string) *dbus.Err
 // EnrolAnchor takes the record apart on the wire because the bus carries plain
 // values, and puts it back together here so the ledger sees the same record a
 // local enrolment would hand it.
-func (s *Service) EnrolAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, packageRoot, policyRoot, launchRoot, policy string) *dbus.Error {
+func (s *Service) EnrolAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, imageDigest, manifestDigest, packageRoot, policyRoot, launchRoot, policy string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	decoded, err := decodePolicy(policy)
 	if err != nil {
 		return invalidRequest(err)
 	}
 	enrolment := Enrolment{
 		Anchor: integrity.Anchor{
-			ABI:         int(abi),
-			UID:         uid,
-			Origin:      origin,
-			Generation:  generation,
-			PackageRoot: packageRoot,
-			PolicyRoot:  policyRoot,
-			LaunchRoot:  launchRoot,
+			ABI:            int(abi),
+			UID:            uid,
+			Origin:         origin,
+			Generation:     generation,
+			ImageDigest:    imageDigest,
+			ManifestDigest: manifestDigest,
+			PackageRoot:    packageRoot,
+			PolicyRoot:     policyRoot,
+			LaunchRoot:     launchRoot,
 		},
 		Policy: decoded,
 	}
@@ -140,6 +151,9 @@ func (s *Service) enrolmentAction(sender dbus.Sender, enrolment Enrolment) (stri
 // owner of the machine's decision and it is never taken from anything a caller
 // carries with it.
 func (s *Service) SetEnforcement(sender dbus.Sender, level string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	wanted := EnforcementLevel(level)
 	if !wanted.valid() {
 		return invalidRequest(errors.New("invalid enforcement level"))
@@ -179,6 +193,9 @@ func busCallerUID(connection *dbus.Conn) func(dbus.Sender) (uint32, error) {
 }
 
 func (s *Service) ForgetAnchor(sender dbus.Sender, uid uint32, origin string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	if err := validateOrigin(origin); err != nil {
 		return invalidRequest(err)
 	}

@@ -623,6 +623,9 @@ func signedEnrolmentOverBus(enrolment Enrolment) error {
 // is a second method and not more arguments on the first, because what a bus
 // method takes is part of what its callers already speak.
 func (s *Service) EnrolSignedAnchor(sender dbus.Sender, abi int32, uid uint32, origin string, generation uint64, imageDigest, manifestDigest, packageRoot, policyRoot, launchRoot, policy, state, bundle string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	decoded, err := decodePolicy(policy)
 	if err != nil {
 		return invalidRequest(err)
@@ -741,7 +744,7 @@ func dispatchIntegrity(message socketRequest) error {
 		}
 		return applyAnchor(DefaultAnchorLedger(), message)
 	}
-	if err := integrityOverBus(message); !errors.Is(err, errTransportUnavailable) {
+	if err := retryPastStale(func() error { return integrityOverBus(message) }); !errors.Is(err, errTransportUnavailable) {
 		return asRefusal(err)
 	}
 	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
@@ -781,7 +784,8 @@ func integrityCall(object dbus.BusObject, message socketRequest) (*dbus.Call, er
 		}
 		anchor := message.Anchor
 		return object.Call(InterfaceName+".EnrolAnchor", 0, int32(anchor.ABI), anchor.UID, anchor.Origin,
-			anchor.Generation, anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, policy), nil
+			anchor.Generation, anchor.ImageDigest, anchor.ManifestDigest,
+			anchor.PackageRoot, anchor.PolicyRoot, anchor.LaunchRoot, policy), nil
 	case message.Action == anchorForgetAction:
 		return object.Call(InterfaceName+".ForgetAnchor", 0, message.UID, message.Origin), nil
 	case message.Action == enforcementSetAction:

@@ -221,6 +221,20 @@ func installSystemdUnit(target layout) error {
 	if err := reloadSystemd(); err != nil {
 		return fmt.Errorf("ask systemd to read the unit: %w", err)
 	}
+	// An authority already running is the binary this install just replaced.
+	// try-restart replaces it and does nothing when none is running, so an
+	// upgrade needs no command from anyone and a first install stays quiet.
+	if err := restartAuthority(); err != nil {
+		return fmt.Errorf("restart the running system authority: %w", err)
+	}
+	return nil
+}
+
+var restartAuthority = func() error {
+	command := exec.Command("systemctl", "try-restart", "cpak-system-authority.service")
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
 	return nil
 }
 

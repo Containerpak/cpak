@@ -245,7 +245,7 @@ func SetSignaturePolicy(policy SignaturePolicy) error {
 	if os.Geteuid() == 0 {
 		return DefaultEnforcementStore().SetSignaturePolicy(policy)
 	}
-	err := signaturePolicyOverBus(policy)
+	err := retryPastStale(func() error { return signaturePolicyOverBus(policy) })
 	if errors.Is(err, errTransportUnavailable) {
 		return ErrNoAuthority
 	}
@@ -273,6 +273,9 @@ func signaturePolicyOverBus(policy SignaturePolicy) error {
 // and the question the owner is asked are one thing and nothing else in the
 // authority needs to know it exists.
 func (s *Service) SetSignaturePolicy(sender dbus.Sender, policy string) *dbus.Error {
+	if stale := refuseIfStale(); stale != nil {
+		return stale
+	}
 	wanted := SignaturePolicy(policy)
 	if !wanted.valid() {
 		return invalidRequest(errors.New("invalid signature policy"))
