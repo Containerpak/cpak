@@ -431,13 +431,19 @@ func (c *Cpak) writeDesktopExport(entries map[string]fvsViewEntry, app types.App
 		return err
 	}
 	for index, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "Exec="):
-			lines[index] = rewriteDesktopExec(launcher, app.Origin, strings.TrimPrefix(line, "Exec="))
-		case strings.HasPrefix(line, "TryExec="):
+		key, value, ok := desktopEntryKey(line)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "Exec":
+			lines[index] = rewriteDesktopExec(launcher, app.Origin, value)
+		case "TryExec":
 			lines[index] = "TryExec=" + launcher
-		case strings.HasPrefix(line, "Icon=") && iconName != "":
-			lines[index] = "Icon=" + iconName
+		case "Icon":
+			if iconName != "" {
+				lines[index] = "Icon=" + iconName
+			}
 		}
 	}
 	newContent := strings.Join(lines, "\n")
@@ -525,8 +531,8 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 
 	var iconName string
 	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "Icon=") {
-			iconName = strings.TrimPrefix(line, "Icon=")
+		if key, value, ok := desktopEntryKey(line); ok && key == "Icon" {
+			iconName = value
 			break
 		}
 	}
@@ -562,14 +568,19 @@ func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopE
 		return err
 	}
 	for i, line := range lines {
-		if strings.HasPrefix(line, "Exec=") {
-			lines[i] = rewriteDesktopExec(launcher, app.Origin, strings.TrimPrefix(line, "Exec="))
+		key, value, ok := desktopEntryKey(line)
+		if !ok {
+			continue
 		}
-		if strings.HasPrefix(line, "TryExec=") {
+		switch key {
+		case "Exec":
+			lines[i] = rewriteDesktopExec(launcher, app.Origin, value)
+		case "TryExec":
 			lines[i] = "TryExec=" + launcher
-		}
-		if strings.HasPrefix(line, "Icon=") && iconName != "" {
-			lines[i] = "Icon=" + iconName
+		case "Icon":
+			if iconName != "" {
+				lines[i] = "Icon=" + iconName
+			}
 		}
 	}
 	newContent := strings.Join(lines, "\n")

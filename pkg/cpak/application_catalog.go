@@ -245,13 +245,22 @@ func rewriteHostDesktopEntry(data []byte, rewriteExec func(string) string, icon 
 			}
 			continue
 		}
-		switch {
-		case strings.HasPrefix(trimmed, "Exec="):
-			result = append(result, "Exec="+rewriteExec(strings.TrimSpace(strings.TrimPrefix(trimmed, "Exec="))))
+		key, value, ok := desktopEntryKey(line)
+		if !ok {
+			result = append(result, line)
+			continue
+		}
+		switch key {
+		case "Exec":
+			result = append(result, "Exec="+rewriteExec(strings.TrimSpace(value)))
 			foundExec = true
-		case strings.HasPrefix(trimmed, "Icon=") && icon != "":
+		case "Icon":
+			if icon == "" {
+				result = append(result, line)
+				continue
+			}
 			result = append(result, "Icon="+icon)
-		case strings.HasPrefix(trimmed, "TryExec="), strings.HasPrefix(trimmed, "Actions="), strings.HasPrefix(trimmed, "DBusActivatable="):
+		case "TryExec", "Actions", "DBusActivatable":
 			continue
 		default:
 			result = append(result, line)
