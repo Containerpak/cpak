@@ -179,6 +179,11 @@ func TestAttachKeepsItsOwnIndexWhenTheRegistryDoesNotIndexReferrers(t *testing.T
 	if index.Manifests[0].ArtifactType != signatureArtifactType {
 		t.Fatalf("the referrer is filed as %q", index.Manifests[0].ArtifactType)
 	}
+	// A reader takes the publisher generation off the referrer, so an index
+	// without it publishes a signature that is found and then skipped.
+	if got := index.Manifests[0].Annotations[generationAnnotation]; got != "4" {
+		t.Fatalf("the referrer names generation %q, so nothing can tell which state it covers", got)
+	}
 	// The descriptor has to name a manifest the registry actually holds,
 	// because a reader follows it by digest and nothing else.
 	if _, held := registry.manifests[index.Manifests[0].Digest]; !held {

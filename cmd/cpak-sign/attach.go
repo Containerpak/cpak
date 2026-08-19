@@ -127,7 +127,16 @@ func attachBundle(ctx context.Context, reference oci.Reference, state signature.
 	// specification's own way out is to keep the index under a tag, which is
 	// what registries without referrers support expect a client to do.
 	if indexed == "" {
-		fallback := descriptor{MediaType: manifestMediaType, Digest: digestOf(encoded), Size: int64(len(encoded))}
+		// The referrers API answers with the artifact's annotations, and a
+		// reader takes the publisher generation from them. An index written by
+		// hand has to carry the same thing or the signature is found and then
+		// skipped for naming no generation.
+		fallback := descriptor{
+			MediaType:   manifestMediaType,
+			Digest:      digestOf(encoded),
+			Size:        int64(len(encoded)),
+			Annotations: map[string]string{generationAnnotation: strconv.FormatUint(state.Generation, 10)},
+		}
 		if err := publishFallbackIndex(ctx, client, state.ImageDigest, fallback, signatureArtifactType); err != nil {
 			return fmt.Errorf("%s does not index referrers and the fallback tag could not be written: %w", reference.Registry, err)
 		}

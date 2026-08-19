@@ -138,7 +138,12 @@ func attachApproval(ctx context.Context, reference oci.Reference, state signatur
 	// installation will ever be served, so it falls back to the tag the
 	// specification reserves for registries without referrers support.
 	if indexed == "" {
-		fallback := descriptor{MediaType: manifestMediaType, Digest: digestOf(encoded), Size: int64(len(encoded))}
+		fallback := descriptor{
+			MediaType:   manifestMediaType,
+			Digest:      digestOf(encoded),
+			Size:        int64(len(encoded)),
+			Annotations: map[string]string{generationAnnotation: strconv.FormatUint(state.Generation, 10)},
+		}
 		if err := publishFallbackIndex(ctx, client, state.ImageDigest, fallback, approvalArtifactType); err != nil {
 			return fmt.Errorf("%s does not index referrers and the fallback tag could not be written: %w", reference.Registry, err)
 		}

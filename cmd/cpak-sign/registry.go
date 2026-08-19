@@ -42,10 +42,11 @@ var emptyConfig = []byte("{}")
 // one too, and it carries a platform that would be encoded as an empty object
 // into every manifest written here.
 type descriptor struct {
-	MediaType    string `json:"mediaType"`
-	Digest       string `json:"digest"`
-	Size         int64  `json:"size"`
-	ArtifactType string `json:"artifactType,omitempty"`
+	MediaType    string            `json:"mediaType"`
+	Digest       string            `json:"digest"`
+	Size         int64             `json:"size"`
+	ArtifactType string            `json:"artifactType,omitempty"`
+	Annotations  map[string]string `json:"annotations,omitempty"`
 }
 
 // registry is the little of the OCI distribution API a publisher needs. cpak

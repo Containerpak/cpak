@@ -634,7 +634,12 @@ func TestEnrolPublishedApplicationTakesTheGenerationFromTheReferrer(t *testing.T
 	}
 }
 
-func TestEnrolPublishedApplicationIgnoresAReferrerThatNamesNoGeneration(t *testing.T) {
+// A referrer with no generation used to read as an unsigned package, and the
+// silence hid a publisher whose signature was arriving and being thrown away.
+// Only cpak's own artifact type reaches here, so anything in that list is a
+// signature cpak published and cannot use, which is worth saying out loud to
+// the one person able to fix it.
+func TestEnrolPublishedApplicationReportsAReferrerThatNamesNoGeneration(t *testing.T) {
 	cp := newSignatureCpak(t)
 	authority := useEnrolmentAuthority(t)
 	registry := newSignatureRegistry()
@@ -652,11 +657,19 @@ func TestEnrolPublishedApplicationIgnoresAReferrerThatNamesNoGeneration(t *testi
 	if asked != 0 {
 		t.Fatalf("the offline check was asked %d times about a referrer that names no generation", asked)
 	}
-	if !enrolment.Signature.Unsigned() {
-		t.Fatalf("got signature %+v, want a referrer nobody counted to read as unsigned", enrolment.Signature)
+	if enrolment.Signature.Unsigned() {
+		t.Fatal("a signature that was published and could not be used read as no signature at all")
+	}
+	if !errors.Is(enrolment.Signature.Reason, ErrSignatureUnnamed) {
+		t.Fatalf("got %v, want the reason to name a signature nobody counted", enrolment.Signature.Reason)
 	}
 	if authority.signature != nil {
 		t.Fatal("a referrer that names no generation was handed to the authority")
+	}
+	// It is still enrolled, because the application is installed either way and
+	// refusing it over a publisher's mistake would be a worse answer.
+	if authority.recorded == 0 {
+		t.Fatal("the application was not enrolled at all")
 	}
 }
 

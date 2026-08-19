@@ -432,6 +432,11 @@ type attachedSignature struct {
 // attachedSignatures reads them all. The listing is done here and not through
 // the entry point that verifies a complete state, because that state cannot be
 // completed until the generation has been read off these descriptors.
+// ErrSignatureUnnamed means a signature is published and cpak cannot tell
+// which state it covers, because the referrer carries no generation. It is not
+// an unsigned package: something was attached and could not be used.
+var ErrSignatureUnnamed = errors.New("a published signature names no publisher generation")
+
 func (c *Cpak) attachedSignatures(ref oci.Reference, origin, imageDigest string) ([]attachedSignature, error) {
 	client := &oci.Client{Credentials: registryauth.Provider{Origin: origin, Path: c.Options.RegistryAuthPath}}
 	referrers, err := client.Referrers(c.Ctx, ref, imageDigest, packageSignatureArtifactType)
@@ -439,9 +444,11 @@ func (c *Cpak) attachedSignatures(ref oci.Reference, origin, imageDigest string)
 		return nil, fmt.Errorf("list the signatures of %s@%s: %w", ref.ContextName(), imageDigest, err)
 	}
 	attached := make([]attachedSignature, 0, len(referrers))
+	skipped := 0
 	for _, referrer := range referrers {
 		generation, named := signedGeneration(referrer)
 		if !named {
+			skipped++
 			continue
 		}
 		bundle, payloadErr := client.ReferrerPayload(c.Ctx, ref, referrer, maxSignatureBundle)
@@ -456,6 +463,12 @@ func (c *Cpak) attachedSignatures(ref oci.Reference, origin, imageDigest string)
 	sort.SliceStable(attached, func(first, second int) bool {
 		return attached[first].generation > attached[second].generation
 	})
+	// Something is attached and none of it can be used, which is a publisher
+	// problem and not an unsigned package. Reporting it as unsigned would hide
+	// it from the only person who can fix it.
+	if len(attached) == 0 && skipped > 0 {
+		return nil, fmt.Errorf("%w: %d attached to %s name no publisher generation", ErrSignatureUnnamed, skipped, ref.ContextName())
+	}
 	return attached, nil
 }
 
