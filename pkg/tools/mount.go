@@ -6,10 +6,14 @@ package tools
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -211,14 +215,11 @@ func RestrictWritableBindMount(dest string) error {
 	if err == nil {
 		return nil
 	}
-	if err != unix.ENOSYS && err != unix.EINVAL && err != unix.EOPNOTSUPP {
+	if !mountSetattrUnsupported(err) {
 		return fmt.Errorf("restrict writable bind mount %s: %w", dest, err)
 	}
 	flags := uintptr(syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC)
-	if err = syscall.Mount("", dest, "", flags, ""); err != nil {
-		return fmt.Errorf("remount %s restricted: %w", dest, err)
-	}
-	return nil
+	return restrictMountTree(dest, flags, "restricted")
 }
 
 func restrictBindMount(dest string, noExec bool) error {
@@ -231,7 +232,7 @@ func restrictBindMount(dest string, noExec bool) error {
 	if err == nil {
 		return nil
 	}
-	if err != unix.ENOSYS && err != unix.EINVAL && err != unix.EOPNOTSUPP {
+	if !mountSetattrUnsupported(err) {
 		return fmt.Errorf("restrict bind mount %s: %w", dest, err)
 	}
 
@@ -239,10 +240,127 @@ func restrictBindMount(dest string, noExec bool) error {
 	if noExec {
 		flags |= syscall.MS_NOEXEC
 	}
-	if err = syscall.Mount("", dest, "", flags, ""); err != nil {
-		return fmt.Errorf("remount %s read-only: %w", dest, err)
+	return restrictMountTree(dest, flags, "read-only")
+}
+
+// mountSetattrUnsupported answers whether the kernel could not take the call at
+// all, which is the only reason to fall back to a remount. The remount is the
+// weaker tool: it changes what MS_ flags can express and nothing else, and it
+// has to walk the tree by hand to reach what one mount_setattr reaches on its
+// own.
+//
+// EINVAL is not one of those reasons, and reading it as one is how a mistake on
+// cpak's side turns into a silent downgrade. mount_setattr answers EINVAL for a
+// path that is not the root of a mount and for attributes it will not take, and
+// both of those are cpak asking wrongly rather than a kernel that cannot
+// answer. Measured on 6.17: the call succeeds on a mount point, answers EINVAL
+// on a plain directory, and the MS_REMOUNT the fallback would have run answers
+// EINVAL on that same directory, so nothing was ever recovered by falling back.
+// What would be lost is the day cpak asks for an attribute the remount has no
+// equivalent for: an older kernel answers EINVAL, the fallback reports success,
+// and the restriction is simply not there.
+//
+// A kernel that does not have the syscall at all answers ENOSYS, and one that
+// has it and will not do this to this filesystem answers EOPNOTSUPP. Those are
+// the two the fallback exists for.
+func mountSetattrUnsupported(err error) bool {
+	return errors.Is(err, unix.ENOSYS) || errors.Is(err, unix.EOPNOTSUPP)
+}
+
+// restrictMountTree remounts dest and every mount under it.
+//
+// It is the answer to a mount_setattr the kernel would not take, and the whole
+// of what makes that answer honest. The recursive form of the syscall arrived
+// in 5.12; before it, and whenever the call is refused, the only tool left is
+// MS_REMOUNT, which changes the mount it is handed and nothing below it. Every
+// caller here restricts a recursive bind: MountBindReadOnlyPrepared("/", ...)
+// carries the whole host under /run/host, so a remount of the top left a
+// separate /home, /media or /var writable inside the container, with no error
+// and no log line to say so.
+//
+// A mount that cannot be restricted is now a refused container start rather
+// than a quiet hole, and the message names the mount that refused.
+func restrictMountTree(dest string, flags uintptr, description string) error {
+	targets, err := mountTreeTargets(dest)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if err = syscall.Mount("", target, "", flags, ""); err != nil {
+			return fmt.Errorf("remount %s %s: %w", target, description, err)
+		}
 	}
 	return nil
+}
+
+// mountTreeTargets is dest followed by every mount point beneath it, ancestors
+// before descendants. dest leads whether or not it is a mount point itself, so
+// a path that never was one is still refused by the remount, the way it was
+// before anything walked the tree.
+func mountTreeTargets(dest string) ([]string, error) {
+	table, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return nil, fmt.Errorf("read the mount table: %w", err)
+	}
+	defer table.Close()
+	return mountTreeTargetsFrom(table, dest)
+}
+
+func mountTreeTargetsFrom(table io.Reader, dest string) ([]string, error) {
+	root := filepath.Clean(dest)
+	targets := []string{root}
+	seen := map[string]struct{}{root: {}}
+	scanner := bufio.NewScanner(table)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 5 {
+			continue
+		}
+		point := filepath.Clean(unescapeMountPoint(fields[4]))
+		if !mountPointIsUnder(point, root) {
+			continue
+		}
+		if _, known := seen[point]; known {
+			continue
+		}
+		seen[point] = struct{}{}
+		targets = append(targets, point)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read the mount table: %w", err)
+	}
+	// A cleaned path sorts before every path it contains, so this is the order
+	// the remounts have to happen in: a parent before the mounts it carries.
+	sort.Strings(targets)
+	return targets, nil
+}
+
+func mountPointIsUnder(point, root string) bool {
+	if root == "/" {
+		return point != "/"
+	}
+	return strings.HasPrefix(point, root+"/")
+}
+
+// unescapeMountPoint reads back the octal escapes the kernel writes for the
+// space, tab, newline and backslash a mount point may contain. A mount named
+// with a space is otherwise a path that exists and is never restricted.
+func unescapeMountPoint(field string) string {
+	if !strings.Contains(field, "\\") {
+		return field
+	}
+	var point strings.Builder
+	for index := 0; index < len(field); index++ {
+		if field[index] == '\\' && index+3 < len(field) {
+			if value, err := strconv.ParseUint(field[index+1:index+4], 8, 8); err == nil {
+				point.WriteByte(byte(value))
+				index += 3
+				continue
+			}
+		}
+		point.WriteByte(field[index])
+	}
+	return point.String()
 }
 
 // MountOverlay mounts the given lower, upper and work directories in the
