@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -57,5 +58,46 @@ func TestDecodeFilePickerGrantJSON(t *testing.T) {
 func TestDecodeFilePickerGrantJSONRejectsUnknownFields(t *testing.T) {
 	if _, err := DecodeFilePickerGrantJSON([]byte(`{"openFile":true,"unexpected":true}`)); err == nil {
 		t.Fatal("expected unknown field to be rejected")
+	}
+}
+
+// The whole point of the helper is telling false apart from absent, which the
+// decoded struct cannot do, so that is what the case checks.
+func TestUngrantedPermissionsTellsFalseApartFromAbsent(t *testing.T) {
+	missing, err := UngrantedPermissions([]byte(`{"override":{"socketWayland":true,"socketX11":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := map[string]bool{}
+	for _, key := range missing {
+		named[key] = true
+	}
+	for _, written := range []string{"socketWayland", "socketX11"} {
+		if named[written] {
+			t.Fatalf("%s is in the manifest and was reported as missing", written)
+		}
+	}
+	if !named["socketSessionBus"] || !named["network"] {
+		t.Fatalf("a permission the manifest never mentions was not reported: %v", missing)
+	}
+	// Absent by design, and reporting them would be noise on every manifest.
+	for _, optional := range []string{"filesystem", "hostActions", "env", "fsExtra"} {
+		if named[optional] {
+			t.Fatalf("%s is omitted when empty and must not be reported", optional)
+		}
+	}
+}
+
+func TestAManifestThatNamesEveryPermissionHasNothingMissing(t *testing.T) {
+	complete, err := json.Marshal(map[string]any{"override": NewOverride()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing, err := UngrantedPermissions(complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("a manifest naming every permission was told it omits %v", missing)
 	}
 }

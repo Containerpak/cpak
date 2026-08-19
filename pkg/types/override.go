@@ -5,6 +5,7 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -209,4 +210,42 @@ func filePickerHasAdditions(current, next FilePickerGrant) bool {
 		!current.SaveFile && next.SaveFile ||
 		!current.Persistent && next.Persistent ||
 		!current.ContainingFolder && next.ContainingFolder
+}
+
+// UngrantedPermissions names the permissions a manifest did not mention.
+//
+// It exists because the decoded struct cannot answer the question: a
+// permission written as false and one nobody wrote both arrive as false, and
+// the difference is what an author needs told. Nothing is granted by omission,
+// so a manifest that stays quiet about the display or the session bus is a
+// manifest whose application will not have them, and saying so while it is
+// being written is cheaper than saying it after it ships.
+//
+// Only the permissions a manifest is expected to state are considered. The
+// fields that are omitted when empty, such as the filesystem list or the host
+// actions, are absent by design and are not reported.
+func UngrantedPermissions(raw []byte) ([]string, error) {
+	var manifest struct {
+		Override map[string]json.RawMessage `json:"override"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return nil, err
+	}
+	fields := reflect.TypeOf(Override{})
+	missing := []string{}
+	for index := 0; index < fields.NumField(); index++ {
+		field := fields.Field(index)
+		if field.Type.Kind() != reflect.Bool {
+			continue
+		}
+		tag := field.Tag.Get("json")
+		key, options, _ := strings.Cut(tag, ",")
+		if key == "" || strings.Contains(options, "omitempty") {
+			continue
+		}
+		if _, written := manifest.Override[key]; !written {
+			missing = append(missing, key)
+		}
+	}
+	return missing, nil
 }

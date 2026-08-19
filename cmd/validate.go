@@ -7,8 +7,10 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -31,6 +33,14 @@ func (c *ValidateCmd) Run() error {
 	}
 	if err := (&cpak.Cpak{}).ValidateManifest(manifest); err != nil {
 		return fmt.Errorf("invalid manifest: %w", err)
+	}
+
+	// Valid and complete are different questions. A manifest that says nothing
+	// about a permission is not asking for it, which is easy to write by
+	// accident and expensive to find out about after the package ships.
+	if missing, err := types.UngrantedPermissions(data); err == nil && len(missing) > 0 {
+		c.Logger.Warning(fmt.Sprintf("This manifest does not mention %d permissions, so the application will not have them: %s.", len(missing), strings.Join(missing, ", ")))
+		c.Logger.Info("Nothing is granted by omission. Write the ones the application needs, and write the rest as false so the manifest says what it decided.")
 	}
 
 	c.Logger.Success("Manifest is valid.")
