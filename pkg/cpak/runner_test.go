@@ -35,10 +35,139 @@ func tempSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "cpak.sock")
 }
 
-func TestCpakSocketPathCanBeIsolated(t *testing.T) {
-	t.Setenv("CPAK_SERVICE_SOCKET", "/tmp/cpak-test.sock")
-	if actual := cpakSocketPath(); actual != "/tmp/cpak-test.sock" {
-		t.Fatalf("socket path: got %s", actual)
+func TestHostServiceSocketPathCanBeIsolated(t *testing.T) {
+	directory, err := os.MkdirTemp("", "cpak")
+	if err != nil {
+		t.Fatalf("temporary directory: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(directory) })
+	expected := filepath.Join(directory, "cpak-test.sock")
+	t.Setenv("CPAK_SERVICE_SOCKET", expected)
+
+	actual, err := HostServiceSocketPath()
+	if err != nil {
+		t.Fatalf("socket path: %v", err)
+	}
+	if actual != expected {
+		t.Fatalf("socket path: got %s, want %s", actual, expected)
+	}
+}
+
+// The container is told to look for the service at /tmp/cpak.sock and the host
+// side of the spawn inherits that variable, so the host resolver has to refuse
+// it: answering it would mount whatever another account left at that name in
+// place of the service, and leave the service itself unreachable.
+func TestHostServiceSocketPathRefusesASharedDirectory(t *testing.T) {
+	t.Setenv("CPAK_SERVICE_SOCKET", ContainerServiceSocketPath)
+
+	path, err := HostServiceSocketPath()
+	if err == nil {
+		t.Fatalf("a socket in a shared directory was accepted: %s", path)
+	}
+}
+
+// Refusing a directory is not a licence to repair it. The resolver reads a
+// variable somebody else set, so a check that created the parent it was handed,
+// or chmodded one it found open, would be changing the machine on the strength
+// of an environment variable: CPAK_SERVICE_SOCKET=$HOME/cpak.sock would take
+// the home directory down to 0700, and a root caller would do the same to /tmp.
+func TestHostServiceSocketPathLeavesADirectoryItRefusesAlone(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(directory, "service.sock"))
+
+	path, err := HostServiceSocketPath()
+	if err == nil {
+		t.Fatalf("a socket in a directory other accounts may read was accepted: %s", path)
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatalf("socket directory: %v", err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("the refusal changed the directory to %s", info.Mode().Perm())
+	}
+
+	// And a parent that is not there is answered rather than made.
+	absent := filepath.Join(directory, "made", "by", "the", "check")
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(absent, "service.sock"))
+	if path, err = HostServiceSocketPath(); err == nil {
+		t.Fatalf("a socket under a directory that does not exist was accepted: %s", path)
+	}
+	if _, err = os.Stat(absent); !os.IsNotExist(err) {
+		t.Fatalf("the check created %s: %v", absent, err)
+	}
+}
+
+// The socket carries the whole nested request and answers with the output and
+// the exit code of the run, so it may not sit on a name another account on the
+// machine is free to take first.
+func TestHostServiceSocketPathLivesInAPrivateDirectory(t *testing.T) {
+	runtimeDirectory, err := os.MkdirTemp("", "cpak")
+	if err != nil {
+		t.Fatalf("temporary directory: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDirectory) })
+	if err = os.Chmod(runtimeDirectory, 0700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CPAK_SERVICE_SOCKET", "")
+
+	path, err := HostServiceSocketPath()
+	if err != nil {
+		t.Fatalf("socket path: %v", err)
+	}
+	if !strings.HasPrefix(path, runtimeDirectory+string(os.PathSeparator)) {
+		t.Fatalf("the socket is outside the private runtime directory: %s", path)
+	}
+	info, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("socket directory: %v", err)
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		t.Fatalf("the socket directory is open to other accounts: %s", info.Mode().Perm())
+	}
+}
+
+// The two ends of the mount have to agree: the container is told to dial the
+// address the spawn command binds the host socket onto, and the host socket is
+// the one the service listens on.
+func TestSpawnArgumentsPairTheHostSocketWithTheContainerAddress(t *testing.T) {
+	runtimeDirectory, err := os.MkdirTemp("", "cpak")
+	if err != nil {
+		t.Fatalf("temporary directory: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDirectory) })
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CPAK_SERVICE_SOCKET", "")
+
+	arguments, err := serviceSocketArguments()
+	if err != nil {
+		t.Fatalf("service socket arguments: %v", err)
+	}
+	expected, err := HostServiceSocketPath()
+	if err != nil {
+		t.Fatalf("socket path: %v", err)
+	}
+	want := []string{"--service-socket", expected, "--env", "CPAK_SERVICE_SOCKET=" + ContainerServiceSocketPath}
+	if !reflect.DeepEqual(arguments, want) {
+		t.Fatalf("spawn arguments: got %v, want %v", arguments, want)
+	}
+}
+
+// Inside a container the variable is the address of a mount the host made, and
+// the default is the target the spawn command binds the host socket onto.
+func TestNestedServiceSocketPathIsTheMountTarget(t *testing.T) {
+	t.Setenv("CPAK_SERVICE_SOCKET", "")
+	if actual := nestedServiceSocketPath(); actual != ContainerServiceSocketPath {
+		t.Fatalf("nested socket path: got %s, want %s", actual, ContainerServiceSocketPath)
+	}
+	t.Setenv("CPAK_SERVICE_SOCKET", "/run/cpak/service.sock")
+	if actual := nestedServiceSocketPath(); actual != "/run/cpak/service.sock" {
+		t.Fatalf("nested socket path: got %s", actual)
 	}
 }
 
@@ -202,6 +331,82 @@ func TestClearStaleSocketKeepsALiveSocket(t *testing.T) {
 	if _, err = os.Stat(path); err != nil {
 		t.Fatalf("a live socket was removed: %v", err)
 	}
+}
+
+// A regular file where the socket belongs is somebody else's doing, and
+// removing it silently would hand the next listener a name it did not create.
+func TestClearStaleSocketRefusesWhatIsNotASocket(t *testing.T) {
+	path := tempSocketPath(t)
+	if err := os.WriteFile(path, []byte("not a socket"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := clearStaleSocket(path); err == nil {
+		t.Fatal("a path that is not a socket was accepted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("a foreign file was removed: %v", err)
+	}
+}
+
+// Waiting has to end at once on a name that is not our socket: no listener of
+// ours is coming, and the timeout would only delay the report.
+func TestWaitForSocketRefusesWhatIsNotASocket(t *testing.T) {
+	path := tempSocketPath(t)
+	if err := os.WriteFile(path, []byte("not a socket"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	started := time.Now()
+	if err := waitForSocket(path, 10*time.Second); err == nil {
+		t.Fatal("a path that is not a socket was accepted")
+	}
+	if elapsed := time.Since(started); elapsed >= 5*time.Second {
+		t.Fatalf("the wait ran to its timeout instead of refusing the path: %s", elapsed)
+	}
+}
+
+// A socket somebody else owns is never the service of this user, however
+// readily it answers, and it is never cleared away either: removing it would be
+// this user deleting a file of another account.
+func TestValidateSocketOwnerRefusesAForeignSocket(t *testing.T) {
+	path := foreignSocket(t)
+
+	if err := validateSocketOwner(path); err == nil {
+		t.Fatalf("the socket %s passed for ours", path)
+	}
+	if _, err := socketIsReady(path); err == nil {
+		t.Fatal("a socket of another account was reported as the service")
+	}
+	if err := clearStaleSocket(path); err == nil {
+		t.Fatal("the socket of another account was cleared away")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("the socket of another account was removed: %v", err)
+	}
+}
+
+// foreignSocket answers a socket on this host that belongs to another account.
+// An unprivileged process cannot create a file it does not own, so the only
+// ones available are the ones the system already runs.
+func foreignSocket(t *testing.T) string {
+	t.Helper()
+	for _, candidate := range []string{
+		"/run/systemd/journal/socket",
+		"/run/systemd/journal/stdout",
+		"/run/udev/control",
+		"/run/dbus/system_bus_socket",
+	} {
+		info, err := os.Lstat(candidate)
+		if err != nil || info.Mode()&os.ModeSocket == 0 {
+			continue
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Uid != uint32(os.Getuid()) {
+			return candidate
+		}
+	}
+	t.Skip("no socket owned by another account is available on this host")
+	return ""
 }
 
 func TestServeSocketIsIdempotent(t *testing.T) {

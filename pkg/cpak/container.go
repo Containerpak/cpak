@@ -506,10 +506,16 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		containerEnv = setEnvironmentValue(containerEnv, "GTK_USE_PORTAL", "1")
 	}
-	containerEnv = append(containerEnv, "CPAK_SERVICE_SOCKET="+defaultCpakSocketPath)
 	for _, envVar := range containerEnv {
 		cmds = append(cmds, "--env", envVar)
 	}
+	// After the environment the package asked for, so that the address of the
+	// service is cpak's to decide and not something a publisher can name.
+	serviceSocketArgs, err := serviceSocketArguments()
+	if err != nil {
+		return "", 0, "", err
+	}
+	cmds = append(cmds, serviceSocketArgs...)
 
 	for _, ovr := range overrideMounts {
 		cmds = append(cmds, "--mount-overrides", ovr)
@@ -1292,6 +1298,39 @@ func securePrivateDirectory(path string) error {
 		if err = os.Chmod(path, 0700); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// provePrivateDirectory answers whether a directory cpak did not make is
+// already private, and it changes nothing on its way to the answer.
+//
+// securePrivateDirectory is the wrong tool for a path somebody else named: it
+// creates what is missing and tightens what it finds, which is right for the
+// directories cpak owns and is a mutation of the caller's machine anywhere
+// else. A CPAK_SERVICE_SOCKET pointing at $HOME/cpak.sock would have had the
+// home directory chmodded to 0700 as a side effect of being checked, and a
+// root caller, whose uid matches every root-owned directory, would have taken
+// /tmp down to 0700 with every other account on it.
+//
+// So this proves and refuses. The path is looked at with Lstat, because a
+// symlink to a private directory is not one, and the mode has to be exactly
+// 0700 rather than merely closed to others: a directory this account may not
+// write is not one this account can hold a socket in either.
+func provePrivateDirectory(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return errors.New("private directory path must be absolute")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || stat.Uid != uint32(os.Getuid()) {
+		return errors.New("private directory is not owned by the current user")
+	}
+	if info.Mode().Perm() != 0700 {
+		return fmt.Errorf("private directory %s is open to other accounts: %s", path, info.Mode().Perm())
 	}
 	return nil
 }

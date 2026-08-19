@@ -34,6 +34,12 @@ const cpakInContainerPath = "/usr/local/bin/cpak"
 const systemBrokerShimPath = "/usr/local/bin/cpak-system-broker-shim"
 const desktopRuntimeTarget = "/run/cpak/desktop-runtime"
 
+// serviceSocketTarget is where a nested run inside the container looks for the
+// cpak service. It is a mount target and nothing else: what is bound onto it
+// comes from --service-socket, which the host resolved. The name is the one the
+// host writes into the container environment, so it is read from there.
+const serviceSocketTarget = cpak.ContainerServiceSocketPath
+
 const openURIHandlerDesktopPath = "/usr/local/share/applications/cpak-open-uri.desktop"
 const openURIHandlerDefaultsPath = "/usr/local/etc/xdg/cpak-mimeapps.list"
 
@@ -73,6 +79,7 @@ type SpawnCmd struct {
 	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
 	GrantSocket    string   `cli:"grant-socket" help:"file grant mount socket"`
+	ServiceSocket  string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
 	PrivateHome    string   `cli:"private-home" help:"persistent private application home"`
 	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
 	MountHostRoot  bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
@@ -483,26 +490,50 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, sandbox.PathGrant{Path: filepath.Clean(mount), ReadOnly: filepath.Clean(mount) == "/etc"})
 	}
 
-	cpakSockSource := os.Getenv("CPAK_SERVICE_SOCKET")
-	if cpakSockSource == "" {
-		cpakSockSource = "/tmp/cpak.sock"
+	serviceGrant, mounted, err := c.mountServiceSocket(rootFs)
+	if err != nil {
+		return nil, err
 	}
-	cpakSockTarget := "/tmp/cpak.sock"
-	if _, statErr := os.Stat(cpakSockSource); statErr == nil {
-		c.spawnVerbose("Mounting: ", cpakSockSource)
-		destination, needsMount, prepareErr := prepareRootfsBindTarget(rootFs, cpakSockTarget, cpakSockSource)
-		if prepareErr != nil {
-			return nil, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", cpakSockSource, prepareErr)
-		}
-		if needsMount {
-			err = tools.MountBindPrepared(cpakSockSource, destination)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", cpakSockSource, err)
-		}
-		grants = append(grants, sandbox.PathGrant{Path: cpakSockTarget})
+	if mounted {
+		grants = append(grants, serviceGrant)
 	}
 	return grants, nil
+}
+
+// mountServiceSocket binds the host socket of the cpak service at the address a
+// nested run inside this container dials.
+//
+// The source is the flag and never CPAK_SERVICE_SOCKET. That variable names the
+// container side of this very mount, and the process building the container
+// hands it to this one along with everything else the container is to see, so
+// reading it here would resolve /tmp/cpak.sock as a host path: the real service
+// would go unmounted and whatever another account left at that name would be
+// bound in its place.
+func (c *SpawnCmd) mountServiceSocket(rootFs string) (sandbox.PathGrant, bool, error) {
+	if c.ServiceSocket == "" {
+		return sandbox.PathGrant{}, false, nil
+	}
+	info, err := os.Lstat(c.ServiceSocket)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return sandbox.PathGrant{}, false, nil
+		}
+		return sandbox.PathGrant{}, false, fmt.Errorf("stat:%s: an error occurred while spawning the namespace: %s", c.ServiceSocket, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return sandbox.PathGrant{}, false, fmt.Errorf("mount:%s: the cpak service socket is not a socket", c.ServiceSocket)
+	}
+	c.spawnVerbose("Mounting: ", c.ServiceSocket)
+	destination, needsMount, err := prepareRootfsBindTarget(rootFs, serviceSocketTarget, c.ServiceSocket)
+	if err != nil {
+		return sandbox.PathGrant{}, false, fmt.Errorf("prepare mount:%s: an error occurred while spawning the namespace: %s", c.ServiceSocket, err)
+	}
+	if needsMount {
+		if err = tools.MountBindPrepared(c.ServiceSocket, destination); err != nil {
+			return sandbox.PathGrant{}, false, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %s", c.ServiceSocket, err)
+		}
+	}
+	return sandbox.PathGrant{Path: serviceSocketTarget}, true, nil
 }
 
 func (c *SpawnCmd) mountPrivateHome(rootFs, source string) (sandbox.PathGrant, error) {

@@ -25,15 +25,71 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
-// defaultCpakSocketPath is where the service is exposed inside containers.
-const defaultCpakSocketPath = "/tmp/cpak.sock"
+// ContainerServiceSocketPath is where the service is exposed inside containers.
+// It is the target of a mount the spawn command makes and the address a nested
+// run dials, so both ends of that mount read the name from here.
+const ContainerServiceSocketPath = "/tmp/cpak.sock"
 
-func cpakSocketPath() string {
-	path := os.Getenv("CPAK_SERVICE_SOCKET")
-	if path == "" {
-		return defaultCpakSocketPath
+// serviceSocketName is the name the service takes inside the private runtime
+// directory it already shares with the system broker.
+const serviceSocketName = "service.sock"
+
+// HostServiceSocketPath answers where the cpak service listens on the host. The
+// name lives in the private runtime directory the system broker already uses,
+// because a fixed name in a shared /tmp is one any other account on the machine
+// can take first, and whoever holds it dictates every nested run.
+//
+// CPAK_SERVICE_SOCKET is honoured, since cpak sets it itself to isolate a local
+// package, but it is held to the same rule: a predictable name in a directory
+// anybody may write would be the same hole reached by a different road. It is
+// never a fallback either, because the host side of a spawn inherits that
+// variable from the container environment it was just handed.
+func HostServiceSocketPath() (string, error) {
+	if path := os.Getenv("CPAK_SERVICE_SOCKET"); path != "" {
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			return "", fmt.Errorf("the cpak service socket %s is not an absolute path", path)
+		}
+		// The directory is proven and never prepared. This name came from
+		// outside cpak, and a check that created the parent it was asked about,
+		// or tightened one it found open, would be changing the machine on the
+		// strength of a variable rather than reading it.
+		if err := provePrivateDirectory(filepath.Dir(path)); err != nil {
+			return "", fmt.Errorf("the cpak service socket %s is not in a private directory: %w", path, err)
+		}
+		return path, nil
 	}
-	return path
+	directory, err := sharedSystemBrokerRuntimeDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, serviceSocketName), nil
+}
+
+// serviceSocketArguments answers the pair the spawn command needs to make the
+// service reachable from inside a container: the host socket to bind, and the
+// address the container is to dial for it.
+//
+// They are built together because they are two ends of one mount. The address
+// is deliberately not added to the container environment list, which also
+// becomes the environment of the spawn process: a host side that read
+// CPAK_SERVICE_SOCKET would then resolve the container address as a host path.
+func serviceSocketArguments() ([]string, error) {
+	path, err := HostServiceSocketPath()
+	if err != nil {
+		return nil, err
+	}
+	return []string{"--service-socket", path, "--env", "CPAK_SERVICE_SOCKET=" + ContainerServiceSocketPath}, nil
+}
+
+// nestedServiceSocketPath answers the address a run inside a container dials.
+// There the socket is a bind mount the host placed and the variable names the
+// mount target, so it is read as given: the owner of the inode is the host user
+// seen through the container's mapping, which is not a uid this side can check.
+func nestedServiceSocketPath() string {
+	if path := os.Getenv("CPAK_SERVICE_SOCKET"); path != "" {
+		return path
+	}
+	return ContainerServiceSocketPath
 }
 
 const (
@@ -187,12 +243,22 @@ func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override t
 // prepareSocketListener makes sure the cpak service is listening before a
 // container is started, so that a nested run has somewhere to connect to.
 func (c *Cpak) prepareSocketListener() (err error) {
+	servicePath, err := HostServiceSocketPath()
+	if err != nil {
+		return err
+	}
 	brokerPath, err := sharedSystemBrokerSocketPath()
 	if err != nil {
 		return err
 	}
-	serviceReady := socketIsLive(cpakSocketPath())
-	brokerReady := socketIsLive(brokerPath)
+	serviceReady, err := socketIsReady(servicePath)
+	if err != nil {
+		return err
+	}
+	brokerReady, err := socketIsReady(brokerPath)
+	if err != nil {
+		return err
+	}
 	if serviceReady && brokerReady {
 		return
 	}
@@ -216,7 +282,7 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	if err != nil {
 		return fmt.Errorf("cannot detach the cpak service: %w", err)
 	}
-	if err = waitForSocket(cpakSocketPath(), socketWaitTimeout); err != nil {
+	if err = waitForSocket(servicePath, socketWaitTimeout); err != nil {
 		return err
 	}
 	return waitForSocket(brokerPath, socketWaitTimeout)
@@ -236,7 +302,11 @@ func (c *Cpak) StopOwnedService() error {
 	}
 	paths := []string{}
 	if c.serviceSocketOwned {
-		paths = append(paths, cpakSocketPath())
+		servicePath, pathErr := HostServiceSocketPath()
+		if pathErr != nil {
+			return pathErr
+		}
+		paths = append(paths, servicePath)
 	}
 	if c.brokerSocketOwned {
 		brokerPath, pathErr := sharedSystemBrokerSocketPath()
@@ -273,12 +343,47 @@ func socketIsLive(path string) bool {
 	return true
 }
 
+// validateSocketOwner refuses a path that is not a socket belonging to the
+// current user, the treatment the system broker already gives its own socket. A
+// name another account got to first must never pass for the service of this one.
+func validateSocketOwner(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s is not a socket", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return fmt.Errorf("the socket %s has an unexpected owner", path)
+	}
+	return nil
+}
+
+// socketIsReady reports whether path carries a listener this user may talk to.
+// A socket somebody else owns is an error and not a service, however promptly it
+// answers.
+func socketIsReady(path string) (bool, error) {
+	if err := validateSocketOwner(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return socketIsLive(path), nil
+}
+
 // waitForSocket waits for a listener to answer on path, giving up after
 // timeout instead of spinning forever on a service that never started.
 func waitForSocket(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		if socketIsLive(path) {
+		ready, err := socketIsReady(path)
+		if err != nil {
+			return err
+		}
+		if ready {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -291,8 +396,8 @@ func waitForSocket(path string, timeout time.Duration) error {
 // clearStaleSocket removes a leftover socket file, leaving alone one that still
 // has a listener behind it.
 func clearStaleSocket(path string) error {
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
+	if err := validateSocketOwner(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
@@ -307,6 +412,10 @@ func clearStaleSocket(path string) error {
 }
 
 func (c *Cpak) StartSocketListener() (err error) {
+	servicePath, err := HostServiceSocketPath()
+	if err != nil {
+		return err
+	}
 	brokerPath, err := sharedSystemBrokerSocketPath()
 	if err != nil {
 		return err
@@ -315,8 +424,16 @@ func (c *Cpak) StartSocketListener() (err error) {
 	if err != nil {
 		return err
 	}
-	serveNested := !socketIsLive(cpakSocketPath())
-	serveBroker := !socketIsLive(brokerPath)
+	serviceReady, err := socketIsReady(servicePath)
+	if err != nil {
+		return err
+	}
+	brokerReady, err := socketIsReady(brokerPath)
+	if err != nil {
+		return err
+	}
+	serveNested := !serviceReady
+	serveBroker := !brokerReady
 	if !serveNested && !serveBroker {
 		return nil
 	}
@@ -326,7 +443,7 @@ func (c *Cpak) StartSocketListener() (err error) {
 	running := 0
 	if serveNested {
 		running++
-		go func() { results <- c.serveSocketContext(ctx, cpakSocketPath()) }()
+		go func() { results <- c.serveSocketContext(ctx, servicePath) }()
 	}
 	if serveBroker {
 		running++
@@ -648,7 +765,7 @@ func (c *Cpak) RunNested(nestedToken string, origin string, version string, bran
 	}
 
 	// start a connection to the socket
-	socketPath := cpakSocketPath()
+	socketPath := nestedServiceSocketPath()
 	conn, err := net.DialTimeout("unix", socketPath, socketDialTimeout)
 	if err != nil {
 		return fmt.Errorf("cannot reach the cpak service on %s: %w", socketPath, err)
