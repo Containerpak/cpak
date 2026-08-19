@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -39,7 +40,12 @@ func (c *OverrideCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	// The re-enrolment below opens the store itself, and the write-ahead log
+	// refuses a second handle while this one is still open. The handle is
+	// therefore released once, either here or by the enrolment, whichever
+	// comes first.
+	releaseStore := sync.OnceFunc(func() { store.Close() })
+	defer releaseStore()
 
 	apps, err := store.GetApplications()
 	if err != nil {
@@ -72,7 +78,7 @@ func (c *OverrideCmd) Run() error {
 			return err
 		}
 		over.Filesystem = permissions
-		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
+		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel, releaseStore); err != nil {
 			return err
 		}
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
@@ -84,7 +90,7 @@ func (c *OverrideCmd) Run() error {
 			return err
 		}
 		over.HostActions = actions
-		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
+		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel, releaseStore); err != nil {
 			return err
 		}
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
@@ -96,7 +102,7 @@ func (c *OverrideCmd) Run() error {
 			return err
 		}
 		over.FilePicker = grant
-		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
+		if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel, releaseStore); err != nil {
 			return err
 		}
 		c.Logger.Success("Override %s=%s saved for %s", c.Key, c.Value, appOrigin)
@@ -120,7 +126,7 @@ func (c *OverrideCmd) Run() error {
 	}
 
 	// Save the override
-	if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel); err != nil {
+	if err := saveOverrideAndEnrol(cpk, over, appOrigin, sel, releaseStore); err != nil {
 		return err
 	}
 
@@ -132,10 +138,26 @@ func (c *OverrideCmd) Run() error {
 // override changes the root a launch derives, so without re-enrolling here the
 // application keeps working exactly until the next launch, which then finds a
 // root the ledger does not hold and refuses it at every enforcement level.
-func saveOverrideAndEnrol(cpk cpak.Cpak, over types.Override, origin string, app types.Application) error {
+func saveOverrideAndEnrol(cpk cpak.Cpak, over types.Override, origin string, app types.Application, releaseStore func()) error {
 	if err := cpak.SaveOverride(over, origin, app.Version); err != nil {
 		return err
 	}
-	cpk.EnrolApplication(app)
-	return nil
+	releaseStore()
+
+	// The override is on disk by now, so an enrolment that did not happen is
+	// exactly the state this function exists to prevent, and it has to be said
+	// out loud rather than returned as success. Reporting it costs a message;
+	// not reporting it costs an application that refuses to launch and a user
+	// with no idea why.
+	enrolment := cpk.EnrolApplication(app)
+	switch enrolment.Outcome {
+	case cpak.EnrolmentRecorded, cpak.EnrolmentUnchanged:
+		return nil
+	}
+	if enrolment.Advice != "" {
+		return fmt.Errorf("the override was saved and %s could not be re-enrolled (%s): %w. %s",
+			origin, enrolment.Outcome, enrolment.Reason, enrolment.Advice)
+	}
+	return fmt.Errorf("the override was saved and %s could not be re-enrolled (%s): %w",
+		origin, enrolment.Outcome, enrolment.Reason)
 }
