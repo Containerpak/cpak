@@ -18,11 +18,18 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
-const addonConfigurationVersion = 1
+const addonConfigurationVersion = 2
 
+// The manifest says what a package was built to accept, and that is a
+// statement by whoever made it. Chosen is the other kind of selection: an
+// addon the owner of the machine put there themselves, past what the package
+// offers. The two are kept apart because they answer to different people, and
+// because a publisher dropping an addon must not silently keep composing it
+// while an addon the owner chose must survive exactly that.
 type addonConfiguration struct {
 	Version int      `json:"version"`
 	Enabled []string `json:"enabled"`
+	Chosen  []string `json:"chosen,omitempty"`
 }
 
 type AddonStatus struct {
@@ -66,35 +73,76 @@ func addonConfigurationKey(app types.Application) string {
 	}
 }
 
-func loadEnabledAddons(app types.Application) ([]string, error) {
+func loadAddonConfiguration(app types.Application) (addonConfiguration, error) {
 	path, err := addonConfigurationPath(app)
 	if err != nil {
-		return nil, err
+		return addonConfiguration{}, err
 	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return addonConfiguration{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return addonConfiguration{}, err
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var configuration addonConfiguration
 	if err := decoder.Decode(&configuration); err != nil {
-		return nil, fmt.Errorf("decode addon configuration: %w", err)
+		return addonConfiguration{}, fmt.Errorf("decode addon configuration: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("decode addon configuration: trailing data")
+		return addonConfiguration{}, fmt.Errorf("decode addon configuration: trailing data")
 	}
-	if configuration.Version != addonConfigurationVersion {
-		return nil, fmt.Errorf("unsupported addon configuration version %d", configuration.Version)
+	// Version 1 knew only what the manifest offered, so everything it holds is
+	// that, and it is read rather than refused.
+	if configuration.Version != 1 && configuration.Version != addonConfigurationVersion {
+		return addonConfiguration{}, fmt.Errorf("unsupported addon configuration version %d", configuration.Version)
 	}
-	return normalizedOrigins(configuration.Enabled), nil
+	return configuration, nil
+}
+
+// loadEnabledAddons answers with everything that is on, whoever turned it on.
+func loadEnabledAddons(app types.Application) ([]string, error) {
+	configuration, err := loadAddonConfiguration(app)
+	if err != nil {
+		return nil, err
+	}
+	return normalizedOrigins(append(append([]string{}, configuration.Enabled...), configuration.Chosen...)), nil
+}
+
+// loadChosenAddons answers with the ones the owner put there themselves.
+func loadChosenAddons(app types.Application) (map[string]bool, error) {
+	configuration, err := loadAddonConfiguration(app)
+	if err != nil {
+		return nil, err
+	}
+	chosen := make(map[string]bool, len(configuration.Chosen))
+	for _, origin := range normalizedOrigins(configuration.Chosen) {
+		chosen[origin] = true
+	}
+	return chosen, nil
 }
 
 func saveEnabledAddons(app types.Application, enabled []string) error {
+	chosen, err := loadChosenAddons(app)
+	if err != nil {
+		return err
+	}
+	keep := make([]string, 0, len(chosen))
+	offered := make([]string, 0, len(enabled))
+	for _, origin := range normalizedOrigins(enabled) {
+		if chosen[origin] {
+			keep = append(keep, origin)
+			continue
+		}
+		offered = append(offered, origin)
+	}
+	return writeAddonConfiguration(app, offered, keep)
+}
+
+func writeAddonConfiguration(app types.Application, enabled, chosen []string) error {
 	path, err := addonConfigurationPath(app)
 	if err != nil {
 		return err
@@ -105,6 +153,7 @@ func saveEnabledAddons(app types.Application, enabled []string) error {
 	data, err := json.MarshalIndent(addonConfiguration{
 		Version: addonConfigurationVersion,
 		Enabled: normalizedOrigins(enabled),
+		Chosen:  normalizedOrigins(chosen),
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -197,8 +246,21 @@ func (c *Cpak) AddonStatuses(app types.Application) ([]AddonStatus, error) {
 }
 
 func (c *Cpak) EnableAddon(app types.Application, origin string) error {
+	return c.enableAddon(app, origin, false)
+}
+
+// EnableChosenAddon turns on an addon the package does not offer. The manifest
+// is the publisher saying what they tested together, and it is not a rule the
+// owner of a machine has to obey: what it costs is that nobody but them
+// answers for the combination, so it is a separate call and never a fallback
+// from the ordinary one.
+func (c *Cpak) EnableChosenAddon(app types.Application, origin string) error {
+	return c.enableAddon(app, origin, true)
+}
+
+func (c *Cpak) enableAddon(app types.Application, origin string, chosen bool) error {
 	origin = strings.ToLower(strings.TrimSpace(origin))
-	if !supportedAddon(app, origin) {
+	if !supportedAddon(app, origin) && !chosen {
 		return fmt.Errorf("addon %s is not supported by %s", origin, app.Name)
 	}
 	if err := c.Install(origin, "main", "", ""); err != nil {
@@ -213,7 +275,16 @@ func (c *Cpak) EnableAddon(app types.Application, origin string) error {
 			return nil
 		}
 	}
-	if err := saveEnabledAddons(app, append(enabled, origin)); err != nil {
+	configuration, err := loadAddonConfiguration(app)
+	if err != nil {
+		return err
+	}
+	if chosen && !supportedAddon(app, origin) {
+		configuration.Chosen = append(configuration.Chosen, origin)
+	} else {
+		configuration.Enabled = append(configuration.Enabled, origin)
+	}
+	if err := writeAddonConfiguration(app, configuration.Enabled, configuration.Chosen); err != nil {
 		return err
 	}
 	if err := c.PrepareApplicationStorage(app); err != nil {
@@ -307,9 +378,16 @@ func (c *Cpak) resolveEnabledAddonsFromStore(app types.Application, store *Store
 	if len(enabled) == 0 {
 		return nil, nil
 	}
+	chosen, err := loadChosenAddons(app)
+	if err != nil {
+		return nil, err
+	}
 	enabledSet := make(map[string]bool, len(enabled))
 	for _, origin := range enabled {
-		if !supportedAddon(app, origin) {
+		// A package that stops offering an addon has withdrawn it, and going on
+		// composing it would be honouring a combination its publisher no longer
+		// stands behind. One the owner chose is not theirs to withdraw.
+		if !supportedAddon(app, origin) && !chosen[origin] {
 			return nil, fmt.Errorf("enabled addon %s is no longer supported by %s", origin, app.Name)
 		}
 		enabledSet[origin] = true
@@ -333,6 +411,25 @@ func (c *Cpak) resolveEnabledAddonsFromStore(app types.Application, store *Store
 		// dependency has to sit under it exactly as it would under a parent.
 		// Without this an addon can only ever contribute its own image, which
 		// is why a bundle that names other packages composes to nothing.
+		components, dependencyErr := c.resolveLayerDependenciesFromStore(addon, store)
+		if dependencyErr != nil {
+			return nil, fmt.Errorf("resolve what addon %s is built on: %w", origin, dependencyErr)
+		}
+		addons = append(addons, components...)
+		addons = append(addons, addon)
+		seen[origin] = true
+	}
+	for _, origin := range enabled {
+		if seen[origin] || !chosen[origin] {
+			continue
+		}
+		addon, getErr := store.GetApplicationByOrigin(origin, "", "main", "", "")
+		if getErr != nil || addon.CpakId == "" {
+			addon, getErr = store.GetApplicationByOrigin(origin, "", "", "", "")
+		}
+		if getErr != nil || addon.CpakId == "" {
+			return nil, fmt.Errorf("enabled addon %s is not installed", origin)
+		}
 		components, dependencyErr := c.resolveLayerDependenciesFromStore(addon, store)
 		if dependencyErr != nil {
 			return nil, fmt.Errorf("resolve what addon %s is built on: %w", origin, dependencyErr)

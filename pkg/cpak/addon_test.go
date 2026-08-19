@@ -250,3 +250,74 @@ func TestABundleIsStackedAboveWhatItBringsIn(t *testing.T) {
 		t.Fatalf("wrong order: %+v", addons)
 	}
 }
+
+// The manifest is the publisher saying what they tested together. It is not a
+// rule the owner of the machine has to obey, and refusing them outright means
+// every combination nobody thought of is impossible. What it costs is that
+// only they answer for it, so it is a separate call.
+func TestTheOwnerMayEnableAnAddonThePackageDoesNotOffer(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Name:    "Code",
+		Origin:  "github.com/containerpak/vscode",
+		Version: "main",
+	}
+	tool := types.Application{
+		CpakId: "tool", Origin: "github.com/containerpak/sdk-scm",
+		Branch: "main", Version: "main", ParsedLayers: []string{"scm"},
+	}
+	seedApplication(t, c, tool)
+
+	if err := c.EnableAddon(app, tool.Origin); err == nil {
+		t.Fatal("an addon the package does not offer was enabled by the ordinary call")
+	}
+
+	if err := saveChosenForTest(t, app, tool.Origin); err != nil {
+		t.Fatal(err)
+	}
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addons) != 1 || addons[0].Origin != tool.Origin {
+		t.Fatalf("the addon the owner chose was not composed: %+v", addons)
+	}
+}
+
+// A publisher dropping an addon withdraws a combination they stood behind, and
+// that has to stop composing. One the owner chose is not theirs to withdraw.
+func TestWithdrawingAnAddonDoesNotTouchWhatTheOwnerChose(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Name:    "Code",
+		Origin:  "github.com/containerpak/vscode",
+		Version: "main",
+	}
+	tool := types.Application{
+		CpakId: "tool", Origin: "github.com/containerpak/sdk-scm",
+		Branch: "main", Version: "main", ParsedLayers: []string{"scm"},
+	}
+	seedApplication(t, c, tool)
+	if err := saveChosenForTest(t, app, tool.Origin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.resolveEnabledAddons(app); err != nil {
+		t.Fatalf("a package that never offered it refused what the owner chose: %v", err)
+	}
+
+	// The same origin enabled the ordinary way, then withdrawn, must refuse.
+	other := types.Application{
+		Name: "Code", Origin: "github.com/containerpak/vscode", Version: "main",
+	}
+	if err := writeAddonConfiguration(other, []string{tool.Origin}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.resolveEnabledAddons(other); err == nil {
+		t.Fatal("an addon the package withdrew kept composing")
+	}
+}
+
+func saveChosenForTest(t *testing.T, app types.Application, origin string) error {
+	t.Helper()
+	return writeAddonConfiguration(app, nil, []string{origin})
+}

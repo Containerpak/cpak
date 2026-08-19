@@ -20,6 +20,7 @@ type AddonCmd struct {
 	AppOrigin   string `arg:"app_origin" help:"Application origin"`
 	AddonOrigin string `arg:"addon_origin" help:"Addon origin for enable or disable"`
 	JSON        bool   `cli:"json,j" help:"Print list output as JSON"`
+	Anyway      bool   `cli:"anyway" help:"Enable an addon the application does not offer, on your own responsibility"`
 
 	cli.Base
 }
@@ -58,7 +59,11 @@ func (c *AddonCmd) Run() error {
 		if c.AddonOrigin == "" {
 			return fmt.Errorf("addon origin is required for enable")
 		}
-		if err := cp.EnableAddon(app, c.AddonOrigin); err != nil {
+		enable := cp.EnableAddon
+		if c.Anyway {
+			enable = cp.EnableChosenAddon
+		}
+		if err := enable(app, c.AddonOrigin); err != nil {
 			return err
 		}
 		// An addon is part of the composed layers, so enabling one changes the
