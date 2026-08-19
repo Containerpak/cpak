@@ -71,14 +71,20 @@ func (l layout) registry() Registry {
 // sessionSearchPath keeps the distribution sessions reachable: a display
 // manager replaces its search path with the configured one, so dropping the
 // directories it scans by default would hide every session already installed.
-func (l layout) sessionSearchPath(standard []string) string {
+//
+// The separator belongs to the display manager and not to cpak. SDDM documents
+// SessionDir as a comma separated list and reads a colon as part of a single
+// directory name, which leaves it with one path that does not exist and a
+// greeter with no sessions at all. On a machine with only Wayland sessions
+// that locks every desktop out at once, so this is not a formatting detail.
+func (l layout) sessionSearchPath(standard []string, separator string) string {
 	directories := []string{l.sessions}
 	for _, path := range standard {
 		if path != l.sessions {
 			directories = append(directories, path)
 		}
 	}
-	return strings.Join(directories, ":")
+	return strings.Join(directories, separator)
 }
 
 // serviceDirectory is declared to the bus only when it sits outside the

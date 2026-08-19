@@ -49,17 +49,26 @@ var environmentManagers = []environmentManager{
 	},
 }
 
+// The two display managers spell a list of directories differently, and the
+// spelling is theirs. SDDM documents SessionDir as comma separated. LightDM
+// ships its own default as a colon separated pair, which is where this one
+// comes from.
+const (
+	sddmSeparator    = ","
+	lightdmSeparator = ":"
+)
+
 // publishSessions points every installed display manager at the session
 // directory and reports the ones that need a manual step.
 func publishSessions(target layout) ([]string, error) {
 	if displayManagerExists("/usr/bin/sddm", "/usr/local/bin/sddm") {
-		config := renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions))
+		config := renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions, sddmSeparator))
 		if err := writeSystemFile(sddmConfigPath, config); err != nil {
 			return nil, fmt.Errorf("write SDDM session configuration: %w", err)
 		}
 	}
 	if displayManagerExists("/usr/sbin/lightdm", "/usr/bin/lightdm", "/usr/local/sbin/lightdm", "/usr/local/bin/lightdm") {
-		config := renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions))
+		config := renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions, lightdmSeparator))
 		if err := writeSystemFile(lightdmConfigPath, config); err != nil {
 			return nil, fmt.Errorf("write LightDM session configuration: %w", err)
 		}

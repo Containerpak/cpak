@@ -163,8 +163,8 @@ func TestRegistryPurgeRemovesOnlyRegisteredSessions(t *testing.T) {
 func TestDisplayManagerConfigsIncludeLocalSessionDirectory(t *testing.T) {
 	target := layoutFor(standardPrefix)
 	configs := map[string][]byte{
-		"SDDM":    renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions)),
-		"LightDM": renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions)),
+		"SDDM":    renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions, sddmSeparator)),
+		"LightDM": renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions, lightdmSeparator)),
 	}
 	for name, config := range configs {
 		if !strings.Contains(string(config), target.sessions) {

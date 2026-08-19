@@ -111,13 +111,53 @@ func TestRenderedIntegrationFollowsTheResolvedPrefix(t *testing.T) {
 }
 
 func TestSessionSearchPathKeepsSystemDirectories(t *testing.T) {
-	relocated := layoutFor("/opt/cpak").sessionSearchPath(sddmSessions)
+	relocated := layoutFor("/opt/cpak").sessionSearchPath(sddmSessions, ":")
 	want := "/opt/cpak/share/wayland-sessions:/usr/local/share/wayland-sessions:" + DefaultSystemSessions
 	if relocated != want {
 		t.Fatalf("got %s, want %s", relocated, want)
 	}
-	standard := layoutFor(standardPrefix).sessionSearchPath(sddmSessions)
+	standard := layoutFor(standardPrefix).sessionSearchPath(sddmSessions, ":")
 	if standard != "/usr/local/share/wayland-sessions:"+DefaultSystemSessions {
 		t.Fatalf("the standard search path repeats or drops a directory: %s", standard)
+	}
+}
+
+// SDDM reads SessionDir as a comma separated list, so a colon makes the whole
+// value one directory name that does not exist. The greeter then offers no
+// sessions, and on a Wayland only machine that is every desktop on the host at
+// once, recoverable only from a TTY. The separator is the display manager's
+// and never cpak's.
+func TestEachDisplayManagerGetsTheSeparatorItReads(t *testing.T) {
+	target := layoutFor("/opt/cpak")
+
+	sddm := string(renderAsset(sddmConfig, "@SESSIONS@", target.sessionSearchPath(sddmSessions, sddmSeparator)))
+	if !strings.Contains(sddm, "SessionDir=/opt/cpak/share/wayland-sessions,") {
+		t.Fatalf("SDDM is not given a comma separated list:\n%s", sddm)
+	}
+	if strings.Contains(sddm, "wayland-sessions:") {
+		t.Fatalf("SDDM is given a colon, which it reads as part of a directory name:\n%s", sddm)
+	}
+
+	lightdm := string(renderAsset(lightdmConfig, "@SESSIONS@", target.sessionSearchPath(lightdmSessions, lightdmSeparator)))
+	if !strings.Contains(lightdm, "sessions-directory=/opt/cpak/share/wayland-sessions:") {
+		t.Fatalf("LightDM is not given the colon separated list its own default uses:\n%s", lightdm)
+	}
+}
+
+// Whatever the separator, the directories a display manager already scanned
+// have to stay in the list: replacing its search path is what makes dropping
+// one of them hide every session the distribution installed.
+func TestNoSeparatorLosesADirectory(t *testing.T) {
+	for _, separator := range []string{",", ":"} {
+		path := layoutFor("/opt/cpak").sessionSearchPath(sddmSessions, separator)
+		parts := strings.Split(path, separator)
+		if len(parts) != 3 {
+			t.Fatalf("%q produced %d directories: %s", separator, len(parts), path)
+		}
+		for _, part := range parts {
+			if !strings.HasPrefix(part, "/") || strings.ContainsAny(part, ",:") {
+				t.Fatalf("%q produced a directory that is not one: %q", separator, part)
+			}
+		}
 	}
 }
