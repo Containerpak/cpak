@@ -199,7 +199,7 @@ func generateGitDir(gitURL string, gitDir string) (gitPath string, err error) {
 // fetchFileContent fetches the content of a file from a remote URL and
 // stores it in the given cache directory, returning the file content as
 // a byte slice.
-func (r *RepoProvider) fetchFileContent(rawURL, gitDir string, bypassCache bool) (fileContent []byte, err error) {
+func (r *RepoProvider) fetchFileContent(rawURL, gitDir, name string, bypassCache bool) (fileContent []byte, err error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file URL: %w", err)
@@ -233,7 +233,15 @@ func (r *RepoProvider) fetchFileContent(rawURL, gitDir string, bypassCache bool)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	filePath := filepath.Join(gitDir, filepath.Base(parsedURL.Path))
+	// The name is the caller's, never the server's. It used to be taken from
+	// the URL that had just been fetched, and a reference carrying a question
+	// mark split into a query for url.Parse while filepath.Join went on
+	// normalising the rest, so a publisher chose both where the file landed and
+	// what it was called.
+	filePath, err := containedPath(gitDir, name)
+	if err != nil {
+		return nil, err
+	}
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file: %w", err)
@@ -252,26 +260,39 @@ func (r *RepoProvider) fetchFileContent(rawURL, gitDir string, bypassCache bool)
 // given directory. The directory can be either a branch, a release, or a
 // commit.
 // I am not really happy with this implementation, but it works for now.
-func (r *RepoProvider) getFileInDirectory(filePath, reference, gitDir string, bypassCache bool) (fileContent []byte, err error) {
+func (r *RepoProvider) getFileInDirectory(filePath, reference, kind string, bypassCache bool) (fileContent []byte, err error) {
+	if err = validateGitReference(reference); err != nil {
+		return nil, err
+	}
+	name, err := singlePathComponent(filePath)
+	if err != nil {
+		return nil, err
+	}
+
 	// Generate URLs for the file in both GitHub and GitLab formats
 	githubURL := fmt.Sprintf("%s://%s/raw/%s/%s", r.scheme(), r.Origin, reference, filePath)
 	gitlabURL := fmt.Sprintf("%s://%s/-/raw/%s/%s", r.scheme(), r.Origin, reference, filePath)
 
-	// Generate the local path for the given directory
-	dirPath := filepath.Join(r.GitDir, gitDir)
+	// The reference is escaped rather than used as it stands. A name git accepts
+	// is not automatically a safe path component, and the manifest cache is not
+	// the place to find that out.
+	dirPath, err := containedPath(r.GitDir, filepath.Join(kind, url.PathEscape(reference)))
+	if err != nil {
+		return nil, err
+	}
 	err = os.MkdirAll(dirPath, os.ModePerm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// Try to fetch the file content from GitHub first
-	fileContent, err = r.fetchFileContent(githubURL, dirPath, bypassCache)
+	fileContent, err = r.fetchFileContent(githubURL, dirPath, name, bypassCache)
 	if err == nil {
 		return fileContent, nil
 	}
 
 	// If fetching from GitHub fails, try GitLab
-	fileContent, err = r.fetchFileContent(gitlabURL, dirPath, bypassCache)
+	fileContent, err = r.fetchFileContent(gitlabURL, dirPath, name, bypassCache)
 	if err == nil {
 		return fileContent, nil
 	}
@@ -282,19 +303,19 @@ func (r *RepoProvider) getFileInDirectory(filePath, reference, gitDir string, by
 // GetFileInBranch is a wrapper around getFileInDirectory, that fetches a file
 // from a remote git repository, in the given branch.
 func (r *RepoProvider) GetFileInBranch(filePath, branch string) (fileContent []byte, err error) {
-	return r.getFileInDirectory(filePath, branch, filepath.Join("branches", branch), true)
+	return r.getFileInDirectory(filePath, branch, "branches", true)
 }
 
 // GetFileInRelease is a wrapper around getFileInDirectory, that fetches a file
 // from a remote git repository, in the given release.
 func (r *RepoProvider) GetFileInRelease(filePath, release string) (fileContent []byte, err error) {
-	return r.getFileInDirectory(filePath, release, filepath.Join("releases", release), false)
+	return r.getFileInDirectory(filePath, release, "releases", false)
 }
 
 // GetFileInCommit is a wrapper around getFileInDirectory, that fetches a file
 // from a remote git repository, in the given commit.
 func (r *RepoProvider) GetFileInCommit(filePath, commit string) (fileContent []byte, err error) {
-	return r.getFileInDirectory(filePath, commit, filepath.Join("commits", commit), false)
+	return r.getFileInDirectory(filePath, commit, "commits", false)
 }
 
 // GetLatestRelease returns the tag of the latest release published for the
