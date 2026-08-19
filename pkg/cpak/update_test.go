@@ -25,7 +25,7 @@ func newTestCpak(t testing.TB) *Cpak {
 	t.Setenv("HOME", filepath.Join(root, "home"))
 
 	return &Cpak{
-		Options: types.CpakOptions{
+		Options: Options{
 			StorePath:     filepath.Join(root, "store"),
 			ExportsPath:   filepath.Join(root, "exports"),
 			ManifestsPath: filepath.Join(root, "manifests"),

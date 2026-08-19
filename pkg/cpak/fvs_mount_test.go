@@ -31,7 +31,7 @@ func legacyStore(t *testing.T, layers ...string) Cpak {
 			t.Fatal(err)
 		}
 	}
-	return Cpak{Options: types.CpakOptions{StorePath: root}}
+	return Cpak{Options: Options{StorePath: root}}
 }
 
 // plantLegacyLayer writes a tree where the legacy layout keeps a layer, which

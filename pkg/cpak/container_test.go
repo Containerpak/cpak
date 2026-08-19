@@ -70,7 +70,7 @@ func TestBuildContainerPath(t *testing.T) {
 }
 
 func TestContainerScopeLockSerializesTheSameApplication(t *testing.T) {
-	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
 	firstUnlock, err := cp.lockContainerScope("application")
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestMountPersistentFileGrantsRestoresStoredGrant(t *testing.T) {
 		restored <- request.Grant
 		_ = grantproto.Reply(connection, grantproto.Response{Target: request.Grant.Target})
 	}()
-	cp := Cpak{Options: types.CpakOptions{StorePath: storePath}}
+	cp := Cpak{Options: Options{StorePath: storePath}}
 	container := types.Container{GrantSocketPath: socket, StatePath: t.TempDir()}
 	if err = cp.mountPersistentFileGrants(grant.Origin, container); err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestApplicationPtraceRequiresPrivateNestedNamespaces(t *testing.T) {
 }
 
 func TestApplicationMachineIDIsStableAndPrivate(t *testing.T) {
-	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
 	first, err := cp.applicationMachineID("application-one")
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func TestContainerEnvironmentUsesThePrivateDesktopBusForFileSelection(t *testing
 }
 
 func TestPrivateApplicationHomeIsPersistentAndRestricted(t *testing.T) {
-	cp := Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
 	path, err := cp.privateApplicationHome("application-id")
 	if err != nil {
 		t.Fatal(err)

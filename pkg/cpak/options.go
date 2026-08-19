@@ -2,14 +2,20 @@
  * Copyright (c) 2025 Fabricators and Mirko Brombin <brombin94@gmail.com>
  * SPDX-License-Identifier: LGPL-2.1-only
  */
-package types
+package cpak
 
 import (
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
-// CpakOptions is the struct that represents the options for the Cpak struct.
-type CpakOptions struct {
+// Options is how a Cpak is configured: where it keeps what it downloads, what
+// it exports, and which driver checks out a layer.
+//
+// It lives here rather than in pkg/types because it is not part of the domain a
+// manifest describes, it is how one installation of cpak is set up. Keeping it
+// out of pkg/types is also what lets that package be built for a target with no
+// filesystem, since the content store it names cannot be.
+type Options struct {
 	// BinPath is the path to the directory where the internal binaries
 	// will be stored.
 	BinPath string `json:"bin_path" conf:"bin_path"`

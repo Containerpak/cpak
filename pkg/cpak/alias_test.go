@@ -15,7 +15,7 @@ import (
 
 func newAliasTestCpak(t *testing.T) *Cpak {
 	t.Helper()
-	return &Cpak{Options: types.CpakOptions{StorePath: t.TempDir()}}
+	return &Cpak{Options: Options{StorePath: t.TempDir()}}
 }
 
 func addAliasTestApplication(t *testing.T, c *Cpak, origin string) {

@@ -17,7 +17,6 @@ import (
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/storaged"
 	"github.com/mirkobrombin/cpak/pkg/tools"
-	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
 )
 
@@ -427,7 +426,7 @@ func BenchmarkMeasureCheckout(b *testing.B) {
 	if err := tools.CheckResolveSupport(); err != nil {
 		b.Skipf("the restricted resolution is unavailable here: %v", err)
 	}
-	cp := &Cpak{Options: types.CpakOptions{StorePath: b.TempDir()}}
+	cp := &Cpak{Options: Options{StorePath: b.TempDir()}}
 	directory := filepath.Join(cp.storageDriverRoot("fvs"), "layers", "layer", "rootfs")
 	for group := range 200 {
 		nested := filepath.Join(directory, "usr", "share", fmt.Sprintf("group-%03d", group))

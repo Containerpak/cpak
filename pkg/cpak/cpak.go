@@ -12,7 +12,6 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	"github.com/mirkobrombin/cpak/pkg/logger"
-	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/mirkobrombin/go-foundation/v2/core/configuration"
 	configenv "github.com/mirkobrombin/go-foundation/v2/core/configuration/source/env"
@@ -21,7 +20,7 @@ import (
 )
 
 type Cpak struct {
-	Options            types.CpakOptions
+	Options            Options
 	Ctx                context.Context
 	servicePID         int
 	serviceSocketOwned bool
@@ -51,7 +50,7 @@ func NewCpak() (cpak Cpak, err error) {
 	return
 }
 
-func getCpakOptions() (options types.CpakOptions, err error) {
+func getCpakOptions() (options Options, err error) {
 	homedir, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -62,7 +61,7 @@ func getCpakOptions() (options types.CpakOptions, err error) {
 		installationPath = filepath.Join(homedir, ".local", "share", "cpak")
 	}
 
-	options = types.CpakOptions{
+	options = Options{
 		BinPath:       filepath.Join(installationPath, "bin"),
 		ManifestsPath: filepath.Join(installationPath, "manifests"),
 		ExportsPath:   filepath.Join(installationPath, "exports"),
@@ -149,7 +148,7 @@ func (c *Cpak) daBaDeeStoreOptions() store.Options {
 	return options
 }
 
-func createCpakDirs(options *types.CpakOptions) error {
+func createCpakDirs(options *Options) error {
 	dirs := []string{
 		options.BinPath,
 		options.ManifestsPath,

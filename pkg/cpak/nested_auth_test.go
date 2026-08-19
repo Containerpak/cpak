@@ -99,7 +99,7 @@ func nestedAuthFixture(t *testing.T) (*Cpak, types.Application, types.Applicatio
 	if err = store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return &Cpak{Options: types.CpakOptions{StorePath: storePath}}, parent, child
+	return &Cpak{Options: Options{StorePath: storePath}}, parent, child
 }
 
 func TestDependencyLinksExposeOnlyDeclaredExports(t *testing.T) {
