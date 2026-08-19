@@ -223,7 +223,7 @@ func TestContainerEnvironmentKeepsImageAndOverrideValues(t *testing.T) {
 	}
 	container := types.Container{CpakId: "container-id"}
 
-	env, err := containerEnvironment(app, container)
+	env, err := containerEnvironment(app, resolvedOverride(app), container)
 	if err != nil {
 		t.Fatalf("container environment: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T)
 		CpakId:                 "container-id",
 		SystemBrokerSocketPath: "/tmp/system-broker.sock",
 	}
-	env, err := containerEnvironment(app, container)
+	env, err := containerEnvironment(app, resolvedOverride(app), container)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestContainerEnvironmentUsesThePrivateDesktopBusForFileSelection(t *testing
 		CpakId:               "container-id",
 		DesktopBusSocketPath: "/tmp/desktop-bus.sock",
 	}
-	environment, err := containerEnvironment(app, container)
+	environment, err := containerEnvironment(app, resolvedOverride(app), container)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestContainerEnvironmentDisablesMissingAtSpiBridge(t *testing.T) {
 		Config:         `{"config":{}}`,
 		ParsedOverride: types.Override{SocketAtSpiBus: true},
 	}
-	environment, err := containerEnvironment(app, types.Container{CpakId: "container-id"})
+	environment, err := containerEnvironment(app, resolvedOverride(app), types.Container{CpakId: "container-id"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestContainerEnvironmentIncludesHostApplicationCatalog(t *testing.T) {
 		Config:         `{"config":{"Env":["XDG_DATA_DIRS=/opt/desktop/share:/usr/share"]}}`,
 		ParsedOverride: types.Override{HostApplications: true},
 	}
-	environment, err := containerEnvironment(app, types.Container{CpakId: "container-id"})
+	environment, err := containerEnvironment(app, resolvedOverride(app), types.Container{CpakId: "container-id"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +618,7 @@ func TestContainerEnvironmentAppliesTheHostLocaleOverTheManifest(t *testing.T) {
 		Config:         `{"config":{"Env":["PATH=/usr/bin"]}}`,
 		ParsedOverride: types.Override{Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}},
 	}
-	environment, err := containerEnvironment(app, types.Container{CpakId: "container-id"})
+	environment, err := containerEnvironment(app, resolvedOverride(app), types.Container{CpakId: "container-id"})
 	if err != nil {
 		t.Fatal(err)
 	}

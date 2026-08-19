@@ -97,6 +97,36 @@ type Application struct {
 	// ParsedOverride is a set of permissions
 	ParsedOverride Override `json:"parsed_override"`
 
+	// PulledIn records that this installation exists because another package
+	// declared it, and not because the user named it. What the user agreed to
+	// is the package that pulled this one in, so it gets no launchers of its
+	// own and, when it is started directly, it is held to what that package
+	// may do.
+	//
+	// It is absent from every record written before it was introduced, and
+	// those keep the answer they had: an installation cpak cannot tell apart
+	// from one the user named is treated as one the user named, because
+	// narrowing an application somebody has been launching for months, on a
+	// guess, is the worse of the two mistakes.
+	//
+	// Naming the same origin in an install of its own clears it: the user has
+	// then asked for the package in their own right, which is the whole of
+	// what this field records.
+	PulledIn bool `json:"pulled_in,omitempty"`
+
+	// PulledInBy is the origin of the installation that brought this one here,
+	// and it is the only one with a say in how this one starts on its own. Any
+	// package may declare any origin as a dependency; declaring one is not the
+	// same as having been the reason it is installed, and without this a
+	// publisher could narrow an installation they had nothing to do with by
+	// naming it.
+	//
+	// It is empty on a record the user named, and empty on a record written
+	// before it existed. In the second case cpak does not know which package
+	// brought the installation here, and every package that declares it is
+	// taken to have a say, which is the narrower of the two answers.
+	PulledInBy string `json:"pulled_in_by,omitempty"`
+
 	// Raw fields
 	DependenciesRaw string `json:"dependencies_raw"`
 	OverrideRaw     string `json:"override_raw"`

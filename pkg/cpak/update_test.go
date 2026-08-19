@@ -1130,3 +1130,49 @@ func TestUpdatingAPackageInstalledBeforeTheMigrationLeavesItLaunchable(t *testin
 		t.Fatalf("got verdict %s, want the updated launch to be recognised", identity.Verdict)
 	}
 }
+
+// The same pair of answers, written one line apart in the record an update
+// leaves. A v1 package keeps the grants in the migrated form the rest of cpak
+// reads, and a package another one pulled in stays one the user never named:
+// an update refreshes what a package is, never who asked for it.
+func TestUpdatingAPulledInV1PackageKeepsWhatItGrantsAndWhoNamedIt(t *testing.T) {
+	c := newTestCpak(t)
+	seedApplication(t, c, types.Application{
+		CpakId:         testCpakId("branch", "main"),
+		Name:           "library",
+		Version:        "main",
+		Branch:         "main",
+		Origin:         testOrigin,
+		ParsedLayers:   []string{"oldlayer"},
+		ParsedBinaries: []string{"/usr/bin/library"},
+		Config:         "{}",
+		ParsedOverride: types.Override{FsHostHome: true},
+		PulledIn:       true,
+		PulledInBy:     "github.com/user/parent",
+	})
+
+	manifest := newTestManifest()
+	manifest.ManifestVersion = "1.0"
+	manifest.Override.FsHostHome = true
+	stub := &updateStub{manifest: manifest, layers: []string{"newlayer"}, config: "{}"}
+	results, err := c.update(testOrigin, stub.deps())
+	if err != nil {
+		t.Fatalf("update returned an error: %v", err)
+	}
+	if results[0].Status != types.UpdateStatusUpdated {
+		t.Fatalf("expected status updated, got %q (%s)", results[0].Status, results[0].Reason)
+	}
+
+	apps := storedApplications(t, c)
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 stored application, got %d", len(apps))
+	}
+	stored := apps[0]
+	want := []types.FilesystemPermission{{Path: "home", Access: "read-write"}}
+	if stored.ParsedOverride.FsHostHome || !reflect.DeepEqual(stored.ParsedOverride.Filesystem, want) {
+		t.Fatalf("stored grants: got %+v, want %v", stored.ParsedOverride, want)
+	}
+	if !stored.PulledIn || stored.PulledInBy != "github.com/user/parent" {
+		t.Fatalf("the update forgot who brought this installation here: %+v", stored)
+	}
+}

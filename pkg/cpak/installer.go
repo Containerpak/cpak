@@ -45,6 +45,23 @@ type InstallOptions struct {
 	CreateExports   bool
 	ManifestLock    *types.ManifestLock
 	ResolveImageRef bool
+
+	// PulledIn marks an installation the user never named, which is every
+	// dependency an installation drags in behind the package that was asked
+	// for. It is recorded on the application, since the answer is needed long
+	// after the install is over.
+	PulledIn bool
+
+	// PulledInBy is the origin of the package that is dragging this one in,
+	// which is the one installation with a say in how it starts on its own.
+	// It travels with PulledIn and means nothing without it.
+	PulledInBy string
+
+	// ResolvedDependencies are the dependency manifests the caller already
+	// fetched, so that a client which had to resolve the graph to describe it
+	// does not make cpak fetch every one of them a second time. A lock still
+	// wins over them: it is the stronger statement about the same graph.
+	ResolvedDependencies []ResolvedDependency
 }
 
 // InstallWithOptions installs a remote package with explicit options.
@@ -135,6 +152,27 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 
 	existingApp, _ := c.getStoredApplication(origin, version, branch, commit, release)
 	if existingApp.CpakId != "" {
+		// Naming an origin that is already here as somebody else's dependency
+		// is the user asking for it in their own right, and it is the only way
+		// back out of the narrowing: the record stops being pulled in, it gets
+		// the launchers it was never given, and its next launch answers to
+		// nobody but its own policy. Nothing here widens the other direction,
+		// since a dependency install of a package the user named leaves the
+		// record exactly as it found it.
+		if existingApp.PulledIn && !options.PulledIn {
+			existingApp.PulledIn = false
+			existingApp.PulledInBy = ""
+			if err = c.storeApplication(existingApp); err != nil {
+				return
+			}
+			if options.CreateExports {
+				if err = c.createExports(existingApp); err != nil {
+					return
+				}
+			}
+			logger.Printf("%s was already here as a dependency of another package and is now installed in its own right", manifest.Name)
+			return
+		}
 		logger.Printf("%s is already installed from %s; run an audit if it is not working as expected", manifest.Name, origin)
 		return
 	}
@@ -203,6 +241,8 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		ImageDigest:          imageDigest,
 		ManifestDigest:       manifestDigest,
 		ParsedOverride:       override,
+		PulledIn:             options.PulledIn,
+		PulledInBy:           options.PulledInBy,
 	}
 	if err = c.PrepareApplicationStorage(app); err != nil {
 		return
@@ -273,6 +313,95 @@ func manifestIdentityDigest(manifest *types.CpakManifest) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// ResolvedDependency is a package an installation pulls in on its own: the
+// origin it resolves to, the selector it is taken at, and the manifest its own
+// publisher wrote, which is the one that asks for the permissions it will run
+// with.
+type ResolvedDependency struct {
+	Origin   string
+	Branch   string
+	Release  string
+	Commit   string
+	Mode     string
+	Manifest *types.CpakManifest
+}
+
+// ResolveDependencies answers with every package an installation of the given
+// manifest would install beside it, transitively and in the order they are
+// installed.
+//
+// A dependency is installed as a package of its own, with the permissions its
+// publisher asked for and not the ones the parent asked for, so a client that
+// puts an installation to the user cannot describe it without these. The
+// manifests are fetched here rather than at install time so that the answer is
+// in hand before anything is installed, and the answer can be handed back to
+// the installer through InstallOptions so that nothing is fetched twice.
+func (c *Cpak) ResolveDependencies(origin string, manifest *types.CpakManifest) ([]ResolvedDependency, error) {
+	return c.resolveDependencies(origin, manifest, c.FetchManifest, map[string]bool{})
+}
+
+func (c *Cpak) resolveDependencies(origin string, manifest *types.CpakManifest, fetchManifest func(string, string, string, string) (*types.CpakManifest, error), seen map[string]bool) ([]ResolvedDependency, error) {
+	resolved := []ResolvedDependency{}
+	for _, declared := range manifest.Dependencies {
+		dependencyOrigin, err := resolveDependencyOrigin(origin, declared.Origin)
+		if err != nil {
+			return nil, err
+		}
+		branch, release, commit := dependencySelectors(declared)
+
+		// A package already in the answer is not fetched again, which is also
+		// what keeps a dependency loop from being followed forever.
+		key := lockedPackageKey(dependencyOrigin, branch, release, commit)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		dependencyManifest, err := fetchManifest(dependencyOrigin, branch, release, commit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve dependency %s: %w", dependencyOrigin, err)
+		}
+		if dependencyManifest == nil {
+			return nil, fmt.Errorf("failed to resolve dependency %s: no manifest returned", dependencyOrigin)
+		}
+		// The whole point of resolving here is that what comes back is put to
+		// the user, and a manifest nobody has checked is publisher text on its
+		// way to a terminal. It is held to the same rules every other fetched
+		// manifest is held to, and it is held to them before it is described
+		// rather than when the install reaches it.
+		if err = c.ValidateManifest(dependencyManifest); err != nil {
+			return nil, fmt.Errorf("failed to resolve dependency %s: %w", dependencyOrigin, err)
+		}
+		resolved = append(resolved, ResolvedDependency{
+			Origin:   dependencyOrigin,
+			Branch:   branch,
+			Release:  release,
+			Commit:   commit,
+			Mode:     declared.Mode,
+			Manifest: dependencyManifest,
+		})
+
+		nested, err := c.resolveDependencies(dependencyOrigin, dependencyManifest, fetchManifest, seen)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, nested...)
+	}
+	return resolved, nil
+}
+
+// resolvedDependencyManifest answers with the manifest the caller already
+// fetched for the given package, if it fetched one.
+func resolvedDependencyManifest(resolved []ResolvedDependency, origin, branch, release, commit string) (*types.CpakManifest, bool) {
+	key := lockedPackageKey(origin, branch, release, commit)
+	for _, dependency := range resolved {
+		if lockedPackageKey(dependency.Origin, dependency.Branch, dependency.Release, dependency.Commit) == key {
+			return dependency.Manifest, true
+		}
+	}
+	return nil, false
+}
+
 // installDependencies installs the dependencies declared in the given manifest
 // and returns them in their parsed form.
 //
@@ -299,6 +428,11 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 		branch, release, commit := dependencySelectors(depManifest)
 		dependencyOptions := options
 		dependencyOptions.ResolveImageRef = true
+		// The user named the package that declares this one, never this one,
+		// and the record says so from here on, together with which package it
+		// came here behind.
+		dependencyOptions.PulledIn = true
+		dependencyOptions.PulledInBy = origin
 		if depManifest.IsLayer() {
 			dependencyOptions.CreateExports = false
 		}
@@ -310,6 +444,8 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 			errInstallDep = c.InstallCpakWithOptions(depOrigin, &lockedManifest, branch, commit, release, dependencyOptions)
 		} else if options.ManifestLock != nil {
 			errInstallDep = fmt.Errorf("dependency is missing from lock: %s", depOrigin)
+		} else if resolved, ok := resolvedDependencyManifest(options.ResolvedDependencies, depOrigin, branch, release, commit); ok {
+			errInstallDep = c.InstallCpakWithOptions(depOrigin, resolved, branch, commit, release, dependencyOptions)
 		} else {
 			errInstallDep = c.InstallWithOptions(depOrigin, branch, release, commit, dependencyOptions)
 		}
@@ -375,7 +511,22 @@ func isURL(s string) bool {
 }
 
 // createExports creates the exports for a given application.
+//
+// A package the user never named gets none. A launcher in the menu and a
+// binary on the path are an invitation to start a package nobody was shown,
+// under the permissions its own publisher asked for, and the user agreed to
+// the package that pulled it in rather than to this one; that package still
+// reaches it through a nested run, which holds it to the intersection.
+//
+// The answer is given here rather than at the install, because the install is
+// not the only path that exports: an update, a rollback and an aborted
+// transaction all rebuild the exports of an application from what the store
+// holds, and an origin that flipped between exported and not depending on
+// which command touched it last would be worse than either answer.
 func (c *Cpak) createExports(app types.Application) (err error) {
+	if app.PulledIn {
+		return nil
+	}
 	if len(app.ParsedDesktopEntries) > 0 {
 		entries, entriesErr := c.fvsMergedEntries(app.ParsedLayers)
 		if entriesErr != nil {

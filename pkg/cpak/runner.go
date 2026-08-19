@@ -148,7 +148,16 @@ func (c *Cpak) RunInstance(origin string, version string, branch string, commit 
 		return fmt.Errorf("no application found for origin %s and version/criteria %s: %w", origin, version, err)
 	}
 
-	return c.runApplicationInstanceWithStore(app, resolvedOverride(app), instance, binary, verbose, false, store, extraArgs...)
+	// A package the user never named is held to what the packages that pulled
+	// it in may do. Reading the store can fail, and then the launch fails with
+	// it rather than going ahead on the policy the package asked for itself.
+	policy, err := standaloneLaunchPolicy(store, app)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+
+	return c.runApplicationInstanceWithStore(app, policy, instance, binary, verbose, false, store, extraArgs...)
 }
 
 func (c *Cpak) RunAuthorized(params types.RequestParams, verbose bool) error {
@@ -157,25 +166,25 @@ func (c *Cpak) RunAuthorized(params types.RequestParams, verbose bool) error {
 	if err != nil {
 		return err
 	}
-	return c.runApplication(authorized.child, authorized.override, authorized.binary, verbose, true, params.ExtraArgs...)
+	return c.runApplication(authorized.child, authorized.policy, authorized.binary, verbose, true, params.ExtraArgs...)
 }
 
-func (c *Cpak) runApplication(app types.Application, override types.Override, binary string, verbose, nested bool, extraArgs ...string) error {
-	return c.runApplicationInstance(app, override, "", binary, verbose, nested, extraArgs...)
+func (c *Cpak) runApplication(app types.Application, policy launchPolicy, binary string, verbose, nested bool, extraArgs ...string) error {
+	return c.runApplicationInstance(app, policy, "", binary, verbose, nested, extraArgs...)
 }
 
-func (c *Cpak) runApplicationInstance(app types.Application, override types.Override, instance, binary string, verbose, nested bool, extraArgs ...string) error {
-	return c.runApplicationInstanceWithStore(app, override, instance, binary, verbose, nested, nil, extraArgs...)
+func (c *Cpak) runApplicationInstance(app types.Application, policy launchPolicy, instance, binary string, verbose, nested bool, extraArgs ...string) error {
+	return c.runApplicationInstanceWithStore(app, policy, instance, binary, verbose, nested, nil, extraArgs...)
 }
 
-func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override types.Override, instance, binary string, verbose, nested bool, store *Store, extraArgs ...string) error {
+func (c *Cpak) runApplicationInstanceWithStore(app types.Application, policy launchPolicy, instance, binary string, verbose, nested bool, store *Store, extraArgs ...string) error {
 	startTime := time.Now()
 	var container types.Container
 	var err error
 	if nested {
-		container, err = c.PrepareNestedContainer(app, override)
+		container, err = c.prepareNestedContainer(app, policy)
 	} else {
-		container, err = c.prepareContainer(app, override, ApplicationScope(app.CpakId, instance), instance, store)
+		container, err = c.prepareContainer(app, policy, ApplicationScope(app.CpakId, instance), instance, store)
 	}
 	if err != nil {
 		return err
@@ -187,7 +196,7 @@ func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override t
 		logger.Printf("Container creation took %s", time.Since(startTime))
 	}
 	if !nested && c.desktopLaunch {
-		extraArgs, err = c.prepareDesktopLaunchArguments(app.Origin, override.Filesystem, container, extraArgs)
+		extraArgs, err = c.prepareDesktopLaunchArguments(app.Origin, policy.effective.Filesystem, container, extraArgs)
 		if err != nil {
 			return err
 		}
@@ -195,7 +204,7 @@ func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override t
 
 	if nested {
 		command := append([]string{binary}, extraArgs...)
-		return c.ExecInContainer(app, container, command)
+		return c.ExecInContainer(app, policy.effective, container, command)
 	}
 
 	command := []string{}
@@ -237,7 +246,7 @@ func (c *Cpak) runApplicationInstanceWithStore(app types.Application, override t
 		command = append(command, extraArgs...)
 	}
 
-	return c.ExecInContainer(app, container, command)
+	return c.ExecInContainer(app, policy.effective, container, command)
 }
 
 // prepareSocketListener makes sure the cpak service is listening before a

@@ -192,33 +192,33 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 	if authorized.child.CpakId != child.CpakId || authorized.binary != "/usr/bin/child" {
 		t.Fatalf("authorized wrong child: %+v", authorized)
 	}
-	if authorized.override.Network {
-		t.Fatalf("child gained parent-denied permissions: %+v", authorized.override)
+	if authorized.policy.effective.Network {
+		t.Fatalf("child gained parent-denied permissions: %+v", authorized.policy.effective)
 	}
-	if !authorized.override.DeviceDri {
+	if !authorized.policy.effective.DeviceDri {
 		t.Fatal("a permission granted by both applications was dropped")
 	}
-	if !authorized.override.OpenURI {
+	if !authorized.policy.effective.OpenURI {
 		t.Fatal("a system broker permission granted by both applications was dropped")
 	}
-	if !authorized.override.UserNamespaces {
+	if !authorized.policy.effective.UserNamespaces {
 		t.Fatal("a nested namespace permission granted by both applications was dropped")
 	}
-	if len(authorized.override.Filesystem) != 2 || authorized.override.Filesystem[0] != (types.FilesystemPermission{Path: "/games/title", Access: "read-only"}) || authorized.override.Filesystem[1] != (types.FilesystemPermission{Path: "/shared", Access: "read-write"}) {
-		t.Fatalf("filesystem intersection: %v", authorized.override.Filesystem)
+	if len(authorized.policy.effective.Filesystem) != 2 || authorized.policy.effective.Filesystem[0] != (types.FilesystemPermission{Path: "/games/title", Access: "read-only"}) || authorized.policy.effective.Filesystem[1] != (types.FilesystemPermission{Path: "/shared", Access: "read-write"}) {
+		t.Fatalf("filesystem intersection: %v", authorized.policy.effective.Filesystem)
 	}
-	if authorized.override.MemoryMaxMB != 512 || authorized.override.CPUQuota != 50 || authorized.override.PidsMax != 50 {
-		t.Fatalf("resource limit intersection: %+v", authorized.override)
+	if authorized.policy.effective.MemoryMaxMB != 512 || authorized.policy.effective.CPUQuota != 50 || authorized.policy.effective.PidsMax != 50 {
+		t.Fatalf("resource limit intersection: %+v", authorized.policy.effective)
 	}
-	if len(authorized.override.Env) != 1 || authorized.override.Env[0] != "SHARED=1" {
-		t.Fatalf("environment intersection: %v", authorized.override.Env)
+	if len(authorized.policy.effective.Env) != 1 || authorized.policy.effective.Env[0] != "SHARED=1" {
+		t.Fatalf("environment intersection: %v", authorized.policy.effective.Env)
 	}
-	if !authorized.override.FilePicker.OpenFile || !authorized.override.FilePicker.OpenFolder || authorized.override.FilePicker.SaveFile || !authorized.override.FilePicker.Persistent || !authorized.override.FilePicker.ContainingFolder {
-		t.Fatalf("file picker intersection: %+v", authorized.override.FilePicker)
+	if !authorized.policy.effective.FilePicker.OpenFile || !authorized.policy.effective.FilePicker.OpenFolder || authorized.policy.effective.FilePicker.SaveFile || !authorized.policy.effective.FilePicker.Persistent || !authorized.policy.effective.FilePicker.ContainingFolder {
+		t.Fatalf("file picker intersection: %+v", authorized.policy.effective.FilePicker)
 	}
-	capabilities := types.HostActionCapabilities(authorized.override.HostActions, types.HostActionProviderContainers)
+	capabilities := types.HostActionCapabilities(authorized.policy.effective.HostActions, types.HostActionProviderContainers)
 	if len(capabilities) != 1 || !capabilities[types.HostActionContainersRead] {
-		t.Fatalf("host action intersection: %v", authorized.override.HostActions)
+		t.Fatalf("host action intersection: %v", authorized.policy.effective.HostActions)
 	}
 }
 

@@ -46,12 +46,12 @@ import (
 // use the user's home directory for that or expose other system directories
 // where data can be stored.
 func (c *Cpak) PrepareContainer(app types.Application, override types.Override) (container types.Container, err error) {
-	return c.prepareContainer(app, override, app.CpakId, "", nil)
+	return c.prepareContainer(app, asLaunched(override), app.CpakId, "", nil)
 }
 
 func (c *Cpak) PrepareContainerInstance(app types.Application, override types.Override, instance string) (types.Container, error) {
 	scope := ApplicationScope(app.CpakId, instance)
-	return c.prepareContainer(app, override, scope, instance, nil)
+	return c.prepareContainer(app, asLaunched(override), scope, instance, nil)
 }
 
 func ApplicationScope(applicationCpakId, instance string) string {
@@ -61,12 +61,24 @@ func ApplicationScope(applicationCpakId, instance string) string {
 	return applicationCpakId + ":instance:" + instance
 }
 
+// PrepareNestedContainer starts a container for an application another package
+// asked to run. The override is that package's ceiling, not a policy of its
+// own: what the application is recognised by stays the policy it was enrolled
+// with, and the ceiling only narrows what the container is built from.
 func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Override) (types.Container, error) {
-	scope := app.CpakId + ":nested:" + uuid.NewString()
-	return c.prepareContainer(app, override, scope, "", nil)
+	return c.prepareNestedContainer(app, narrowedTo(resolvedOverride(app), override))
 }
 
-func (c *Cpak) prepareContainer(app types.Application, override types.Override, scope, instance string, store *Store) (container types.Container, err error) {
+func (c *Cpak) prepareNestedContainer(app types.Application, policy launchPolicy) (types.Container, error) {
+	scope := app.CpakId + ":nested:" + uuid.NewString()
+	return c.prepareContainer(app, policy, scope, "", nil)
+}
+
+// prepareContainer answers to the gate with the policy the application was
+// enrolled with and builds the container from the policy it actually runs
+// under, which is the same one unless something narrowed this launch.
+func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scope, instance string, store *Store) (container types.Container, err error) {
+	override := policy.effective
 	unlock, err := c.lockContainerScope(scope)
 	if err != nil {
 		return types.Container{}, err
@@ -96,7 +108,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	// The gate answers before anything of the application is mounted, and on
 	// the reuse path too: a container that is attached to is a launch as much
 	// as a container that is created.
-	identity, err := c.gateSessionLaunch(app, override, sessionIDOfInstance(instance), components, addons)
+	identity, err := c.gateSessionLaunch(app, policy.enrolled, sessionIDOfInstance(instance), components, addons)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -698,7 +710,7 @@ func (c *Cpak) StopInstance(origin, version, branch, commit, release, instance s
 
 // ExecInContainer submits a command to the init process already running inside
 // the container namespaces.
-func (c *Cpak) ExecInContainer(app types.Application, container types.Container, command []string) (err error) {
+func (c *Cpak) ExecInContainer(app types.Application, override types.Override, container types.Container, command []string) (err error) {
 	pidToEnter := container.Pid
 	if pidToEnter == 0 {
 		pidToEnter, err = getPidFromEnvContainerId(container.CpakId)
@@ -707,9 +719,7 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 		}
 	}
 
-	override := resolvedOverride(app)
-
-	envVars, err := containerEnvironment(app, container)
+	envVars, err := containerEnvironment(app, override, container)
 	if err != nil {
 		return err
 	}
@@ -783,13 +793,12 @@ func (c *Cpak) ExecInContainer(app types.Application, container types.Container,
 	}
 }
 
-func containerEnvironment(app types.Application, container types.Container) ([]string, error) {
+func containerEnvironment(app types.Application, override types.Override, container types.Container) ([]string, error) {
 	config := &oci.ConfigFile{}
 	if err := json.Unmarshal([]byte(app.Config), config); err != nil {
 		return nil, fmt.Errorf("decode application config: %w", err)
 	}
 
-	override := resolvedOverride(app)
 	envVars := append([]string{}, os.Environ()...)
 	envVars = append(envVars, config.Config.Env...)
 	envVars = append(envVars, override.Env...)

@@ -79,7 +79,7 @@ func (c *Cpak) RunSession(id string, verbose bool) error {
 	if err := c.prepareSocketListener(); err != nil {
 		return err
 	}
-	return c.runApplicationInstance(app, session.Override, sessionInstance(session.ID), session.Entrypoint, verbose, false)
+	return c.runApplicationInstance(app, asLaunched(session.Override), sessionInstance(session.ID), session.Entrypoint, verbose, false)
 }
 
 func findSession(sessions []types.Session, id string) (types.Session, error) {

@@ -17,10 +17,10 @@ import (
 )
 
 type authorizedNestedRun struct {
-	parent   types.Application
-	child    types.Application
-	override types.Override
-	binary   string
+	parent types.Application
+	child  types.Application
+	policy launchPolicy
+	binary string
 }
 
 func (c *Cpak) authorizeNestedRun(params types.RequestParams) (authorizedNestedRun, error) {
@@ -55,13 +55,11 @@ func (c *Cpak) authorizeNestedRun(params types.RequestParams) (authorizedNestedR
 		return authorizedNestedRun{}, err
 	}
 
-	parentOverride := resolvedOverride(parent)
-	childOverride := resolvedOverride(child)
 	return authorizedNestedRun{
-		parent:   parent,
-		child:    child,
-		override: intersectOverrides(parentOverride, childOverride),
-		binary:   binary,
+		parent: parent,
+		child:  child,
+		policy: narrowedTo(resolvedOverride(child), resolvedOverride(parent)),
+		binary: binary,
 	}, nil
 }
 
@@ -106,6 +104,114 @@ func exportedNestedBinary(app types.Application, requested string) (string, erro
 
 func resolvedOverride(app types.Application) types.Override {
 	return underHostCeiling(requestedOverride(app))
+}
+
+// launchPolicy carries the two answers a launch needs about itself: the policy
+// it is recognised by, which is the one an anchor was taken over, and the
+// policy it actually runs under, which may be narrower than that.
+//
+// They are the same thing for an application started on its own terms. They
+// part company whenever something narrows a launch after the application was
+// enrolled: a nested run is held to the intersection with the package that
+// asked for it, and a package the user never named is held to the intersection
+// with the packages that pulled it in.
+//
+// Keeping them apart is what makes narrowing possible at all. The gate derives
+// the launch root from the policy it is handed and compares it with the one the
+// ledger recorded, so a narrower policy shown to the gate is not a narrower
+// launch, it is a launch no anchor names, and pkg/cpak/verify.go refuses that
+// at every enforcement level. Narrowing what is mounted is safe; narrowing what
+// the gate is shown means the launch never happens.
+type launchPolicy struct {
+	enrolled  types.Override
+	effective types.Override
+}
+
+// asLaunched is the policy of an application started on the terms it was
+// enrolled with, where there is nothing to tell the two halves apart.
+func asLaunched(override types.Override) launchPolicy {
+	return launchPolicy{enrolled: override, effective: override}
+}
+
+// narrowedTo is the policy of a launch something else has a say in. The
+// intersection is computed here rather than taken from the caller, so that the
+// half the container is built from cannot be wider than the half the gate
+// recognised, whoever is asking.
+func narrowedTo(enrolled, ceiling types.Override) launchPolicy {
+	return launchPolicy{enrolled: enrolled, effective: intersectOverrides(ceiling, enrolled)}
+}
+
+// standaloneLaunchPolicy answers with the policy an application runs under when
+// it is launched on its own rather than by a package that depends on it.
+//
+// For a package the user never named that is not the policy its publisher asked
+// for. Such a package is installed whole and can be started directly, and the
+// user agreed to it only as part of the package that pulled it in, so it is
+// held to the intersection with that package, exactly as a nested run of it
+// already is. Without that a publisher reaches past the permissions their own
+// package was granted by naming a wider dependency and letting it be launched
+// by itself.
+//
+// A package the user named is untouched, whoever else declares it, and so is a
+// package declared by somebody who did not bring it here. Otherwise any
+// publisher could narrow software they have nothing to do with simply by
+// naming it in a manifest.
+//
+// When the package that brought it here is gone the launch is bounded by
+// nothing, which is the same answer cpak gives a dependency nobody declares any
+// more: what is left is an installation with no relationship to anything, and
+// deciding what to do with those is garbage collection, not consent.
+func standaloneLaunchPolicy(store *Store, app types.Application) (launchPolicy, error) {
+	policy := asLaunched(resolvedOverride(app))
+	if !app.PulledIn {
+		return policy, nil
+	}
+	installed, err := store.GetApplications()
+	if err != nil {
+		return launchPolicy{}, fmt.Errorf("read the installed applications: %w", err)
+	}
+	for _, parent := range installed {
+		if parent.CpakId == app.CpakId || !boundsTheLaunchOf(parent, app) {
+			continue
+		}
+		policy.effective = intersectOverrides(resolvedOverride(parent), policy.effective)
+	}
+	return policy, nil
+}
+
+// boundsTheLaunchOf answers whether the given installation has a say in how the
+// application starts on its own. Declaring an origin is not enough: the
+// installer records which package an installation came here behind, and only
+// that one is speaking about something the user agreed to.
+//
+// A record that names nobody was written before cpak kept that answer, and
+// there every package that declares the application is taken to have a say,
+// which is the narrower of the two readings.
+func boundsTheLaunchOf(parent, app types.Application) bool {
+	if !declaresDependency(parent, app) {
+		return false
+	}
+	return app.PulledInBy == "" || parent.Origin == app.PulledInBy
+}
+
+// declaresDependency answers whether the parent asked for the given
+// application. The origin is checked beside the identifier the installer
+// recorded, the way an authorized nested run checks a child, so that an
+// identifier which came to name something else cannot pass for a declaration
+// the parent never made.
+//
+// The mode is deliberately not checked. A nested run is authorized only for a
+// nested dependency, but this is a different question: what the user agreed to
+// when they installed the parent covers everything the parent asked for, and a
+// publisher must not be able to put a wide package beyond reach of the
+// intersection by declaring it as a layer.
+func declaresDependency(parent, app types.Application) bool {
+	for _, dependency := range parent.ParsedDependencies {
+		if dependency.Id == app.CpakId && dependency.Origin == app.Origin {
+			return true
+		}
+	}
+	return false
 }
 
 // requestedOverride answers with what the owner of the application decided, and

@@ -371,6 +371,12 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		Image:                image,
 		ImageDigest:          imageDigest,
 		ParsedOverride:       override,
+		// An update refreshes what a package is, never who asked for it, so
+		// how the installation came to be here travels with it. Losing it
+		// would hand an origin its launchers back and widen it on its next
+		// launch, both of which the user never asked for.
+		PulledIn:   app.PulledIn,
+		PulledInBy: app.PulledInBy,
 	}
 	if deps.prepareStorage != nil {
 		if err = deps.prepareStorage(updated); err != nil {
