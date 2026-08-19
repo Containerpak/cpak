@@ -329,6 +329,15 @@ func (c *Cpak) resolveEnabledAddonsFromStore(app types.Application, store *Store
 		if getErr != nil || addon.CpakId == "" {
 			return nil, fmt.Errorf("enabled addon %s is not installed", origin)
 		}
+		// An addon carries what it declares as a layer dependency, and the
+		// dependency has to sit under it exactly as it would under a parent.
+		// Without this an addon can only ever contribute its own image, which
+		// is why a bundle that names other packages composes to nothing.
+		components, dependencyErr := c.resolveLayerDependenciesFromStore(addon, store)
+		if dependencyErr != nil {
+			return nil, fmt.Errorf("resolve what addon %s is built on: %w", origin, dependencyErr)
+		}
+		addons = append(addons, components...)
 		addons = append(addons, addon)
 		seen[origin] = true
 	}

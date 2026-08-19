@@ -162,3 +162,91 @@ func TestContainerPolicyHashChangesWithAddon(t *testing.T) {
 		t.Fatal("enabling an addon did not change the container policy hash")
 	}
 }
+
+// An addon that names other packages as layer dependencies is how a group of
+// tools is offered as one choice: the parent declares one addon instead of
+// listing every SDK, and the group can grow without touching the parent. Until
+// the dependencies were composed, such a bundle contributed nothing but its
+// own empty image, so enabling it looked like it worked and changed nothing.
+func TestAnAddonBringsWhatItIsBuiltOn(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Name:         "Code",
+		Origin:       "github.com/containerpak/vscode",
+		Version:      "main",
+		ParsedAddons: []string{"github.com/containerpak/sdk-bundle"},
+	}
+	goSDK := types.Application{
+		CpakId:       "go",
+		Origin:       "github.com/containerpak/sdk-go",
+		Branch:       "main",
+		Version:      "main",
+		ParsedLayers: []string{"base", "go"},
+	}
+	node := types.Application{
+		CpakId:       "node",
+		Origin:       "github.com/containerpak/sdk-node-lts",
+		Branch:       "main",
+		Version:      "main",
+		ParsedLayers: []string{"base", "node"},
+	}
+	bundle := types.Application{
+		CpakId:       "bundle",
+		Origin:       "github.com/containerpak/sdk-bundle",
+		Branch:       "main",
+		Version:      "main",
+		ParsedLayers: []string{"bundle"},
+		ParsedDependencies: []types.Dependency{
+			{Origin: goSDK.Origin, Id: goSDK.CpakId, Mode: "layer"},
+			{Origin: node.Origin, Id: node.CpakId, Mode: "layer"},
+		},
+	}
+	seedApplication(t, c, goSDK)
+	seedApplication(t, c, node)
+	seedApplication(t, c, bundle)
+	if err := saveEnabledAddons(app, []string{bundle.Origin}); err != nil {
+		t.Fatal(err)
+	}
+
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers := combinedLayers(types.Application{ParsedLayers: []string{"base", "app"}}, addons)
+	want := []string{"base", "app", "go", "node", "bundle"}
+	if !reflect.DeepEqual(layers, want) {
+		t.Fatalf("the bundle did not bring what it names: got %v, want %v", layers, want)
+	}
+}
+
+// A dependency sits under what depends on it, so a bundle's own image must
+// come last or it cannot override anything it ships alongside.
+func TestABundleIsStackedAboveWhatItBringsIn(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Origin:       "github.com/containerpak/vscode",
+		Version:      "main",
+		ParsedAddons: []string{"github.com/containerpak/sdk-bundle"},
+	}
+	tool := types.Application{
+		CpakId: "tool", Origin: "github.com/containerpak/sdk-go",
+		Branch: "main", Version: "main", ParsedLayers: []string{"tool"},
+	}
+	bundle := types.Application{
+		CpakId: "bundle", Origin: "github.com/containerpak/sdk-bundle",
+		Branch: "main", Version: "main", ParsedLayers: []string{"bundle"},
+		ParsedDependencies: []types.Dependency{{Origin: tool.Origin, Id: tool.CpakId, Mode: "layer"}},
+	}
+	seedApplication(t, c, tool)
+	seedApplication(t, c, bundle)
+	if err := saveEnabledAddons(app, []string{bundle.Origin}); err != nil {
+		t.Fatal(err)
+	}
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addons) != 2 || addons[0].Origin != tool.Origin || addons[1].Origin != bundle.Origin {
+		t.Fatalf("wrong order: %+v", addons)
+	}
+}
