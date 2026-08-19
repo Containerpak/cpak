@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"syscall"
 
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
@@ -28,6 +29,7 @@ type LaunchCmd struct {
 }
 
 func (c *LaunchCmd) Run() error {
+	logger.ProxyMode()
 	if len(c.ExtraArgs) == 0 {
 		return fmt.Errorf("command is required")
 	}
@@ -37,14 +39,14 @@ func (c *LaunchCmd) Run() error {
 	}
 	if _, err := sandbox.ApplyLandlock(grants); err != nil {
 		if errors.Is(err, sandbox.ErrUnavailable) && !c.RequireSandbox {
-			c.Logger.Warning("Landlock is unavailable; continuing without filesystem restrictions")
+			logger.Warn("Landlock is unavailable; continuing without filesystem restrictions")
 		} else {
 			return err
 		}
 	}
 	if err := sandbox.ApplySeccomp(c.UserNamespaces, c.AllowPtrace); err != nil {
 		if errors.Is(err, sandbox.ErrUnavailable) && !c.RequireSandbox {
-			c.Logger.Warning("Seccomp is unavailable; continuing without syscall restrictions")
+			logger.Warn("Seccomp is unavailable; continuing without syscall restrictions")
 		} else {
 			return err
 		}

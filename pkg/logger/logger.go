@@ -6,11 +6,18 @@ package logger
 
 import (
 	"fmt"
+	"os"
 
 	clilog "github.com/mirkobrombin/go-cli-builder/v3/pkg/log"
 )
 
-var l clilog.Logger = clilog.New()
+var l clilog.Logger = newDefault()
+
+// newDefault is the logger for the ordinary case, where cpak is the program
+// the caller ran and its output is the output.
+func newDefault() clilog.Logger {
+	return clilog.NewWriter(os.Stdout, os.Stderr)
+}
 
 func Info(args ...interface{}) {
 	l.Info(fmt.Sprint(args...))
@@ -50,4 +57,19 @@ func Println(args ...interface{}) {
 
 func Printf(format string, args ...interface{}) {
 	l.Info(format, args...)
+}
+
+// ProxyMode sends everything cpak says to the error stream.
+//
+// A command that runs another program owns that program's standard output and
+// nothing else may be written to it. cpak announcing what it is about to
+// execute, or warning that Landlock is missing, lands in the middle of the
+// output a caller is parsing: an SDK shim on PATH stops working inside `$( )`
+// or a pipe, which is every use a toolchain has.
+//
+// It is a whole-stream switch and not a per-message decision, because the
+// caller cannot tell which of cpak's lines are safe to receive and the answer
+// is none of them.
+func ProxyMode() {
+	l = clilog.NewWriter(os.Stderr, os.Stderr)
 }

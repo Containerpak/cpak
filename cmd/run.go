@@ -34,6 +34,9 @@ type RunCmd struct {
 }
 
 func (c *RunCmd) Run() error {
+	// From here on the standard output belongs to the program being run, and
+	// an SDK shim is worthless the moment cpak writes a line into it.
+	logger.ProxyMode()
 	cp, err := cpak.NewCpak()
 	if err != nil {
 		return c.runError(err)
