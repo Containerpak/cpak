@@ -74,16 +74,29 @@ jobs:
           go-version-file: go.mod
 
       - name: Install desktop adapter toolkits
+        timeout-minutes: 20
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # The runner boots with unattended-upgrades holding the dpkg lock, and
-          # apt waits for it with no bound, which has hung this job for hours at
-          # a time. A lock timeout turns that into a failure that can be read
-          # and retried instead of a build nobody is told about.
-          sudo apt-get -o DPkg::Lock::Timeout=600 update
-          sudo apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends \
-            build-essential pkg-config libgtk-3-dev libadwaita-1-dev qt6-base-dev
+          # This step has hung for forty minutes at a time and taken the release
+          # with it, twice, without ever saying what it was waiting for. Every
+          # call is bounded so a hang becomes a failure that can be read, and
+          # the whole thing is attempted again because the ones seen so far did
+          # not survive a retry.
+          install_toolkits() {
+            timeout 300 sudo apt-get -o DPkg::Lock::Timeout=120 update || return 1
+            timeout 600 sudo apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends \
+              build-essential pkg-config libgtk-3-dev libadwaita-1-dev qt6-base-dev || return 1
+          }
+          for attempt in 1 2 3; do
+            if install_toolkits; then
+              exit 0
+            fi
+            echo "::warning::toolkit installation attempt ${attempt} did not finish"
+            sleep 15
+          done
+          echo "::error::the desktop adapter toolkits could not be installed"
+          exit 1
 
       - name: Build
         env:
