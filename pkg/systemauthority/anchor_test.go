@@ -86,7 +86,7 @@ func TestAnchorLedgerRoundTripsAnEnrolment(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the enrolment was not recorded: %v, %v", found, err)
 	}
-	if loaded != anchor {
+	if !reflect.DeepEqual(loaded, anchor) {
 		t.Fatalf("got %+v, want %+v", loaded, anchor)
 	}
 	if _, found, err := ledger.Load(anchor.UID+1, anchor.Origin); err != nil || found {
@@ -281,7 +281,7 @@ func TestAnchorFileIsUniqueForEveryOrigin(t *testing.T) {
 		if err != nil || !found {
 			t.Fatalf("%s lost its anchor: %v, %v", anchor.Origin, found, err)
 		}
-		if loaded != anchor {
+		if !reflect.DeepEqual(loaded, anchor) {
 			t.Fatalf("%s reads back as %+v", anchor.Origin, loaded)
 		}
 	}
@@ -330,7 +330,7 @@ func TestAuthoritySocketEnrolsAnAnchorWithoutABus(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("the anchor was not enrolled: %v, %v", found, err)
 	}
-	if loaded != anchor {
+	if !reflect.DeepEqual(loaded, anchor) {
 		t.Fatalf("got %+v, want %+v", loaded, anchor)
 	}
 	older := anchor
@@ -528,7 +528,7 @@ func TestEnrolmentRecordsThePolicyItsRootWasTakenOver(t *testing.T) {
 	if !policyMatches(t, recorded.Policy, policy) {
 		t.Fatalf("the recorded policy reads back as %+v", recorded.Policy)
 	}
-	if recorded.Anchor != anchor {
+	if !reflect.DeepEqual(recorded.Anchor, anchor) {
 		t.Fatalf("the recorded anchor reads back as %+v", recorded.Anchor)
 	}
 	// An update that states no policy must not throw away the one already
@@ -755,7 +755,7 @@ func TestARecordWithoutAPolicyIsStillAnEnrolment(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("an anchor with no policy beside it was not read: %v, %v", found, err)
 	}
-	if recorded.Anchor != anchor || recorded.Policy != nil {
+	if !reflect.DeepEqual(recorded.Anchor, anchor) || recorded.Policy != nil {
 		t.Fatalf("the record reads back as %+v", recorded)
 	}
 }
@@ -1086,7 +1086,7 @@ func TestARecordSurvivesASignatureThatStoppedStanding(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("a launch could not read the anchor of an application whose signature stopped standing: %v, %v", found, err)
 	}
-	if loaded != anchor {
+	if !reflect.DeepEqual(loaded, anchor) {
 		t.Fatalf("the anchor reads back as %+v", loaded)
 	}
 	recorded, _, err := ledger.Recorded(anchor.UID, anchor.Origin)

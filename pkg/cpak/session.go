@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -78,7 +79,7 @@ func (c *Cpak) RunSession(id string, verbose bool) error {
 	if err := c.prepareSocketListener(); err != nil {
 		return err
 	}
-	return c.runApplicationInstance(app, session.Override, "session-"+session.ID, session.Entrypoint, verbose, false)
+	return c.runApplicationInstance(app, session.Override, sessionInstance(session.ID), session.Entrypoint, verbose, false)
 }
 
 func findSession(sessions []types.Session, id string) (types.Session, error) {
@@ -112,4 +113,24 @@ func disableRegisteredSessions(registry systemauthority.Registry, origin string,
 		}
 	}
 	return nil
+}
+
+// A session instance is named after the session it is, and the launch gate
+// reads that name back to know which recorded root the launch answers to. The
+// two sides live here together so the spelling cannot drift: a session whose
+// id the gate could not recover would be checked against the application's
+// root, which is the disagreement this naming exists to avoid.
+const sessionInstancePrefix = "session-"
+
+func sessionInstance(id string) string {
+	return sessionInstancePrefix + id
+}
+
+// sessionIDOfInstance answers the session an instance belongs to, and the empty
+// string when the instance is not a session at all.
+func sessionIDOfInstance(instance string) string {
+	if !strings.HasPrefix(instance, sessionInstancePrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(instance, sessionInstancePrefix)
 }

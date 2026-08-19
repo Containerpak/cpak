@@ -96,7 +96,7 @@ func (c *Cpak) prepareContainer(app types.Application, override types.Override, 
 	// The gate answers before anything of the application is mounted, and on
 	// the reuse path too: a container that is attached to is a launch as much
 	// as a container that is created.
-	identity, err := c.gateLaunch(app, override, components, addons)
+	identity, err := c.gateSessionLaunch(app, override, sessionIDOfInstance(instance), components, addons)
 	if err != nil {
 		return types.Container{}, err
 	}

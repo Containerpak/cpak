@@ -248,6 +248,11 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 		PolicyRoot:  policyRoot,
 		LaunchRoot:  integrity.LaunchRoot(packageRoot, policyRoot),
 	}
+	sessionRoots, err := sessionLaunchRoots(app, packageRoot)
+	if err != nil {
+		return undescribedEnrolment(enrolment, err, "")
+	}
+	anchor.SessionRoots = sessionRoots
 	// The manifest is hashed here rather than read out of the signed state, so
 	// that the authority compares two values derived independently instead of
 	// comparing one with itself.
@@ -738,4 +743,27 @@ func reportEnrolment(enrolment ApplicationEnrolment) ApplicationEnrolment {
 	}
 	logger.Warn(message)
 	return enrolment
+}
+
+
+// sessionLaunchRoots answers for every session the manifest declares.
+//
+// A session is started with its own policy, not the application's, so an anchor
+// that recorded only the application policy could never recognise one. Each
+// declared session therefore gets its own launch root, over the same package
+// root, and a session that declares no policy of its own gets the application's
+// so that the two paths agree rather than differ silently.
+func sessionLaunchRoots(app types.Application, packageRoot string) (map[string]string, error) {
+	if len(app.ParsedSessions) == 0 {
+		return nil, nil
+	}
+	roots := make(map[string]string, len(app.ParsedSessions))
+	for _, session := range app.ParsedSessions {
+		root, err := integrity.PolicyRoot(session.Override)
+		if err != nil {
+			return nil, fmt.Errorf("derive the policy root of session %s: %w", session.ID, err)
+		}
+		roots[session.ID] = integrity.LaunchRoot(packageRoot, root)
+	}
+	return roots, nil
 }

@@ -62,6 +62,19 @@ type Anchor struct {
 	PackageRoot string `json:"package_root"`
 	PolicyRoot  string `json:"policy_root"`
 	LaunchRoot  string `json:"launch_root"`
+
+	// SessionRoots answers for the launches that are not the application's own.
+	// A session declares its own policy in the manifest and is started with it,
+	// so a launch root taken over the application policy can never describe one:
+	// the anchor was written over one policy and the session started with
+	// another, and the two disagreed by construction at every enforcement level.
+	//
+	// One entry per session the manifest declares, keyed by session id, holding
+	// the launch root that session is recognised by. Absent from a record
+	// written before this existed, and a session launch that finds no entry is
+	// unenrolled rather than unrecognised: nothing claimed what it should be, so
+	// nothing can say it is wrong.
+	SessionRoots map[string]string `json:"session_roots,omitempty"`
 }
 
 // ValidateDigests refuses a digest written in a shape no signed state can ever

@@ -117,7 +117,13 @@ type LaunchIdentity struct {
 // store recorded, because that is what an anchor was taken over. The
 // measurement rebuilds the same values from the store as it stands, because a
 // record read back proves only that a record exists.
+// verifyLaunch derives what an ordinary application launch is. A session has
+// its own policy and its own recorded root, so it goes through verifySessionLaunch.
 func (c *Cpak) verifyLaunch(app types.Application, override types.Override, components, addons []types.Application) (LaunchIdentity, error) {
+	return c.verifySessionLaunch(app, override, "", components, addons)
+}
+
+func (c *Cpak) verifySessionLaunch(app types.Application, override types.Override, sessionID string, components, addons []types.Application) (LaunchIdentity, error) {
 	identity := LaunchIdentity{UID: uint32(os.Getuid()), Origin: app.Origin}
 
 	packageRoot, err := c.launchPackageRoot(app, components, addons)
@@ -161,12 +167,26 @@ func (c *Cpak) verifyLaunch(app types.Application, override types.Override, comp
 
 	// Being enrolled comes first: what the layers of an application are cannot
 	// be a disagreement until something claims what they should be.
+	// A session is recognised by its own root, because it is started with its
+	// own policy. An anchor written before sessions were recorded holds none,
+	// and that is an unenrolled launch rather than a wrong one: nothing ever
+	// claimed what this session should be, so nothing can say it is not it.
+	recorded := anchor.LaunchRoot
+	if sessionID != "" {
+		known, held := anchor.SessionRoots[sessionID]
+		if !held {
+			identity.Verdict = LaunchUnenrolled
+			return identity, nil
+		}
+		recorded = known
+	}
+
 	switch {
 	case !enrolled:
 		identity.Verdict = LaunchUnenrolled
 	case unbound || len(measurement.Unrecorded) > 0:
 		identity.Verdict = LaunchUnbound
-	case identity.LaunchRoot == anchor.LaunchRoot:
+	case identity.LaunchRoot == recorded:
 		identity.Verdict = LaunchRecognised
 	default:
 		identity.Verdict = LaunchUnrecognised
@@ -178,7 +198,11 @@ func (c *Cpak) verifyLaunch(app types.Application, override types.Override, comp
 // turns the verdict into an answer, which is the one thing verifyLaunch
 // deliberately does not do, and says on the way what the answer let through.
 func (c *Cpak) gateLaunch(app types.Application, override types.Override, components, addons []types.Application) (LaunchIdentity, error) {
-	identity, err := c.verifyLaunch(app, override, components, addons)
+	return c.gateSessionLaunch(app, override, "", components, addons)
+}
+
+func (c *Cpak) gateSessionLaunch(app types.Application, override types.Override, sessionID string, components, addons []types.Application) (LaunchIdentity, error) {
+	identity, err := c.verifySessionLaunch(app, override, sessionID, components, addons)
 	if err != nil {
 		return identity, err
 	}

@@ -781,3 +781,91 @@ func TestAnchorStatesLeavesAStoreThatRecordsNothingAlone(t *testing.T) {
 		t.Fatalf("got %v, want the report to leave a store that records nothing without a ledger", err)
 	}
 }
+
+// A session declares its own policy and is started with it, so an anchor that
+// recorded only the application policy could never recognise one: the two roots
+// disagreed by construction, and the session was refused at every enforcement
+// level. Under a display manager that is a black screen with no explanation.
+func TestASessionIsRecognisedByItsOwnPolicy(t *testing.T) {
+	cp := newTestCpak(t)
+	ledger := useAnchorLedger(t)
+	bindLayer(t, cp, verifiedBaseLayer, "state-base")
+	bindLayer(t, cp, verifiedTopLayer, "state-top")
+
+	sessionOverride := types.Override{SocketWayland: true, DeviceDri: true}
+	app := verifiedApplication()
+	app.ParsedSessions = []types.Session{{
+		ID:         "demo-session",
+		Name:       "Demo",
+		Entrypoint: "/usr/bin/demo",
+		Override:   sessionOverride,
+	}}
+
+	// What an install records: the application root, plus one root per session.
+	identity, err := cp.verifyLaunch(app, resolvedOverride(app), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionRoots, err := sessionLaunchRoots(app, identity.PackageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := integrity.Anchor{
+		ABI:          integrity.ABIVersion,
+		UID:          identity.UID,
+		Origin:       identity.Origin,
+		Generation:   1,
+		PackageRoot:  identity.PackageRoot,
+		PolicyRoot:   identity.PolicyRoot,
+		LaunchRoot:   identity.LaunchRoot,
+		SessionRoots: sessionRoots,
+	}
+	if err := ledger.Store(anchor); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := cp.verifySessionLaunch(app, sessionOverride, "demo-session", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Verdict != LaunchRecognised {
+		t.Fatalf("a session launched with the policy it was enrolled with came back as %v", session.Verdict)
+	}
+
+	// And the ordinary launch of the same application still answers for itself.
+	ordinary, err := cp.verifyLaunch(app, resolvedOverride(app), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordinary.Verdict != LaunchRecognised {
+		t.Fatalf("the application launch stopped being recognised: %v", ordinary.Verdict)
+	}
+}
+
+// An anchor written before sessions were recorded holds no session root. Such a
+// launch is unenrolled, not wrong: nothing ever claimed what it should be, so
+// enforcement decides rather than a flat refusal at every level.
+func TestASessionWithNoRecordedRootIsUnenrolledRatherThanWrong(t *testing.T) {
+	cp := newTestCpak(t)
+	useAnchorLedger(t)
+	bindLayer(t, cp, verifiedBaseLayer, "state-base")
+	bindLayer(t, cp, verifiedTopLayer, "state-top")
+
+	app := verifiedApplication()
+	identity, err := cp.verifyLaunch(app, resolvedOverride(app), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrol(t, useAnchorLedger(t), identity)
+
+	session, err := cp.verifySessionLaunch(app, types.Override{SocketWayland: true}, "demo-session", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Verdict == LaunchUnrecognised {
+		t.Fatal("a session an old anchor never described was reported as the wrong launch")
+	}
+	if session.Verdict != LaunchUnenrolled {
+		t.Fatalf("expected an unenrolled session, got %v", session.Verdict)
+	}
+}
