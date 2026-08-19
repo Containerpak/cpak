@@ -155,6 +155,7 @@ func heldToNamed(requested, restricted types.Override, named map[string]bool) ty
 	if named == nil {
 		return restricted
 	}
+	named = withAliases(named)
 	result := requested
 	target := reflect.ValueOf(&result).Elem()
 	source := reflect.ValueOf(restricted)
@@ -308,4 +309,66 @@ func intersectStrings(parent, child []string) []string {
 		}
 	}
 	return result
+}
+
+// permissionAliases groups the permissions that reach the same thing by another
+// name. Holding a ceiling to exactly the keys an administrator typed is right
+// until two keys open the same door, and then it is a way to close one of them.
+//
+// The families, and why each is one:
+//
+//   - every device permission implies deviceAll, which mounts the whole of
+//     /dev. An administrator who closes the GPU, KVM, USB and the rest one at a
+//     time has named everything except the key that grants all of them.
+//   - the legacy v1 filesystem fields mount the same places the typed list
+//     does, through an older spelling, so a ceiling over the list closes them
+//     too. It does not run the other way: naming one legacy field is a narrow
+//     decision and must not wipe every typed permission an application has.
+//   - socketBluetooth mounts /run/dbus/system_bus_socket, which is the socket
+//     socketSystemBus mounts. They are one permission wearing two names.
+//
+// Naming deviceAll on its own does not pull the specific device permissions in
+// with it: closing the blanket while leaving the GPU open is a policy somebody
+// might mean, and the reverse never is.
+var permissionAliases = []struct {
+	whenAnyOf []string
+	alsoHold  []string
+}{
+	{
+		whenAnyOf: []string{
+			"deviceDri", "deviceKvm", "deviceShm", "deviceAlsa", "deviceVideo",
+			"deviceFuse", "deviceTun", "deviceUsb", "deviceSerial", "deviceInput",
+			"deviceTTY",
+		},
+		alsoHold: []string{"deviceAll"},
+	},
+	{
+		whenAnyOf: []string{"filesystem"},
+		alsoHold:  []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra"},
+	},
+	{
+		whenAnyOf: []string{"socketSystemBus", "socketBluetooth"},
+		alsoHold:  []string{"socketSystemBus", "socketBluetooth"},
+	},
+}
+
+// withAliases answers with the permissions a ceiling reaches, which is the ones
+// it names plus the ones that would undo them.
+func withAliases(named map[string]bool) map[string]bool {
+	reached := make(map[string]bool, len(named))
+	for key := range named {
+		reached[key] = true
+	}
+	for _, family := range permissionAliases {
+		for _, trigger := range family.whenAnyOf {
+			if !named[trigger] {
+				continue
+			}
+			for _, key := range family.alsoHold {
+				reached[key] = true
+			}
+			break
+		}
+	}
+	return reached
 }

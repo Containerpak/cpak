@@ -172,3 +172,58 @@ func TestACeilingStillBeatsTheManifestOnWhatItNames(t *testing.T) {
 		t.Fatal("the ceiling reached a permission it did not name")
 	}
 }
+
+// Naming every device permission one at a time and leaving deviceAll unnamed
+// closed nothing: deviceAll mounts the whole of /dev, so it undoes the lot.
+func TestClosingTheDevicesAlsoClosesTheKeyThatGrantsThemAll(t *testing.T) {
+	useNamedHostCeiling(t, types.Override{},
+		"deviceDri", "deviceKvm", "deviceShm", "deviceAlsa", "deviceVideo",
+		"deviceFuse", "deviceTun", "deviceUsb", "deviceSerial", "deviceInput", "deviceTTY")
+	resolved := resolvedOverride(wideApplication())
+	if resolved.DeviceAll {
+		t.Fatal("a ceiling over every device permission left the one that grants all of them")
+	}
+	mounts, _ := GetOverrideMounts(resolved)
+	for _, mount := range mounts {
+		if mount == "/dev/" {
+			t.Fatalf("the whole of /dev is still mounted: %v", mounts)
+		}
+	}
+}
+
+// socketBluetooth mounts /run/dbus/system_bus_socket, which is the socket
+// socketSystemBus mounts, so a ceiling over one that leaves the other open is
+// not a ceiling at all.
+func TestClosingEitherBusSocketClosesTheOtherName(t *testing.T) {
+	for _, named := range []string{"socketSystemBus", "socketBluetooth"} {
+		useNamedHostCeiling(t, types.Override{}, named)
+		application := wideApplication()
+		application.ParsedOverride.SocketSystemBus = true
+		application.ParsedOverride.SocketBluetooth = true
+		resolved := resolvedOverride(application)
+		if resolved.SocketSystemBus || resolved.SocketBluetooth {
+			t.Fatalf("a ceiling naming %s left the same socket reachable by its other name: %+v", named, resolved)
+		}
+	}
+}
+
+// The legacy v1 fields mount the places the typed list names, so a ceiling over
+// the list has to reach them. It must not run the other way: naming one legacy
+// field is narrow and must not empty every typed permission.
+func TestAceilingOverTheFilesystemReachesTheLegacySpellings(t *testing.T) {
+	useNamedHostCeiling(t, types.Override{}, "filesystem")
+	application := wideApplication()
+	application.ParsedOverride.FsHostHome = true
+	application.ParsedOverride.FsHostEtc = true
+	application.ParsedOverride.FsExtra = []string{"/var/lib"}
+	resolved := resolvedOverride(application)
+	if resolved.FsHostHome || resolved.FsHostEtc || len(resolved.FsExtra) != 0 {
+		t.Fatalf("the legacy fields survived a ceiling over the filesystem: %+v", resolved)
+	}
+
+	useNamedHostCeiling(t, types.Override{}, "fsHostEtc")
+	narrow := resolvedOverride(wideApplication())
+	if len(narrow.Filesystem) == 0 {
+		t.Fatal("naming one legacy field emptied every typed filesystem permission")
+	}
+}
