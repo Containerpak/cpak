@@ -48,7 +48,7 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 		if !strings.Contains(string(content), "run --desktop-launch github.com/containerpak/demo") {
 			t.Fatalf("desktop entry does not mark a desktop launch: %s", content)
 		}
-		if !strings.Contains(string(content), desktopFileArgumentStart+" %U "+desktopFileArgumentEnd) {
+		if !strings.Contains(string(content), desktopFileSpanFlag+" ") {
 			t.Fatalf("desktop entry does not identify file arguments: %s", content)
 		}
 		if repaired := repairDesktopLauncher(string(content), launcher); repaired != string(content) {
@@ -68,11 +68,54 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 	}
 }
 
-func TestMarkDesktopFileArgumentsDropsInjectedMarkers(t *testing.T) {
-	arguments := desktopFileArgumentStart + " /home/user/private " + desktopFileArgumentEnd + " %U"
-	marked := markDesktopFileArguments(arguments)
-	want := "/home/user/private " + desktopFileArgumentStart + " %U " + desktopFileArgumentEnd
-	if marked != want {
-		t.Fatalf("marked arguments: got %q, want %q", marked, want)
+// The attack the span exists to stop. A publisher writes the old markers into
+// its own Exec line, and no amount of filtering that string can be trusted,
+// because the launcher unquotes it differently than a Go filter does. So the
+// answer is not a better filter: nothing the publisher writes decides anything
+// any more, and the counts come from cpak.
+func TestAPublisherCannotSayWhichArgumentsAreFiles(t *testing.T) {
+	// Every spelling that used to survive the filter and arrive as a marker.
+	for _, hostile := range []string{
+		legacyGrantMarkerStart,
+		`""` + legacyGrantMarkerStart,
+		`"` + legacyGrantMarkerStart + `"`,
+		legacyGrantMarkerEnd,
+	} {
+		tokens := splitDesktopArguments("--open " + hostile + " /home/user/.ssh/id_ed25519 %U")
+		span, selects, err := countDesktopFileSpan(tokens)
+		if err != nil || !selects {
+			t.Fatalf("the placeholder was not found in %q: %v", hostile, err)
+		}
+		// The placeholder is the last token, so only the last argument of a
+		// launch is a file. The path the publisher planted is not.
+		if span.After != 0 {
+			t.Fatalf("the span put publisher text after the files: %+v", span)
+		}
+		total := span.Before + 2
+		if span.selects(0, total) || span.selects(1, total) {
+			t.Fatalf("%q made a publisher argument count as a selected file", hostile)
+		}
+		if !span.selects(span.Before, total) {
+			t.Fatal("the file the user chose was not selected")
+		}
+	}
+}
+
+// An entry naming two placeholders cannot be described by two counts, and is
+// exported without a file grant rather than with one cpak is guessing at.
+func TestTwoPlaceholdersAreRefusedRatherThanGuessed(t *testing.T) {
+	if _, _, err := countDesktopFileSpan(splitDesktopArguments("%f --and %U")); err == nil {
+		t.Fatal("an entry naming two placeholders was described anyway")
+	}
+}
+
+// A launch that carried no files selects nothing, which is what happens when an
+// entry is started from the menu rather than by dropping a file on it.
+func TestALaunchWithNoFilesSelectsNothing(t *testing.T) {
+	span := desktopFileSpan{Before: 1, After: 1}
+	for index := 0; index < 2; index++ {
+		if span.selects(index, 2) {
+			t.Fatalf("argument %d was taken for a file when none were passed", index)
+		}
 	}
 }

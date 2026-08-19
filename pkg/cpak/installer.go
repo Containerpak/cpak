@@ -703,9 +703,24 @@ func rewriteDesktopExec(launcher, origin, command string) string {
 	} else {
 		binary = "@" + binary
 	}
-	rewritten := "Exec=" + desktopExecArgument(launcher) + " run --desktop-launch " + origin + " " + binary
-	if arguments := strings.TrimSpace(command[end:]); arguments != "" {
-		rewritten += " -- " + markDesktopFileArguments(arguments)
+	rewritten := "Exec=" + desktopExecArgument(launcher) + " run --desktop-launch " + origin
+	arguments := strings.TrimSpace(command[end:])
+	tokens := splitDesktopArguments(arguments)
+	// Which arguments are files the user chose is decided here, by counting,
+	// and travels in a flag of cpak's own. It used to be delimited by markers
+	// inside the publisher's own text, where the publisher could write one.
+	span, selects, spanErr := countDesktopFileSpan(tokens)
+	if spanErr != nil {
+		// An entry cpak cannot describe exports with no file grant at all
+		// rather than with one it is guessing at.
+		selects = false
+	}
+	if selects {
+		rewritten += " " + desktopFileSpanFlag + " " + span.String()
+	}
+	rewritten += " " + binary
+	if arguments != "" {
+		rewritten += " -- " + arguments
 	}
 	return rewritten
 }

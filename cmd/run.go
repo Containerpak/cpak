@@ -21,14 +21,15 @@ type RunCmd struct {
 	Binary string   `arg:"binary" help:"Binary to launch"`
 	Extra  []string `arg:"extra" help:"Extra arguments for the binary"`
 
-	Verbose       bool   `cli:"verbose,v" help:"Enable verbose output"`
-	DesktopLaunch bool   `cli:"desktop-launch" help:"Grant files opened through a desktop launcher"`
-	Instance      string `cli:"instance,i" help:"Application instance"`
-	Branch        string `cli:"branch,b" help:"Specify a branch"`
-	Commit        string `cli:"commit,c" help:"Specify a commit"`
-	Release       string `cli:"release,r" help:"Specify a release"`
-	NestedRequest string `cli:"nested-request" help:"Run an encoded request from the cpak service"`
-	icon          []byte
+	Verbose         bool   `cli:"verbose,v" help:"Enable verbose output"`
+	DesktopLaunch   bool   `cli:"desktop-launch" help:"Grant files opened through a desktop launcher"`
+	DesktopFileSpan string `cli:"desktop-file-span" help:"How many launcher arguments precede and follow the selected files"`
+	Instance        string `cli:"instance,i" help:"Application instance"`
+	Branch          string `cli:"branch,b" help:"Specify a branch"`
+	Commit          string `cli:"commit,c" help:"Specify a commit"`
+	Release         string `cli:"release,r" help:"Specify a release"`
+	NestedRequest   string `cli:"nested-request" help:"Run an encoded request from the cpak service"`
+	icon            []byte
 
 	cli.Base
 }
@@ -50,6 +51,9 @@ func (c *RunCmd) Run() error {
 	}
 	c.configureStorageMigration(&cp)
 	cp.SetDesktopLaunch(c.DesktopLaunch)
+	if err := cp.SetDesktopFileSpan(c.DesktopFileSpan); err != nil {
+		return c.runError(err)
+	}
 
 	remote, err := resolveApplicationOrigin(cp, c.Remote)
 	if err != nil {

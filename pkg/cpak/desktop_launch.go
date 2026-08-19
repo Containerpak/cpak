@@ -24,23 +24,13 @@ func (c *Cpak) prepareDesktopLaunchArguments(origin string, permissions []types.
 	}
 	rewritten := make([]string, 0, len(arguments))
 	targets := make(map[string]string)
-	grantArguments := false
-	for _, argument := range arguments {
-		switch argument {
-		case desktopFileArgumentStart:
-			if grantArguments {
-				return nil, fmt.Errorf("desktop launch file arguments are nested")
-			}
-			grantArguments = true
-			continue
-		case desktopFileArgumentEnd:
-			if !grantArguments {
-				return nil, fmt.Errorf("desktop launch file arguments are not open")
-			}
-			grantArguments = false
-			continue
-		}
-		if !grantArguments {
+	// Which arguments are the files the user chose is decided by the counts cpak
+	// wrote into the entry, not by anything in the arguments themselves. Without
+	// a span nothing is a selected file, which is the right answer for an entry
+	// that never declared a placeholder.
+	span, selective := c.desktopFileSpan()
+	for index, argument := range arguments {
+		if !selective || !span.selects(index, len(arguments)) {
 			rewritten = append(rewritten, argument)
 			continue
 		}
@@ -77,9 +67,6 @@ func (c *Cpak) prepareDesktopLaunchArguments(origin string, permissions []types.
 		copy.Path = target
 		copy.RawPath = ""
 		rewritten = append(rewritten, copy.String())
-	}
-	if grantArguments {
-		return nil, fmt.Errorf("desktop launch file arguments are not closed")
 	}
 	return rewritten, nil
 }

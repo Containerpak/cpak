@@ -29,11 +29,35 @@ type Cpak struct {
 	storagePreparation StoragePreparationHandler
 	storageDriver      storage.Handler
 	desktopLaunch      bool
+	fileSpan           *desktopFileSpan
 }
 
 // SetDesktopLaunch enables file grants for exported desktop entries.
 func (c *Cpak) SetDesktopLaunch(enabled bool) {
 	c.desktopLaunch = enabled
+}
+
+// SetDesktopFileSpan records how many arguments the publisher wrote on each side
+// of the file placeholder, which is what decides which arguments of a menu
+// launch are files the user chose. It is set from cpak's own flag in the
+// exported entry, never from anything the publisher wrote.
+func (c *Cpak) SetDesktopFileSpan(value string) error {
+	if value == "" {
+		return nil
+	}
+	span, err := parseDesktopFileSpan(value)
+	if err != nil {
+		return err
+	}
+	c.fileSpan = &span
+	return nil
+}
+
+func (c *Cpak) desktopFileSpan() (desktopFileSpan, bool) {
+	if c.fileSpan == nil {
+		return desktopFileSpan{}, false
+	}
+	return *c.fileSpan, true
 }
 
 // NewCpak creates a new cpak instance.

@@ -48,7 +48,10 @@ func TestPrepareDesktopLaunchArgumentsMountsAFileURI(t *testing.T) {
 	}()
 	original := (&url.URL{Scheme: "file", Host: "localhost", Path: selected, Fragment: "preview"}).String()
 	cp := Cpak{}
-	arguments, err := cp.prepareDesktopLaunchArguments("github.com/example/browser", nil, types.Container{GrantSocketPath: socket}, []string{desktopFileArgumentStart, original, desktopFileArgumentEnd})
+	if err := cp.SetDesktopFileSpan("0,0"); err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := cp.prepareDesktopLaunchArguments("github.com/example/browser", nil, types.Container{GrantSocketPath: socket}, []string{original})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +77,10 @@ func TestPrepareDesktopLaunchArgumentsUsesAnExistingHostScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp := Cpak{}
-	arguments, err := cp.prepareDesktopLaunchArguments("github.com/example/viewer", []types.FilesystemPermission{{Path: "host", Access: "read-only"}}, types.Container{}, []string{desktopFileArgumentStart, selected, desktopFileArgumentEnd})
+	if err := cp.SetDesktopFileSpan("0,0"); err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := cp.prepareDesktopLaunchArguments("github.com/example/viewer", []types.FilesystemPermission{{Path: "host", Access: "read-only"}}, types.Container{}, []string{selected})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +92,11 @@ func TestPrepareDesktopLaunchArgumentsUsesAnExistingHostScope(t *testing.T) {
 
 func TestPrepareDesktopLaunchArgumentsLeavesOtherArgumentsAlone(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.txt")
-	arguments := []string{"/usr/bin/internal-tool", "--open", desktopFileArgumentStart, "https://example.com/file", missing, "file://remote.example/share/file", desktopFileArgumentEnd}
+	arguments := []string{"/usr/bin/internal-tool", "--open", "https://example.com/file", missing, "file://remote.example/share/file"}
 	cp := Cpak{}
+	if err := cp.SetDesktopFileSpan("2,0"); err != nil {
+		t.Fatal(err)
+	}
 	rewritten, err := cp.prepareDesktopLaunchArguments("github.com/example/browser", nil, types.Container{}, arguments)
 	if err != nil {
 		t.Fatal(err)

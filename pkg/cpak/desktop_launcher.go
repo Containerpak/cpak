@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	desktopLauncherMigration = "desktop-launcher-v3"
-	desktopFileArgumentStart = "@@cpak:file-grant:start@@"
-	desktopFileArgumentEnd   = "@@cpak:file-grant:end@@"
+	desktopLauncherMigration = "desktop-launcher-v4"
+	// The markers an exported entry used to carry. They are no longer written
+	// and no longer honoured; they are named here only so a stale entry can be
+	// cleaned of them.
+	legacyGrantMarkerStart = "@@cpak:file-grant:start@@"
+	legacyGrantMarkerEnd   = "@@cpak:file-grant:end@@"
 )
 
 func desktopLauncherPath() (string, error) {
@@ -123,32 +126,29 @@ func repairDesktopLauncher(content, launcher string) string {
 		if strings.HasPrefix(lines[i], prefix) && !strings.HasPrefix(lines[i], prefix+"--desktop-launch ") {
 			lines[i] = prefix + "--desktop-launch " + strings.TrimPrefix(lines[i], prefix)
 		}
+		// Entries exported before the span existed carry the old grant markers.
+		// They mean nothing now and must not linger, both because a publisher
+		// could have planted one and because a reader would take them for a
+		// grant that is no longer there. The migration below re-exports the
+		// entry properly; this only makes sure nothing stale survives until it
+		// does.
 		if strings.HasPrefix(lines[i], prefix+"--desktop-launch ") {
-			lines[i] = markDesktopFileArguments(lines[i])
+			lines[i] = stripLegacyGrantMarkers(lines[i])
+			lines[i] = withDesktopFileSpan(lines[i])
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-func markDesktopFileArguments(value string) string {
-	tokens := make([]string, 0, strings.Count(value, " ")+1)
+// splitDesktopArguments breaks a publisher argument list into tokens the way a
+// launcher does, so cpak counts the same things the launcher will pass.
+func splitDesktopArguments(value string) []string {
+	tokens := []string{}
 	start := 0
 	quoted := false
 	escaped := false
-	writeToken := func(token string) {
-		if token == "" {
-			return
-		}
-		field := token
-		if len(field) >= 2 && field[0] == '"' && field[len(field)-1] == '"' {
-			field = field[1 : len(field)-1]
-		}
-		switch {
-		case field == desktopFileArgumentStart, field == desktopFileArgumentEnd:
-			return
-		case field == "%f" || field == "%F" || field == "%u" || field == "%U":
-			tokens = append(tokens, desktopFileArgumentStart, token, desktopFileArgumentEnd)
-		default:
+	add := func(token string) {
+		if token != "" {
 			tokens = append(tokens, token)
 		}
 	}
@@ -166,12 +166,12 @@ func markDesktopFileArguments(value string) string {
 			if quoted {
 				continue
 			}
-			writeToken(value[start:index])
+			add(value[start:index])
 			start = index + 1
 		}
 	}
-	writeToken(value[start:])
-	return strings.Join(tokens, " ")
+	add(value[start:])
+	return tokens
 }
 
 func writeDesktopLauncher(path string, content []byte, mode os.FileMode) (err error) {
@@ -200,4 +200,48 @@ func writeDesktopLauncher(path string, content []byte, mode os.FileMode) (err er
 		return err
 	}
 	return os.Rename(temporaryPath, path)
+}
+
+// stripLegacyGrantMarkers removes the markers an entry was exported with before
+// the span replaced them.
+func stripLegacyGrantMarkers(line string) string {
+	for _, marker := range []string{legacyGrantMarkerStart, legacyGrantMarkerEnd} {
+		line = strings.ReplaceAll(line, " "+marker+" ", " ")
+		line = strings.ReplaceAll(line, marker, "")
+	}
+	return strings.TrimRight(line, " ")
+}
+
+// withDesktopFileSpan gives a repaired entry the counts a freshly exported one
+// carries.
+//
+// Repair rewrites an entry that is already on disk, and an entry exported before
+// the span existed has none. Without this it would come out of repair with its
+// placeholder intact and no way for cpak to know which arguments the launcher
+// substituted, so the files a user opened would arrive as ordinary text and the
+// application would be handed paths it cannot reach.
+func withDesktopFileSpan(line string) string {
+	if strings.Contains(line, " "+desktopFileSpanFlag+" ") {
+		return line
+	}
+	head, arguments, found := strings.Cut(line, " -- ")
+	if !found {
+		return line
+	}
+	span, selects, err := countDesktopFileSpan(splitDesktopArguments(arguments))
+	if err != nil || !selects {
+		return line
+	}
+	// The flag belongs beside the other flags cpak wrote, before the binary.
+	marker := " --desktop-launch "
+	position := strings.Index(head, marker)
+	if position < 0 {
+		return line
+	}
+	rest := head[position+len(marker):]
+	origin, tail, split := strings.Cut(rest, " ")
+	if !split {
+		return line
+	}
+	return head[:position+len(marker)] + origin + " " + desktopFileSpanFlag + " " + span.String() + " " + tail + " -- " + arguments
 }
