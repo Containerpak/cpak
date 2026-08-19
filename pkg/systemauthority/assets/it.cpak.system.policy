@@ -53,9 +53,9 @@
     </defaults>
   </action>
 
-  <!-- Forgetting an anchor leaves the application unenrolled, which is the
-       state enforcement refuses, so it takes away a permission rather than
-       granting one and an active session may do it while removing software. -->
+  <!-- Forgetting one's own anchor leaves one's own application unenrolled,
+       which is the state enforcement refuses, so an active session may do it
+       while removing its own software. -->
   <action id="it.cpak.system.forget-anchor">
     <description>Remove a cpak application from the integrity ledger</description>
     <message>Authentication is required to remove this cpak application from the integrity ledger</message>
@@ -63,6 +63,22 @@
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <!-- The same removal aimed at another account. The anchor is the only record
+       the rules against going backwards are derived from, so taking somebody
+       else's away makes the next install of an older release look like a first
+       enrolment with nothing to compare it against. Which of the two actions is
+       asked for is decided by the authority from the caller the bus names,
+       never by the caller. -->
+  <action id="it.cpak.system.forget-anchor-other">
+    <description>Remove another account's cpak application from the integrity ledger</description>
+    <message>Authentication is required to remove another account's cpak application from the integrity ledger</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
     </defaults>
   </action>
 

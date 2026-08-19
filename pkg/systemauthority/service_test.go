@@ -69,3 +69,48 @@ func TestServiceRejectsInvalidInputBeforeAuthorization(t *testing.T) {
 		t.Fatal("invalid request reached the authorization service")
 	}
 }
+
+// The anchor is the only record the rules against going backwards are derived
+// from, so who may remove one decides whether those rules can be removed. A
+// caller naming somebody else's account has to be asked the hard question, and
+// which question is asked must come from the bus rather than from the caller.
+func TestForgettingAnotherAccountsAnchorIsNotTheEasyQuestion(t *testing.T) {
+	const caller = uint32(1000)
+	service := Service{
+		Anchors:    testAnchorLedger(t),
+		CallerUID:  func(dbus.Sender) (uint32, error) { return caller, nil },
+		Authorizer: &testAuthorizer{},
+	}
+
+	for name, target := range map[string]uint32{
+		"another account":   caller + 1,
+		"root":              0,
+		"one's own account": caller,
+	} {
+		authorizer := &testAuthorizer{err: errors.New("denied")}
+		service.Authorizer = authorizer
+		_ = service.ForgetAnchor(":1.20", target, "github.com/containerpak/demo")
+		wanted := ActionForgetAnchorOther
+		if target == caller {
+			wanted = ActionForgetAnchor
+		}
+		if authorizer.action != wanted {
+			t.Fatalf("forgetting the anchor of %s asked for %s instead of %s", name, authorizer.action, wanted)
+		}
+	}
+}
+
+// An authority that cannot find out who is calling must not fall back to the
+// question anybody may answer.
+func TestAnUnnamedCallerIsAskedTheHardQuestion(t *testing.T) {
+	authorizer := &testAuthorizer{err: errors.New("denied")}
+	service := Service{
+		Anchors:    testAnchorLedger(t),
+		CallerUID:  func(dbus.Sender) (uint32, error) { return 0, errors.New("the bus will not say") },
+		Authorizer: authorizer,
+	}
+	_ = service.ForgetAnchor(":1.20", 1000, "github.com/containerpak/demo")
+	if authorizer.action != ActionForgetAnchorOther {
+		t.Fatalf("a caller the bus could not name was asked for %s", authorizer.action)
+	}
+}

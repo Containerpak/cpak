@@ -192,6 +192,28 @@ func busCallerUID(connection *dbus.Conn) func(dbus.Sender) (uint32, error) {
 	}
 }
 
+// forgetAction decides how hard to ask, the way enrolmentAction does for
+// recording one.
+//
+// Forgetting used to be one question for everybody, on the reasoning that it
+// takes a permission away rather than granting one. That reasoning is wrong.
+// The anchor is the only record the rules against going backwards are derived
+// from, so removing it does not leave an application with less: it leaves the
+// next install of an older release looking like a first enrolment, with nothing
+// to compare it against. Doing that to another account is not the ordinary
+// course of managing one's own software, and the caller does not get to say
+// whose anchor it is.
+func (s *Service) forgetAction(sender dbus.Sender, uid uint32) string {
+	if s.CallerUID == nil {
+		return ActionForgetAnchorOther
+	}
+	caller, err := s.CallerUID(sender)
+	if err != nil || caller != uid {
+		return ActionForgetAnchorOther
+	}
+	return ActionForgetAnchor
+}
+
 func (s *Service) ForgetAnchor(sender dbus.Sender, uid uint32, origin string) *dbus.Error {
 	if stale := refuseIfStale(); stale != nil {
 		return stale
@@ -202,7 +224,7 @@ func (s *Service) ForgetAnchor(sender dbus.Sender, uid uint32, origin string) *d
 	if s.Authorizer == nil {
 		return denied(errors.New("authorization service is unavailable"))
 	}
-	if err := s.Authorizer.Authorize(sender, ActionForgetAnchor, map[string]string{
+	if err := s.Authorizer.Authorize(sender, s.forgetAction(sender, uid), map[string]string{
 		"package-origin": origin,
 		"target-uid":     strconv.FormatUint(uint64(uid), 10),
 	}); err != nil {

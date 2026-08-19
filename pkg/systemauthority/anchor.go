@@ -37,6 +37,12 @@ const (
 	ActionWidenAnchor  = "it.cpak.system.widen-anchor"
 	ActionForgetAnchor = "it.cpak.system.forget-anchor"
 
+	// Forgetting somebody else's anchor is its own question. Removing one's own
+	// is part of removing one's own software; removing another account's is the
+	// owner of the machine's call, for the same reason enrolling on their
+	// behalf is.
+	ActionForgetAnchorOther = "it.cpak.system.forget-anchor-other"
+
 	anchorEnrolAction  = "enrol"
 	anchorForgetAction = "forget"
 
