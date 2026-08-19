@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"io"
 	"math"
 	"os"
@@ -131,6 +132,17 @@ func (c *Cpak) downloadChunkedLayer(client *oci.Client, ref oci.Reference, layer
 		return true, err
 	}
 	published = true
+
+	// The binding is what a launch is described by, and only the full download
+	// path recorded one. A layer taken through here was published and left
+	// unbound, so the application it belongs to was refused at every
+	// enforcement level and could be recovered only by a backfill that trusts
+	// whatever it finds. Failing to write it leaves the layer unbound rather
+	// than failing a pull that already succeeded, which is the same bargain the
+	// legacy migration makes.
+	if err := c.recordLayerBinding(digest); err != nil {
+		logger.Printf("Warning: the layer %s was pulled and not bound: %v", digest, err)
+	}
 	return true, nil
 }
 
