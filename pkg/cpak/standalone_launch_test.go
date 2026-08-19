@@ -15,6 +15,20 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+// reachedTheLayerMount answers whether a launch got past the gate and stopped
+// where this fixture always stops: none of its layers is on disk.
+//
+// Which of the two answers a machine gives depends on whether cpak's storage
+// service is installed on it, and neither of them is the gate. Asserting one of
+// the messages alone is asserting something about the machine the tests are
+// running on.
+func reachedTheLayerMount(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, errStorageServiceMissing) || strings.Contains(err.Error(), "is not available")
+}
+
 // pulledInFixture is a package the user named and a package it pulled in, both
 // installed, with the second one enrolled and its layers bound so that a launch
 // of it reaches the gate with everything the gate needs.
@@ -114,7 +128,7 @@ func TestANarrowedStandaloneLaunchIsStillTheLaunchTheAnchorNames(t *testing.T) {
 	if errors.Is(err, errLaunchUnrecognised) {
 		t.Fatalf("a launch narrowed after enrolment was refused as one no anchor names: %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "is not available") {
+	if !reachedTheLayerMount(err) {
 		t.Fatalf("got %v, want the launch to reach the layer mount", err)
 	}
 }
@@ -294,7 +308,7 @@ func TestANestedRunIsStillTheLaunchTheAnchorNames(t *testing.T) {
 	if errors.Is(err, errLaunchUnrecognised) {
 		t.Fatalf("a nested run narrowed by its parent was refused as a launch no anchor names: %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "is not available") {
+	if !reachedTheLayerMount(err) {
 		t.Fatalf("got %v, want the nested run to reach the layer mount", err)
 	}
 }
