@@ -39,6 +39,7 @@ func TestValidateRuntimeSource(t *testing.T) {
 		{name: "zero size", source: types.RuntimeSource{URL: valid.URL, SHA256: valid.SHA256, Installer: "dpkg"}},
 		{name: "path name", source: types.RuntimeSource{Name: "../demo.deb", URL: valid.URL, SHA256: valid.SHA256, Size: 42, Installer: "dpkg"}},
 		{name: "installer", source: types.RuntimeSource{URL: valid.URL, SHA256: valid.SHA256, Size: 42, Installer: "extract"}},
+		{name: "architecture", source: types.RuntimeSource{URL: valid.URL, SHA256: valid.SHA256, Size: 42, Installer: "dpkg", Architecture: "riscv64"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -50,6 +51,18 @@ func TestValidateRuntimeSource(t *testing.T) {
 				t.Fatal("expected validation to fail")
 			}
 		})
+	}
+}
+
+func TestRuntimeSourcesForArchitecture(t *testing.T) {
+	sources := []types.RuntimeSource{
+		{Name: "common"},
+		{Name: "amd64", Architecture: "amd64"},
+		{Name: "arm64", Architecture: "arm64"},
+	}
+	selected := RuntimeSourcesForArchitecture(sources, "amd64")
+	if len(selected) != 2 || selected[0].Name != "common" || selected[1].Name != "amd64" {
+		t.Fatalf("selected runtime sources: %#v", selected)
 	}
 }
 

@@ -470,6 +470,14 @@
             "tar"
           ],
           "description": "Installer used inside the cpak environment"
+        },
+        "architecture": {
+          "type": "string",
+          "enum": [
+            "amd64",
+            "arm64"
+          ],
+          "description": "Target architecture of the artifact"
         }
       },
       "additionalProperties": false,

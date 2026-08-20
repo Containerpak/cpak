@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,6 +26,25 @@ func carriesTerminalControl(value string) bool {
 		}
 	}
 	return false
+}
+
+func TestTheInstallPromptOnlyShowsRuntimeSourcesForThisArchitecture(t *testing.T) {
+	other := "amd64"
+	if runtime.GOARCH == other {
+		other = "arm64"
+	}
+	var output bytes.Buffer
+	command := &InstallCmd{Base: cli.Base{Logger: clilog.NewWriter(&output, &output)}}
+	command.describeRuntimeSourcesAndPermissions(&types.CpakManifest{
+		RuntimeSources: []types.RuntimeSource{
+			{URL: "https://example.com/native", Size: 1, Architecture: runtime.GOARCH},
+			{URL: "https://example.com/other", Size: 1, Architecture: other},
+		},
+	})
+	printed := output.String()
+	if !strings.Contains(printed, "/native") || strings.Contains(printed, "/other") {
+		t.Fatalf("runtime source prompt: %q", printed)
+	}
 }
 
 // The prompt is the last thing between a publisher and a granted permission,

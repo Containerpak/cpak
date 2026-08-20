@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,6 +38,23 @@ func TestRuntimeLayerDigest(t *testing.T) {
 	changed[0].SHA256 = strings.Repeat("b", 64)
 	if first == RuntimeLayerDigest([]string{"base", "top"}, changed) {
 		t.Fatal("digest did not account for the artifact checksum")
+	}
+}
+
+func TestRuntimeLayerSkipsAnotherArchitecture(t *testing.T) {
+	architecture := "amd64"
+	if runtime.GOARCH == architecture {
+		architecture = "arm64"
+	}
+	cp := Cpak{}
+	layers, err := cp.BuildRuntimeLayers([]string{"base"}, []types.RuntimeSource{{
+		Architecture: architecture,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layers) != 1 || layers[0] != "base" {
+		t.Fatalf("runtime layers: %#v", layers)
 	}
 }
 

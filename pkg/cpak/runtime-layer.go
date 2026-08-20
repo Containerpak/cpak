@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,7 @@ func RuntimeLayerDigest(baseLayers []string, sources []types.RuntimeSource) stri
 }
 
 func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSource) ([]string, error) {
+	sources = RuntimeSourcesForArchitecture(sources, runtime.GOARCH)
 	layers := append([]string{}, baseLayers...)
 	if len(sources) == 0 {
 		return layers, nil

@@ -280,7 +280,7 @@ func validateManifestText(manifest *types.CpakManifest) error {
 		}
 	}
 	for _, source := range manifest.RuntimeSources {
-		for _, value := range []string{source.Name, source.URL, source.SHA256, source.Installer} {
+		for _, value := range []string{source.Name, source.URL, source.SHA256, source.Installer, source.Architecture} {
 			if err := validateManifestLine(value); err != nil {
 				return errors.New("a runtime source contains a control character or is too long")
 			}

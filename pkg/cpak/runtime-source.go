@@ -60,11 +60,24 @@ func ValidateRuntimeSource(source types.RuntimeSource) error {
 	if source.Installer != "dpkg" && source.Installer != "deb-extract" && source.Installer != "rpm" && source.Installer != "tar" {
 		return fmt.Errorf("runtime source %s declares unsupported installer %q", source.URL, source.Installer)
 	}
+	if source.Architecture != "" && source.Architecture != "amd64" && source.Architecture != "arm64" {
+		return fmt.Errorf("runtime source %s declares unsupported architecture %q", source.URL, source.Architecture)
+	}
 	name := RuntimeSourceFileName(source)
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
 		return fmt.Errorf("invalid runtime source file name %q", name)
 	}
 	return nil
+}
+
+func RuntimeSourcesForArchitecture(sources []types.RuntimeSource, architecture string) []types.RuntimeSource {
+	selected := make([]types.RuntimeSource, 0, len(sources))
+	for _, source := range sources {
+		if source.Architecture == "" || source.Architecture == architecture {
+			selected = append(selected, source)
+		}
+	}
+	return selected
 }
 
 type RuntimeFetcher struct {

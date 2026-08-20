@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
@@ -129,9 +130,10 @@ func (c *InstallCmd) describeDependencies(dependencies []cpak.ResolvedDependency
 }
 
 func (c *InstallCmd) describeRuntimeSourcesAndPermissions(manifest *types.CpakManifest) {
-	if len(manifest.RuntimeSources) > 0 {
+	sources := cpak.RuntimeSourcesForArchitecture(manifest.RuntimeSources, runtime.GOARCH)
+	if len(sources) > 0 {
 		c.Logger.Info("The following files will be downloaded from third parties:")
-		for _, source := range manifest.RuntimeSources {
+		for _, source := range sources {
 			c.Logger.Info("  - %s (%d bytes)", tools.SanitizeForDisplay(source.URL), source.Size)
 		}
 		c.Logger.Info("")
