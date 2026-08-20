@@ -70,6 +70,7 @@ func ValidateRuntimeSource(source types.RuntimeSource) error {
 type RuntimeFetcher struct {
 	CacheDir string
 	Client   *http.Client
+	Progress func(string)
 }
 
 func (c *Cpak) NewRuntimeFetcher() *RuntimeFetcher {
@@ -90,6 +91,7 @@ func (f *RuntimeFetcher) Fetch(source types.RuntimeSource) (artifact string, err
 	checksum := strings.ToLower(source.SHA256)
 	artifact = filepath.Join(f.CacheDir, checksum)
 	if verifyRuntimeArtifact(artifact, source) == nil {
+		f.report("Using cached runtime source %s", RuntimeSourceFileName(source))
 		return artifact, nil
 	}
 	if err = os.Remove(artifact); err != nil && !os.IsNotExist(err) {
@@ -122,6 +124,7 @@ func (f *RuntimeFetcher) Fetch(source types.RuntimeSource) (artifact string, err
 		}
 		return nil
 	}
+	f.report("Downloading runtime source %s (%d bytes)", RuntimeSourceFileName(source), source.Size)
 	response, err := requestClient.Get(source.URL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch %s: %w", source.URL, err)
@@ -157,7 +160,14 @@ func (f *RuntimeFetcher) Fetch(source types.RuntimeSource) (artifact string, err
 	if err = os.Rename(temp.Name(), artifact); err != nil {
 		return "", err
 	}
+	f.report("Verified runtime source %s", RuntimeSourceFileName(source))
 	return artifact, nil
+}
+
+func (f *RuntimeFetcher) report(format string, args ...any) {
+	if f.Progress != nil {
+		f.Progress(fmt.Sprintf(format, args...))
+	}
 }
 
 func verifyRuntimeArtifact(artifact string, source types.RuntimeSource) error {

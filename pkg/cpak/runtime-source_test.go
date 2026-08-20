@@ -61,7 +61,14 @@ func TestRuntimeFetcherVerifiesAndCaches(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fetcher := &RuntimeFetcher{CacheDir: t.TempDir(), Client: server.Client()}
+	progress := make([]string, 0, 3)
+	fetcher := &RuntimeFetcher{
+		CacheDir: t.TempDir(),
+		Client:   server.Client(),
+		Progress: func(message string) {
+			progress = append(progress, message)
+		},
+	}
 	source := types.RuntimeSource{URL: server.URL + "/demo.deb", SHA256: runtimeChecksum(payload), Size: int64(len(payload)), Installer: "dpkg"}
 	first, err := fetcher.Fetch(source)
 	if err != nil {
@@ -76,6 +83,14 @@ func TestRuntimeFetcherVerifiesAndCaches(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(fetcher.CacheDir, source.SHA256)); err != nil {
 		t.Fatalf("verified artifact missing: %v", err)
+	}
+	wantProgress := []string{
+		"Downloading runtime source demo.deb (15 bytes)",
+		"Verified runtime source demo.deb",
+		"Using cached runtime source demo.deb",
+	}
+	if strings.Join(progress, "\n") != strings.Join(wantProgress, "\n") {
+		t.Fatalf("progress = %q, want %q", progress, wantProgress)
 	}
 }
 

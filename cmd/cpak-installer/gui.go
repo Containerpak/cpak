@@ -450,6 +450,14 @@ func fontFace(size int, bold bool) font.Face {
 func guiProgressLabel(message, name string) string {
 	message = strings.TrimSpace(message)
 	switch {
+	case strings.Contains(message, "Downloading runtime source "):
+		return runtimeSourceProgressLabel(message, "Downloading runtime source ", "Downloading ")
+	case strings.Contains(message, "Verified runtime source "):
+		return runtimeSourceProgressLabel(message, "Verified runtime source ", "Verified ")
+	case strings.Contains(message, "Using cached runtime source "):
+		return runtimeSourceProgressLabel(message, "Using cached runtime source ", "Preparing ")
+	case strings.Contains(message, "Installing runtime source "):
+		return runtimeSourceProgressLabel(message, "Installing runtime source ", "Installing ")
 	case message == "cpak is ready", strings.HasPrefix(message, "Installed cpak"):
 		return "cpak is ready"
 	case strings.HasPrefix(message, "Resolving "):
@@ -461,4 +469,12 @@ func guiProgressLabel(message, name string) string {
 	default:
 		return ""
 	}
+}
+
+func runtimeSourceProgressLabel(message, marker, action string) string {
+	value := message[strings.Index(message, marker)+len(marker):]
+	if name, _, found := strings.Cut(value, " ("); found {
+		value = name
+	}
+	return action + strings.TrimSpace(value)
 }

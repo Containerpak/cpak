@@ -91,6 +91,10 @@ func TestGUIProgressLabelHidesCommandOutput(t *testing.T) {
 		{message: "Installed cpak in ~/.local/bin", want: "cpak is ready"},
 		{message: "Resolving Bottles", want: "Preparing Bottles"},
 		{message: "Downloading sha256:abc", want: "Downloading Bottles"},
+		{message: "Downloading runtime source google-chrome.deb (140188716 bytes)", want: "Downloading google-chrome.deb"},
+		{message: "Verified runtime source google-chrome.deb", want: "Verified google-chrome.deb"},
+		{message: "Using cached runtime source google-chrome.deb", want: "Preparing google-chrome.deb"},
+		{message: "Installing runtime source google-chrome.deb", want: "Installing google-chrome.deb"},
 		{message: "Extracting layer", want: "Installing Bottles"},
 		{message: "Resolved commit f2700afd2980dda29a73284f8b182e32c2071d5cb4fc9b7ac72579641b3cbb", want: ""},
 	}

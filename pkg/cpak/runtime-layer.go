@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -53,6 +54,9 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 
 	artifacts := make([]string, 0, len(sources))
 	fetcher := c.NewRuntimeFetcher()
+	fetcher.Progress = func(message string) {
+		logger.Printf("%s", message)
+	}
 	for _, source := range sources {
 		artifact, err := fetcher.Fetch(source)
 		if err != nil {
@@ -99,6 +103,7 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 		args = append(args, "--extra-links", artifact+":"+packagePath)
 		args = append(args, "--runtime-package", packagePath)
 		args = append(args, "--runtime-installer", sources[i].Installer)
+		logger.Printf("Installing runtime source %s", RuntimeSourceFileName(sources[i]))
 	}
 
 	cmd := nativeNamespaceCommand(cpakBinary, args, namespaceOptions{
