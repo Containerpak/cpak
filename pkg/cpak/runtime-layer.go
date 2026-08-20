@@ -36,6 +36,7 @@ func RuntimeLayerDigest(baseLayers []string, sources []types.RuntimeSource) stri
 		writePart(strings.ToLower(source.SHA256))
 		writePart(strconv.FormatInt(source.Size, 10))
 		writePart(source.Installer)
+		writePart(source.Destination)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
@@ -105,6 +106,7 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 		args = append(args, "--extra-links", artifact+":"+packagePath)
 		args = append(args, "--runtime-package", packagePath)
 		args = append(args, "--runtime-installer", sources[i].Installer)
+		args = append(args, "--runtime-destination", sources[i].Destination)
 		logger.Printf("Installing runtime source %s", RuntimeSourceFileName(sources[i]))
 	}
 

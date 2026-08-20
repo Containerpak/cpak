@@ -286,11 +286,38 @@ func TestInstallRuntimeArchiveRejectsEscapes(t *testing.T) {
 
 func TestInstallRuntimePackagesRejectsInstallerMismatch(t *testing.T) {
 	command := &SpawnCmd{}
-	if err := command.installRuntimePackages([]string{"one", "two"}, []string{"tar"}); err == nil {
+	if err := command.installRuntimePackages([]string{"one", "two"}, []string{"tar"}, nil); err == nil {
 		t.Fatal("runtime package and installer count mismatch was accepted")
 	}
-	if err := command.installRuntimePackages([]string{"one"}, []string{"unknown"}); err == nil {
+	if err := command.installRuntimePackages([]string{"one"}, []string{"unknown"}, nil); err == nil {
 		t.Fatal("unknown runtime installer was accepted")
+	}
+	if err := command.installRuntimePackages([]string{"one"}, []string{"file"}, []string{"/opt/one", "/opt/two"}); err == nil {
+		t.Fatal("runtime package and destination count mismatch was accepted")
+	}
+}
+
+func TestInstallRuntimeFile(t *testing.T) {
+	root := t.TempDir()
+	artifact := filepath.Join(t.TempDir(), "demo.jar")
+	if err := os.WriteFile(artifact, []byte("payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := installRuntimeFile(root, artifact, "/opt/demo/demo.jar"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "opt", "demo", "demo.jar"))
+	if err != nil || string(content) != "payload" {
+		t.Fatalf("installed file = %q, err = %v", content, err)
+	}
+	if err := installRuntimeFile(root, artifact, "/usr/bin/demo"); err == nil {
+		t.Fatal("destination outside /opt was accepted")
+	}
+	if err := os.Symlink("demo.jar", filepath.Join(root, "opt", "demo", "link.jar")); err != nil {
+		t.Fatal(err)
+	}
+	if err := installRuntimeFile(root, artifact, "/opt/demo/link.jar"); err == nil {
+		t.Fatal("symbolic link destination was accepted")
 	}
 }
 

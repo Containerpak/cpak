@@ -57,8 +57,15 @@ func ValidateRuntimeSource(source types.RuntimeSource) error {
 	if source.Size <= 0 || source.Size > MaxRuntimeSourceSize {
 		return fmt.Errorf("runtime source %s declares an invalid size of %d bytes", source.URL, source.Size)
 	}
-	if source.Installer != "dpkg" && source.Installer != "deb-extract" && source.Installer != "rpm" && source.Installer != "tar" {
+	if source.Installer != "dpkg" && source.Installer != "deb-extract" && source.Installer != "rpm" && source.Installer != "tar" && source.Installer != "file" {
 		return fmt.Errorf("runtime source %s declares unsupported installer %q", source.URL, source.Installer)
+	}
+	if source.Installer == "file" {
+		if filepath.Clean(source.Destination) != source.Destination || !strings.HasPrefix(source.Destination, "/opt/") {
+			return fmt.Errorf("runtime source %s declares invalid file destination %q", source.URL, source.Destination)
+		}
+	} else if source.Destination != "" {
+		return fmt.Errorf("runtime source %s declares a destination for installer %q", source.URL, source.Installer)
 	}
 	if source.Architecture != "" && source.Architecture != "amd64" && source.Architecture != "arm64" {
 		return fmt.Errorf("runtime source %s declares unsupported architecture %q", source.URL, source.Architecture)

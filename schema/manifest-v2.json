@@ -467,9 +467,15 @@
             "dpkg",
             "deb-extract",
             "rpm",
-            "tar"
+            "tar",
+            "file"
           ],
           "description": "Installer used inside the cpak environment"
+        },
+        "destination": {
+          "type": "string",
+          "pattern": "^/opt/.+",
+          "description": "Destination for a file runtime source"
         },
         "architecture": {
           "type": "string",

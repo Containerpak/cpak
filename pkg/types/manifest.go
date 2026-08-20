@@ -87,7 +87,8 @@ type RuntimeSource struct {
 	URL          string `json:"url" jsonschema:"pattern=^https://,description=HTTPS URL of the artifact"`
 	SHA256       string `json:"sha256" jsonschema:"pattern=^[A-Fa-f0-9]{64}$,description=SHA256 checksum of the artifact"`
 	Size         int64  `json:"size" jsonschema:"minimum=1,description=Size of the artifact in bytes"`
-	Installer    string `json:"installer" jsonschema:"enum=dpkg,enum=deb-extract,enum=rpm,enum=tar,description=Installer used inside the cpak environment"`
+	Installer    string `json:"installer" jsonschema:"enum=dpkg,enum=deb-extract,enum=rpm,enum=tar,enum=file,description=Installer used inside the cpak environment"`
+	Destination  string `json:"destination,omitempty" jsonschema:"pattern=^/opt/.+,description=Destination for a file runtime source"`
 	Architecture string `json:"architecture,omitempty" jsonschema:"enum=amd64,enum=arm64,description=Target architecture of the artifact"`
 }
 

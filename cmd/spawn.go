@@ -62,40 +62,41 @@ x-scheme-handler/mailto=cpak-open-uri.desktop;
 `
 
 type SpawnCmd struct {
-	Verbose          bool     `cli:"verbose,v" help:"enable verbose output"`
-	UserUid          int      `cli:"user-uid" help:"set the user uid"`
-	AppId            string   `cli:"app-id" help:"set the app id"`
-	NestedToken      string   `cli:"nested-token" help:"the capability this container presents to run its declared dependencies"`
-	MachineId        string   `cli:"machine-id" help:"set the application machine id"`
-	ContainerId      string   `cli:"container-id" help:"set the container id"`
-	Rootfs           string   `cli:"rootfs" help:"set the rootfs"`
-	Env              []string `cli:"env,e" help:"set environment variables"`
-	Layers           string   `cli:"layers" help:"set the layers"`
-	StateDir         string   `cli:"state-dir" help:"set the state directory"`
-	MaskState        []string `cli:"mask-state" help:"a directory holding cpak's own state, to hide inside any grant that contains it"`
-	ImageDir         string   `cli:"image-dir" help:"set the image directory"`
-	LayersDir        string   `cli:"layers-dir" help:"set the layers directory"`
-	LowerDir         string   `cli:"lower-dir" help:"set the prepared lower directory"`
-	Filesystem       []string `cli:"filesystem" help:"encoded filesystem permission"`
-	MountOverrides   []string `cli:"mount-overrides,m" help:"set the mount overrides"`
-	SystemShims      []string `cli:"system-shims" help:"set the system integration shims"`
-	ExtraLinks       []string `cli:"extra-links,x" help:"set the extra links"`
-	DesktopRuntime   string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
-	ReadyFd          int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
-	ExecSocket       string   `cli:"exec-socket" help:"container command socket"`
-	GrantSocket      string   `cli:"grant-socket" help:"file grant mount socket"`
-	ServiceSocket    string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
-	PrivateHome      string   `cli:"private-home" help:"persistent private application home"`
-	IdleTime         int      `cli:"idle-time" help:"idle timeout in minutes"`
-	MountHostRoot    bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
-	Nvidia           bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
-	UserNamespaces   bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
-	AllowPtrace      bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
-	BuildLayer       bool     `cli:"build-layer" help:"build a managed layer and exit"`
-	AllowRoot        bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
-	RuntimePackage   []string `cli:"runtime-package" help:"install a package in the managed layer"`
-	RuntimeInstaller []string `cli:"runtime-installer" help:"select the installer for each runtime package"`
-	ExtraArgs        []string `arg:"extra" help:"Extra arguments"`
+	Verbose            bool     `cli:"verbose,v" help:"enable verbose output"`
+	UserUid            int      `cli:"user-uid" help:"set the user uid"`
+	AppId              string   `cli:"app-id" help:"set the app id"`
+	NestedToken        string   `cli:"nested-token" help:"the capability this container presents to run its declared dependencies"`
+	MachineId          string   `cli:"machine-id" help:"set the application machine id"`
+	ContainerId        string   `cli:"container-id" help:"set the container id"`
+	Rootfs             string   `cli:"rootfs" help:"set the rootfs"`
+	Env                []string `cli:"env,e" help:"set environment variables"`
+	Layers             string   `cli:"layers" help:"set the layers"`
+	StateDir           string   `cli:"state-dir" help:"set the state directory"`
+	MaskState          []string `cli:"mask-state" help:"a directory holding cpak's own state, to hide inside any grant that contains it"`
+	ImageDir           string   `cli:"image-dir" help:"set the image directory"`
+	LayersDir          string   `cli:"layers-dir" help:"set the layers directory"`
+	LowerDir           string   `cli:"lower-dir" help:"set the prepared lower directory"`
+	Filesystem         []string `cli:"filesystem" help:"encoded filesystem permission"`
+	MountOverrides     []string `cli:"mount-overrides,m" help:"set the mount overrides"`
+	SystemShims        []string `cli:"system-shims" help:"set the system integration shims"`
+	ExtraLinks         []string `cli:"extra-links,x" help:"set the extra links"`
+	DesktopRuntime     string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
+	ReadyFd            int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
+	ExecSocket         string   `cli:"exec-socket" help:"container command socket"`
+	GrantSocket        string   `cli:"grant-socket" help:"file grant mount socket"`
+	ServiceSocket      string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
+	PrivateHome        string   `cli:"private-home" help:"persistent private application home"`
+	IdleTime           int      `cli:"idle-time" help:"idle timeout in minutes"`
+	MountHostRoot      bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
+	Nvidia             bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
+	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
+	BuildLayer         bool     `cli:"build-layer" help:"build a managed layer and exit"`
+	AllowRoot          bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
+	RuntimePackage     []string `cli:"runtime-package" help:"install a package in the managed layer"`
+	RuntimeInstaller   []string `cli:"runtime-installer" help:"select the installer for each runtime package"`
+	RuntimeDestination []string `cli:"runtime-destination" help:"select the destination for each runtime package"`
+	ExtraArgs          []string `arg:"extra" help:"Extra arguments"`
 
 	cli.Base
 }
@@ -135,7 +136,7 @@ func (c *SpawnCmd) Run() error {
 		if err = c.pivotRoot(c.Rootfs); err != nil {
 			return err
 		}
-		return c.installRuntimePackages(c.RuntimePackage, c.RuntimeInstaller)
+		return c.installRuntimePackages(c.RuntimePackage, c.RuntimeInstaller, c.RuntimeDestination)
 	}
 	machineIDGrant, err := c.injectMachineID(c.Rootfs, c.MachineId)
 	if err != nil {
@@ -1023,7 +1024,7 @@ func (c *SpawnCmd) setupDesktopRuntime(rootFs, source string) (sandbox.PathGrant
 	return sandbox.PathGrant{Path: desktopRuntimeTarget}, nil
 }
 
-func (c *SpawnCmd) installRuntimePackages(packages, installers []string) error {
+func (c *SpawnCmd) installRuntimePackages(packages, installers, destinations []string) error {
 	if len(packages) == 0 {
 		return fmt.Errorf("no runtime packages specified")
 	}
@@ -1035,6 +1036,12 @@ func (c *SpawnCmd) installRuntimePackages(packages, installers []string) error {
 	}
 	if len(packages) != len(installers) {
 		return fmt.Errorf("runtime package and installer counts differ")
+	}
+	if len(destinations) == 0 {
+		destinations = make([]string, len(packages))
+	}
+	if len(packages) != len(destinations) {
+		return fmt.Errorf("runtime package and destination counts differ")
 	}
 
 	for first := 0; first < len(packages); {
@@ -1065,12 +1072,51 @@ func (c *SpawnCmd) installRuntimePackages(packages, installers []string) error {
 			if err := runRuntimeInstaller(runtimeRPMPackageCommand(batch)); err != nil {
 				return fmt.Errorf("rpm failed to install runtime packages: %w", err)
 			}
+		case "file":
+			for index, artifact := range batch {
+				destination := destinations[first+index]
+				if err := installRuntimeFile("/", artifact, destination); err != nil {
+					return fmt.Errorf("file failed to install runtime source %s: %w", artifact, err)
+				}
+			}
 		default:
 			return fmt.Errorf("unsupported runtime installer %q", installer)
 		}
 		first = last
 	}
 	return nil
+}
+
+func installRuntimeFile(root, artifact, destination string) error {
+	if filepath.Clean(destination) != destination || !strings.HasPrefix(destination, "/opt/") {
+		return fmt.Errorf("invalid runtime file destination %q", destination)
+	}
+	source, err := os.Open(artifact)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	rootfs, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rootfs.Close()
+	target := strings.TrimPrefix(destination, "/")
+	if err = rootfs.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	if info, statErr := rootfs.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("runtime file replaces a symbolic link: %s", destination)
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	output, err := rootfs.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, source)
+	closeErr := output.Close()
+	return errors.Join(copyErr, closeErr)
 }
 
 func runRuntimeInstaller(cmd *exec.Cmd) error {
