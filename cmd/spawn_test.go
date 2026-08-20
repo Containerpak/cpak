@@ -5,7 +5,9 @@
 package cmd
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"net"
 	"os"
 	"path/filepath"
@@ -204,6 +206,106 @@ func TestRuntimePackageCommandUsesGuestDpkg(t *testing.T) {
 		if strings.HasPrefix(entry, "CPAK_") {
 			t.Fatalf("host cpak variable leaked into runtime installer: %s", entry)
 		}
+	}
+}
+
+func TestRuntimeRPMPackageCommandUsesGuestRPM(t *testing.T) {
+	command := runtimeRPMPackageCommand([]string{"/run/cpak/runtime/demo.rpm"})
+	if command.Path != "/usr/bin/rpm" {
+		t.Fatalf("runtime installer path: %s", command.Path)
+	}
+	wantArgs := []string{"/usr/bin/rpm", "--install", "--replacepkgs", "/run/cpak/runtime/demo.rpm"}
+	if !reflect.DeepEqual(command.Args, wantArgs) {
+		t.Fatalf("runtime installer arguments: %v", command.Args)
+	}
+}
+
+func TestInstallRuntimeArchive(t *testing.T) {
+	root := t.TempDir()
+	archive := filepath.Join(t.TempDir(), "runtime.tar.gz")
+	writeRuntimeArchive(t, archive, []*tar.Header{
+		{Name: "usr/share/applications/engine.desktop", Mode: 0644, Size: int64(len("desktop entry")), Typeflag: tar.TypeReg},
+	}, [][]byte{[]byte("desktop entry")})
+
+	if err := installRuntimeArchive(root, archive); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "usr/share/applications/engine.desktop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "desktop entry" {
+		t.Fatalf("archive content: %q", content)
+	}
+}
+
+func TestInstallRuntimeArchiveRejectsEscapes(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		headers []*tar.Header
+		content [][]byte
+	}{
+		{
+			name:    "parent path",
+			headers: []*tar.Header{{Name: "../escape", Mode: 0644, Size: 1, Typeflag: tar.TypeReg}},
+			content: [][]byte{[]byte("x")},
+		},
+		{
+			name: "symbolic link parent",
+			headers: []*tar.Header{
+				{Name: "usr", Linkname: "..", Typeflag: tar.TypeSymlink},
+				{Name: "usr/escape", Mode: 0644, Size: 1, Typeflag: tar.TypeReg},
+			},
+			content: [][]byte{nil, []byte("x")},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			archive := filepath.Join(t.TempDir(), "runtime.tar.gz")
+			writeRuntimeArchive(t, archive, test.headers, test.content)
+			if err := installRuntimeArchive(root, archive); err == nil {
+				t.Fatal("unsafe archive was accepted")
+			}
+		})
+	}
+}
+
+func TestInstallRuntimePackagesRejectsInstallerMismatch(t *testing.T) {
+	command := &SpawnCmd{}
+	if err := command.installRuntimePackages([]string{"one", "two"}, []string{"tar"}); err == nil {
+		t.Fatal("runtime package and installer count mismatch was accepted")
+	}
+	if err := command.installRuntimePackages([]string{"one"}, []string{"unknown"}); err == nil {
+		t.Fatal("unknown runtime installer was accepted")
+	}
+}
+
+func writeRuntimeArchive(t *testing.T, destination string, headers []*tar.Header, content [][]byte) {
+	t.Helper()
+	file, err := os.Create(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(file)
+	archive := tar.NewWriter(compressed)
+	for i, header := range headers {
+		if err = archive.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if len(content[i]) > 0 {
+			if _, err = archive.Write(content[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err = archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

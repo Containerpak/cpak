@@ -98,6 +98,7 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 		packagePath := fmt.Sprintf("/run/cpak/runtime/%d-%s", i, RuntimeSourceFileName(sources[i]))
 		args = append(args, "--extra-links", artifact+":"+packagePath)
 		args = append(args, "--runtime-package", packagePath)
+		args = append(args, "--runtime-installer", sources[i].Installer)
 	}
 
 	cmd := nativeNamespaceCommand(cpakBinary, args, namespaceOptions{

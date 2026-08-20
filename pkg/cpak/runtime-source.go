@@ -57,7 +57,7 @@ func ValidateRuntimeSource(source types.RuntimeSource) error {
 	if source.Size <= 0 || source.Size > MaxRuntimeSourceSize {
 		return fmt.Errorf("runtime source %s declares an invalid size of %d bytes", source.URL, source.Size)
 	}
-	if source.Installer != "dpkg" {
+	if source.Installer != "dpkg" && source.Installer != "rpm" && source.Installer != "tar" {
 		return fmt.Errorf("runtime source %s declares unsupported installer %q", source.URL, source.Installer)
 	}
 	name := RuntimeSourceFileName(source)

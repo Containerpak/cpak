@@ -464,9 +464,11 @@
         "installer": {
           "type": "string",
           "enum": [
-            "dpkg"
+            "dpkg",
+            "rpm",
+            "tar"
           ],
-          "description": "Native installer used inside the cpak environment"
+          "description": "Installer used inside the cpak environment"
         }
       },
       "additionalProperties": false,

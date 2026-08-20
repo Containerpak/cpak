@@ -5,6 +5,9 @@
 package cmd
 
 import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -13,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -58,39 +62,40 @@ x-scheme-handler/mailto=cpak-open-uri.desktop;
 `
 
 type SpawnCmd struct {
-	Verbose        bool     `cli:"verbose,v" help:"enable verbose output"`
-	UserUid        int      `cli:"user-uid" help:"set the user uid"`
-	AppId          string   `cli:"app-id" help:"set the app id"`
-	NestedToken    string   `cli:"nested-token" help:"the capability this container presents to run its declared dependencies"`
-	MachineId      string   `cli:"machine-id" help:"set the application machine id"`
-	ContainerId    string   `cli:"container-id" help:"set the container id"`
-	Rootfs         string   `cli:"rootfs" help:"set the rootfs"`
-	Env            []string `cli:"env,e" help:"set environment variables"`
-	Layers         string   `cli:"layers" help:"set the layers"`
-	StateDir       string   `cli:"state-dir" help:"set the state directory"`
-	MaskState      []string `cli:"mask-state" help:"a directory holding cpak's own state, to hide inside any grant that contains it"`
-	ImageDir       string   `cli:"image-dir" help:"set the image directory"`
-	LayersDir      string   `cli:"layers-dir" help:"set the layers directory"`
-	LowerDir       string   `cli:"lower-dir" help:"set the prepared lower directory"`
-	Filesystem     []string `cli:"filesystem" help:"encoded filesystem permission"`
-	MountOverrides []string `cli:"mount-overrides,m" help:"set the mount overrides"`
-	SystemShims    []string `cli:"system-shims" help:"set the system integration shims"`
-	ExtraLinks     []string `cli:"extra-links,x" help:"set the extra links"`
-	DesktopRuntime string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
-	ReadyFd        int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
-	ExecSocket     string   `cli:"exec-socket" help:"container command socket"`
-	GrantSocket    string   `cli:"grant-socket" help:"file grant mount socket"`
-	ServiceSocket  string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
-	PrivateHome    string   `cli:"private-home" help:"persistent private application home"`
-	IdleTime       int      `cli:"idle-time" help:"idle timeout in minutes"`
-	MountHostRoot  bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
-	Nvidia         bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
-	UserNamespaces bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
-	AllowPtrace    bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
-	BuildLayer     bool     `cli:"build-layer" help:"build a managed layer and exit"`
-	AllowRoot      bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
-	RuntimePackage []string `cli:"runtime-package" help:"install a package in the managed layer"`
-	ExtraArgs      []string `arg:"extra" help:"Extra arguments"`
+	Verbose          bool     `cli:"verbose,v" help:"enable verbose output"`
+	UserUid          int      `cli:"user-uid" help:"set the user uid"`
+	AppId            string   `cli:"app-id" help:"set the app id"`
+	NestedToken      string   `cli:"nested-token" help:"the capability this container presents to run its declared dependencies"`
+	MachineId        string   `cli:"machine-id" help:"set the application machine id"`
+	ContainerId      string   `cli:"container-id" help:"set the container id"`
+	Rootfs           string   `cli:"rootfs" help:"set the rootfs"`
+	Env              []string `cli:"env,e" help:"set environment variables"`
+	Layers           string   `cli:"layers" help:"set the layers"`
+	StateDir         string   `cli:"state-dir" help:"set the state directory"`
+	MaskState        []string `cli:"mask-state" help:"a directory holding cpak's own state, to hide inside any grant that contains it"`
+	ImageDir         string   `cli:"image-dir" help:"set the image directory"`
+	LayersDir        string   `cli:"layers-dir" help:"set the layers directory"`
+	LowerDir         string   `cli:"lower-dir" help:"set the prepared lower directory"`
+	Filesystem       []string `cli:"filesystem" help:"encoded filesystem permission"`
+	MountOverrides   []string `cli:"mount-overrides,m" help:"set the mount overrides"`
+	SystemShims      []string `cli:"system-shims" help:"set the system integration shims"`
+	ExtraLinks       []string `cli:"extra-links,x" help:"set the extra links"`
+	DesktopRuntime   string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
+	ReadyFd          int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
+	ExecSocket       string   `cli:"exec-socket" help:"container command socket"`
+	GrantSocket      string   `cli:"grant-socket" help:"file grant mount socket"`
+	ServiceSocket    string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
+	PrivateHome      string   `cli:"private-home" help:"persistent private application home"`
+	IdleTime         int      `cli:"idle-time" help:"idle timeout in minutes"`
+	MountHostRoot    bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
+	Nvidia           bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
+	UserNamespaces   bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	AllowPtrace      bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
+	BuildLayer       bool     `cli:"build-layer" help:"build a managed layer and exit"`
+	AllowRoot        bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
+	RuntimePackage   []string `cli:"runtime-package" help:"install a package in the managed layer"`
+	RuntimeInstaller []string `cli:"runtime-installer" help:"select the installer for each runtime package"`
+	ExtraArgs        []string `arg:"extra" help:"Extra arguments"`
 
 	cli.Base
 }
@@ -130,7 +135,7 @@ func (c *SpawnCmd) Run() error {
 		if err = c.pivotRoot(c.Rootfs); err != nil {
 			return err
 		}
-		return c.installRuntimePackages(c.RuntimePackage)
+		return c.installRuntimePackages(c.RuntimePackage, c.RuntimeInstaller)
 	}
 	machineIDGrant, err := c.injectMachineID(c.Rootfs, c.MachineId)
 	if err != nil {
@@ -1018,31 +1023,203 @@ func (c *SpawnCmd) setupDesktopRuntime(rootFs, source string) (sandbox.PathGrant
 	return sandbox.PathGrant{Path: desktopRuntimeTarget}, nil
 }
 
-func (c *SpawnCmd) installRuntimePackages(packages []string) error {
+func (c *SpawnCmd) installRuntimePackages(packages, installers []string) error {
 	if len(packages) == 0 {
 		return fmt.Errorf("no runtime packages specified")
 	}
-	cmd := runtimePackageCommand(packages)
+	if len(installers) == 0 {
+		installers = make([]string, len(packages))
+		for i := range installers {
+			installers[i] = "dpkg"
+		}
+	}
+	if len(packages) != len(installers) {
+		return fmt.Errorf("runtime package and installer counts differ")
+	}
+
+	for first := 0; first < len(packages); {
+		installer := installers[first]
+		last := first + 1
+		for last < len(packages) && installers[last] == installer {
+			last++
+		}
+		batch := packages[first:last]
+		switch installer {
+		case "tar":
+			for _, archive := range batch {
+				if err := installRuntimeArchive("/", archive); err != nil {
+					return fmt.Errorf("archive failed to install runtime source %s: %w", archive, err)
+				}
+			}
+		case "dpkg":
+			if err := runRuntimeInstaller(runtimePackageCommand(batch)); err != nil {
+				return fmt.Errorf("dpkg failed to install runtime packages: %w", err)
+			}
+		case "rpm":
+			if err := runRuntimeInstaller(runtimeRPMPackageCommand(batch)); err != nil {
+				return fmt.Errorf("rpm failed to install runtime packages: %w", err)
+			}
+		default:
+			return fmt.Errorf("unsupported runtime installer %q", installer)
+		}
+		first = last
+	}
+	return nil
+}
+
+func runRuntimeInstaller(cmd *exec.Cmd) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("dpkg failed to install runtime packages: %w", err)
-	}
-	return nil
+	return cmd.Run()
 }
 
 func runtimePackageCommand(packages []string) *exec.Cmd {
 	args := append([]string{"--install"}, packages...)
 	cmd := exec.Command("/usr/bin/dpkg", args...)
-	cmd.Env = []string{
+	cmd.Env = runtimeInstallerEnvironment()
+	return cmd
+}
+
+func runtimeRPMPackageCommand(packages []string) *exec.Cmd {
+	args := append([]string{"--install", "--replacepkgs"}, packages...)
+	cmd := exec.Command("/usr/bin/rpm", args...)
+	cmd.Env = runtimeInstallerEnvironment()
+	return cmd
+}
+
+func runtimeInstallerEnvironment() []string {
+	return []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=/root",
 		"LANG=C.UTF-8",
 		"LC_ALL=C.UTF-8",
 		"DEBIAN_FRONTEND=noninteractive",
 	}
-	return cmd
+}
+
+func installRuntimeArchive(root, archivePath string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	buffered := bufio.NewReader(file)
+	reader := io.Reader(buffered)
+	var compressed *gzip.Reader
+	magic, _ := buffered.Peek(2)
+	if len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		compressed, err = gzip.NewReader(buffered)
+		if err != nil {
+			return err
+		}
+		defer compressed.Close()
+		reader = compressed
+	}
+
+	rootfs, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rootfs.Close()
+
+	archive := tar.NewReader(reader)
+	for {
+		header, nextErr := archive.Next()
+		if errors.Is(nextErr, io.EOF) {
+			return nil
+		}
+		if nextErr != nil {
+			return nextErr
+		}
+		name, err := runtimeArchiveName(header.Name)
+		if err != nil {
+			return err
+		}
+		if err = installRuntimeArchiveEntry(rootfs, name, header, archive); err != nil {
+			return err
+		}
+	}
+}
+
+func runtimeArchiveName(name string) (string, error) {
+	if name == "" || strings.ContainsRune(name, 0) || path.IsAbs(name) {
+		return "", fmt.Errorf("invalid archive path %q", name)
+	}
+	clean := path.Clean(name)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("invalid archive path %q", name)
+	}
+	return clean, nil
+}
+
+func installRuntimeArchiveEntry(root *os.Root, name string, header *tar.Header, reader io.Reader) error {
+	if name == "." {
+		if header.Typeflag == tar.TypeDir {
+			return nil
+		}
+		return fmt.Errorf("invalid archive path %q", header.Name)
+	}
+	target := filepath.FromSlash(name)
+	if err := root.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	mode := os.FileMode(header.Mode) & os.ModePerm
+	switch header.Typeflag {
+	case tar.TypeDir:
+		if err := root.MkdirAll(target, mode); err != nil {
+			return err
+		}
+		return root.Chmod(target, mode)
+	case tar.TypeReg, tar.TypeRegA:
+		if info, err := root.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("archive file replaces a symbolic link: %s", name)
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		file, err := root.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.CopyN(file, reader, header.Size)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return root.Chmod(target, mode)
+	case tar.TypeSymlink:
+		if _, err := runtimeArchiveName(path.Join(path.Dir(name), header.Linkname)); err != nil || path.IsAbs(header.Linkname) {
+			return fmt.Errorf("invalid archive symbolic link %q", header.Linkname)
+		}
+		if _, err := root.Lstat(target); !os.IsNotExist(err) {
+			if err == nil {
+				return fmt.Errorf("archive symbolic link replaces an existing path: %s", name)
+			}
+			return err
+		}
+		return root.Symlink(header.Linkname, target)
+	case tar.TypeLink:
+		linkTarget, err := runtimeArchiveName(header.Linkname)
+		if err != nil {
+			return fmt.Errorf("invalid archive hard link %q", header.Linkname)
+		}
+		info, err := root.Lstat(filepath.FromSlash(linkTarget))
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("archive hard link target is not a regular file: %s", header.Linkname)
+		}
+		return root.Link(filepath.FromSlash(linkTarget), target)
+	case tar.TypeXHeader, tar.TypeXGlobalHeader:
+		return nil
+	default:
+		return fmt.Errorf("archive contains unsupported entry type %d at %s", header.Typeflag, name)
+	}
 }
 
 func (c *SpawnCmd) pivotRoot(rootFs string) error {

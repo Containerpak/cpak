@@ -30,7 +30,9 @@ func TestValidateRuntimeSource(t *testing.T) {
 		source types.RuntimeSource
 		valid  bool
 	}{
-		{name: "valid", source: valid, valid: true},
+		{name: "dpkg", source: valid, valid: true},
+		{name: "tar", source: types.RuntimeSource{URL: "https://example.com/demo.tar.gz", SHA256: valid.SHA256, Size: 42, Installer: "tar"}, valid: true},
+		{name: "rpm", source: types.RuntimeSource{URL: "https://example.com/demo.rpm", SHA256: valid.SHA256, Size: 42, Installer: "rpm"}, valid: true},
 		{name: "http", source: types.RuntimeSource{URL: "http://example.com/demo.deb", SHA256: valid.SHA256, Size: 42, Installer: "dpkg"}},
 		{name: "bad checksum", source: types.RuntimeSource{URL: valid.URL, SHA256: "bad", Size: 42, Installer: "dpkg"}},
 		{name: "zero size", source: types.RuntimeSource{URL: valid.URL, SHA256: valid.SHA256, Installer: "dpkg"}},
