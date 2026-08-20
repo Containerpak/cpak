@@ -87,7 +87,7 @@ type RuntimeSource struct {
 	URL       string `json:"url" jsonschema:"pattern=^https://,description=HTTPS URL of the artifact"`
 	SHA256    string `json:"sha256" jsonschema:"pattern=^[A-Fa-f0-9]{64}$,description=SHA256 checksum of the artifact"`
 	Size      int64  `json:"size" jsonschema:"minimum=1,description=Size of the artifact in bytes"`
-	Installer string `json:"installer" jsonschema:"enum=dpkg,enum=rpm,enum=tar,description=Installer used inside the cpak environment"`
+	Installer string `json:"installer" jsonschema:"enum=dpkg,enum=deb-extract,enum=rpm,enum=tar,description=Installer used inside the cpak environment"`
 }
 
 type Session struct {

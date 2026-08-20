@@ -172,8 +172,10 @@ cpak migrate-manifest cpak.json
 ```
 
 `runtime_sources` adds checksum-pinned artifacts to a managed runtime layer.
-Use the `dpkg` or `rpm` installer for native packages. Use `tar` for a tar or
-gzip-compressed tar archive whose paths are rooted at `/` inside the package.
+Use the `dpkg` or `rpm` installer for native packages. Use `deb-extract` when a
+Debian package must be unpacked without running maintainer scripts or checking
+its dependency metadata. Use `tar` for a tar or gzip-compressed tar archive
+whose paths are rooted at `/` inside the package.
 
 Dependencies are installed with the application. A dependency uses `nested`
 mode by default and runs as its own cpak through the parent service. Set its

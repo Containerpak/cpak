@@ -465,6 +465,7 @@
           "type": "string",
           "enum": [
             "dpkg",
+            "deb-extract",
             "rpm",
             "tar"
           ],

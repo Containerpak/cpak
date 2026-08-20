@@ -1055,6 +1055,12 @@ func (c *SpawnCmd) installRuntimePackages(packages, installers []string) error {
 			if err := runRuntimeInstaller(runtimePackageCommand(batch)); err != nil {
 				return fmt.Errorf("dpkg failed to install runtime packages: %w", err)
 			}
+		case "deb-extract":
+			for _, archive := range batch {
+				if err := runRuntimeInstaller(runtimeDebExtractCommand(archive)); err != nil {
+					return fmt.Errorf("dpkg-deb failed to extract runtime source %s: %w", archive, err)
+				}
+			}
 		case "rpm":
 			if err := runRuntimeInstaller(runtimeRPMPackageCommand(batch)); err != nil {
 				return fmt.Errorf("rpm failed to install runtime packages: %w", err)
@@ -1077,6 +1083,12 @@ func runRuntimeInstaller(cmd *exec.Cmd) error {
 func runtimePackageCommand(packages []string) *exec.Cmd {
 	args := append([]string{"--install"}, packages...)
 	cmd := exec.Command("/usr/bin/dpkg", args...)
+	cmd.Env = runtimeInstallerEnvironment()
+	return cmd
+}
+
+func runtimeDebExtractCommand(archive string) *exec.Cmd {
+	cmd := exec.Command("/usr/bin/dpkg-deb", "--extract", archive, "/")
 	cmd.Env = runtimeInstallerEnvironment()
 	return cmd
 }

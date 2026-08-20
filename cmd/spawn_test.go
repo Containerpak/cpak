@@ -209,6 +209,20 @@ func TestRuntimePackageCommandUsesGuestDpkg(t *testing.T) {
 	}
 }
 
+func TestRuntimeDebExtractCommandUsesGuestDpkgDeb(t *testing.T) {
+	command := runtimeDebExtractCommand("/run/cpak/runtime/demo.deb")
+	if command.Path != "/usr/bin/dpkg-deb" {
+		t.Fatalf("runtime extractor path: %s", command.Path)
+	}
+	wantArgs := []string{"/usr/bin/dpkg-deb", "--extract", "/run/cpak/runtime/demo.deb", "/"}
+	if !reflect.DeepEqual(command.Args, wantArgs) {
+		t.Fatalf("runtime extractor arguments: %v", command.Args)
+	}
+	if !slices.Contains(command.Env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") {
+		t.Fatalf("guest PATH is missing: %v", command.Env)
+	}
+}
+
 func TestRuntimeRPMPackageCommandUsesGuestRPM(t *testing.T) {
 	command := runtimeRPMPackageCommand([]string{"/run/cpak/runtime/demo.rpm"})
 	if command.Path != "/usr/bin/rpm" {
