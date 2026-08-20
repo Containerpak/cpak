@@ -174,9 +174,18 @@ func (c *Cpak) collectOrphanedLayerRecords(referenced map[string]struct{}, apply
 		if _, exists := referenced[layer]; exists {
 			continue
 		}
-		path := filepath.Join(directory, entry.Name())
-		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove orphaned layer record %s: %w", path, err)
+		if err = c.removeLayerRecords(layer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Cpak) removeLayerRecords(layer string) error {
+	for _, suffix := range []string{".json", ".checkout.json"} {
+		path := c.GetInStoreDir("bindings", layer+suffix)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove layer record %s: %w", path, err)
 		}
 	}
 	return nil

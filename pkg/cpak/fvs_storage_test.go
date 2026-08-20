@@ -354,6 +354,39 @@ func TestRemoveApplicationLayersDoesNotAuditTheStore(t *testing.T) {
 	}
 }
 
+func TestRemoveApplicationLayersRemovesOnlyUnreferencedRecords(t *testing.T) {
+	cp := newTestCpak(t)
+	unique := strings.Repeat("a", 64)
+	shared := strings.Repeat("b", 64)
+	removed := types.Application{ParsedLayers: []string{unique, shared}}
+	seedApplication(t, cp, types.Application{
+		CpakId:       "remaining",
+		Origin:       "github.com/containerpak/remaining",
+		Branch:       "main",
+		ParsedLayers: []string{shared},
+	})
+	for _, layer := range []string{unique, shared} {
+		seedFVSLayerFile(t, cp, layer, "value", []byte(layer))
+		if err := cp.recordLayerBinding(layer); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cp.GetInStoreDir("bindings", layer+".checkout.json"), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cp.removeApplicationLayers(removed); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{".json", ".checkout.json"} {
+		if _, err := os.Stat(cp.GetInStoreDir("bindings", unique+suffix)); !os.IsNotExist(err) {
+			t.Fatalf("unreferenced record remained: %s", suffix)
+		}
+		if _, err := os.Stat(cp.GetInStoreDir("bindings", shared+suffix)); err != nil {
+			t.Fatalf("shared record changed: %s: %v", suffix, err)
+		}
+	}
+}
+
 func TestPrepareLayerMountFallsBackWithoutTheStorageService(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("CPAK_FVS2D_BINARY", "")

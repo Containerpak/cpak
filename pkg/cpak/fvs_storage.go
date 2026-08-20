@@ -206,6 +206,9 @@ func (c *Cpak) removeApplicationLayers(removed types.Application) error {
 				return fmt.Errorf("remove layer %s: %w", layer, err)
 			}
 		}
+		if err := c.removeLayerRecords(layer); err != nil {
+			return err
+		}
 	}
 	return nil
 }
