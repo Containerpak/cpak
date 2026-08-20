@@ -163,6 +163,90 @@ func TestContainerPolicyHashChangesWithAddon(t *testing.T) {
 	}
 }
 
+func TestInstalledProviderIsActivatedWithoutManualEnable(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Name:         "Code",
+		Origin:       "github.com/containerpak/vscode",
+		Version:      "main",
+		ParsedAddons: []string{"github.com/containerpak/sdk-go", "github.com/containerpak/sdk-tinygo"},
+	}
+	goSDK := providerApplication("go", "github.com/containerpak/sdk-go", "sdk.go", "go", types.AddonSlotExclusive)
+	tinyGo := providerApplication("tinygo", "github.com/containerpak/sdk-tinygo", "sdk.go", "tinygo", types.AddonSlotExclusive)
+	seedApplication(t, c, goSDK)
+	seedApplication(t, c, tinyGo)
+
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addons) != 1 || addons[0].Origin != goSDK.Origin {
+		t.Fatalf("default provider: got %+v, want %s", addons, goSDK.Origin)
+	}
+}
+
+func TestExclusiveProviderSelectionUsesTheRequestedOrigin(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Name:         "Code",
+		Origin:       "github.com/containerpak/vscode",
+		Version:      "main",
+		ParsedAddons: []string{"github.com/containerpak/sdk-go", "github.com/containerpak/sdk-tinygo"},
+	}
+	goSDK := providerApplication("go", "github.com/containerpak/sdk-go", "sdk.go", "go", types.AddonSlotExclusive)
+	tinyGo := providerApplication("tinygo", "github.com/containerpak/sdk-tinygo", "sdk.go", "tinygo", types.AddonSlotExclusive)
+	seedApplication(t, c, goSDK)
+	seedApplication(t, c, tinyGo)
+	if err := saveAddonConfiguration(app, addonConfiguration{Slots: map[string]string{"sdk.go": tinyGo.Origin}}); err != nil {
+		t.Fatal(err)
+	}
+
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addons) != 1 || addons[0].Origin != tinyGo.Origin {
+		t.Fatalf("selected provider: got %+v, want %s", addons, tinyGo.Origin)
+	}
+}
+
+func TestMultipleProviderSlotComposesEveryInstalledProvider(t *testing.T) {
+	c := newTestCpak(t)
+	app := types.Application{
+		Name:         "Steam",
+		Origin:       "github.com/containerpak/steam",
+		Version:      "main",
+		ParsedAddons: []string{"github.com/containerpak/proton-ge", "github.com/bottlesdevs/protosoda"},
+	}
+	ge := providerApplication("ge", app.ParsedAddons[0], "steam.compatibility-tool", "ge-proton", types.AddonSlotMultiple)
+	protoSoda := providerApplication("protosoda", app.ParsedAddons[1], "steam.compatibility-tool", "protosoda", types.AddonSlotMultiple)
+	seedApplication(t, c, ge)
+	seedApplication(t, c, protoSoda)
+
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{addons[0].Origin, addons[1].Origin}; !reflect.DeepEqual(got, app.ParsedAddons) {
+		t.Fatalf("multiple providers: got %v, want %v", got, app.ParsedAddons)
+	}
+}
+
+func providerApplication(id, origin, slot, provider, mode string) types.Application {
+	return types.Application{
+		CpakId:       id,
+		Origin:       origin,
+		Branch:       "main",
+		Version:      "main",
+		ParsedLayers: []string{id},
+		ParsedAddonProvider: &types.AddonProvider{
+			ID:   provider,
+			Slot: slot,
+			Mode: mode,
+		},
+	}
+}
+
 // An addon that names other packages as layer dependencies is how a group of
 // tools is offered as one choice: the parent declares one addon instead of
 // listing every SDK, and the group can grow without touching the parent. Until

@@ -54,6 +54,37 @@ func TestValidateManifestAcceptsFilesystemPermissions(t *testing.T) {
 	}
 }
 
+func TestValidateManifestAcceptsAddonProvider(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.AddonProvider = &types.AddonProvider{
+		ID:   "jdk25",
+		Slot: "sdk.java",
+		Mode: types.AddonSlotExclusive,
+		Exports: types.AddonExports{
+			Path:        []string{"/opt/jdk/bin"},
+			Environment: []string{"JAVA_HOME=/opt/jdk"},
+		},
+	}
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateManifestRejectsRelativeAddonExport(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.AddonProvider = &types.AddonProvider{
+		ID:   "go",
+		Slot: "sdk.go",
+		Mode: types.AddonSlotExclusive,
+		Exports: types.AddonExports{
+			Path: []string{"usr/local/go/bin"},
+		},
+	}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("accepted a relative addon export path")
+	}
+}
+
 func TestValidateManifestRejectsWritableHostScope(t *testing.T) {
 	manifest := validManifestForTest()
 	manifest.Override.Filesystem = []types.FilesystemPermission{{Path: "host", Access: "read-write"}}

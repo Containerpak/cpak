@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +20,11 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
-var sessionIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
+var (
+	sessionIDPattern     = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
+	addonNamePattern     = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
+	addonEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
 
 // ValidateManifest validates a manifest file, by ensuring all
 // required fields are present.
@@ -79,6 +84,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 			return err
 		}
 	}
+	if err = validateAddonProvider(manifest.AddonProvider); err != nil {
+		return err
+	}
 	if err = migrateLegacyHostCommands(&manifest.Override); err != nil {
 		return err
 	}
@@ -110,6 +118,42 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 		}
 	}
 	return ValidateManifest(manifest)
+}
+
+func validateAddonProvider(provider *types.AddonProvider) error {
+	if provider == nil {
+		return nil
+	}
+	if !addonNamePattern.MatchString(provider.ID) {
+		return fmt.Errorf("invalid addon provider id: %q", provider.ID)
+	}
+	if !addonNamePattern.MatchString(provider.Slot) {
+		return fmt.Errorf("invalid addon slot: %q", provider.Slot)
+	}
+	if provider.Mode != types.AddonSlotExclusive && provider.Mode != types.AddonSlotMultiple {
+		return fmt.Errorf("unsupported addon slot mode for %s: %s", provider.Slot, provider.Mode)
+	}
+	paths := [][]string{
+		provider.Exports.Path,
+		provider.Exports.LibraryPath,
+		provider.Exports.IncludePath,
+		provider.Exports.PkgConfigPath,
+		provider.Exports.CMakePrefixPath,
+	}
+	for _, entries := range paths {
+		for _, entry := range entries {
+			if !path.IsAbs(entry) || path.Clean(entry) != entry || strings.Contains(entry, ":") {
+				return fmt.Errorf("invalid addon export path: %q", entry)
+			}
+		}
+	}
+	for _, variable := range provider.Exports.Environment {
+		name, _, found := strings.Cut(variable, "=")
+		if !found || !addonEnvironmentName.MatchString(name) {
+			return fmt.Errorf("invalid addon environment entry: %q", variable)
+		}
+	}
+	return nil
 }
 
 func validateSessions(manifest *types.CpakManifest) error {
@@ -245,6 +289,20 @@ func validateManifestText(manifest *types.CpakManifest) error {
 	for _, addon := range manifest.Addons {
 		if err := validateManifestLine(addon); err != nil {
 			return errors.New("an addon contains a control character or is too long")
+		}
+	}
+	if provider := manifest.AddonProvider; provider != nil {
+		values := []string{provider.ID, provider.Slot, provider.Mode}
+		values = append(values, provider.Exports.Path...)
+		values = append(values, provider.Exports.LibraryPath...)
+		values = append(values, provider.Exports.IncludePath...)
+		values = append(values, provider.Exports.PkgConfigPath...)
+		values = append(values, provider.Exports.CMakePrefixPath...)
+		values = append(values, provider.Exports.Environment...)
+		for _, value := range values {
+			if err := validateManifestLine(value); err != nil {
+				return errors.New("an addon provider contains a control character or is too long")
+			}
 		}
 	}
 	if err := validateOverrideText(manifest.Override); err != nil {

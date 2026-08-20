@@ -86,6 +86,9 @@ type Application struct {
 	// ParsedAddons is the list of additional applications which it supports.
 	ParsedAddons []string `json:"parsed_addons"`
 
+	// ParsedAddonProvider is the addon capability supplied by this application.
+	ParsedAddonProvider *AddonProvider `json:"parsed_addon_provider,omitempty"`
+
 	// IdleTime is the number of idle minutes before the container stops.
 	IdleTime int `json:"idle_time"`
 

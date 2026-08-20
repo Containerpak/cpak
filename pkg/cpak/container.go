@@ -503,6 +503,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
+	containerEnv = applyAddonEnvironment(containerEnv, addons)
 	if hostLocaleWins(app) {
 		containerEnv = inheritHostLocale(containerEnv, os.Environ())
 	}
@@ -524,6 +525,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		containerEnv = setEnvironmentValue(containerEnv, "GTK_USE_PORTAL", "1")
 	}
+	containerEnv = setEnvironmentValue(containerEnv, "PATH", buildContainerPath(containerEnv))
 	for _, envVar := range containerEnv {
 		cmds = append(cmds, "--env", envVar)
 	}
@@ -542,8 +544,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	for _, shim := range systemBrokerShims(override) {
 		cmds = append(cmds, "--system-shims", shim)
 	}
-
-	cmds = append(cmds, "--env", "PATH="+buildContainerPath(config.Config.Env))
 
 	readyReader, readyWriter, err := os.Pipe()
 	if err != nil {
@@ -719,7 +719,11 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 		}
 	}
 
-	envVars, err := containerEnvironment(app, override, container)
+	addons, err := c.resolveEnabledAddons(app)
+	if err != nil {
+		return err
+	}
+	envVars, err := containerEnvironment(app, override, container, addons...)
 	if err != nil {
 		return err
 	}
@@ -793,7 +797,7 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 	}
 }
 
-func containerEnvironment(app types.Application, override types.Override, container types.Container) ([]string, error) {
+func containerEnvironment(app types.Application, override types.Override, container types.Container, addons ...types.Application) ([]string, error) {
 	config := &oci.ConfigFile{}
 	if err := json.Unmarshal([]byte(app.Config), config); err != nil {
 		return nil, fmt.Errorf("decode application config: %w", err)
@@ -802,6 +806,8 @@ func containerEnvironment(app types.Application, override types.Override, contai
 	envVars := append([]string{}, os.Environ()...)
 	envVars = append(envVars, config.Config.Env...)
 	envVars = append(envVars, override.Env...)
+	envVars = applyAddonEnvironment(envVars, addons)
+	envVars = setEnvironmentValue(envVars, "PATH", buildContainerPath(envVars))
 	if hostLocaleWins(app) {
 		envVars = inheritHostLocale(envVars, os.Environ())
 	}

@@ -2,6 +2,87 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v2.json",
   "$defs": {
+    "AddonExports": {
+      "properties": {
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Directories prepended to PATH"
+        },
+        "library_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Directories prepended to runtime and compiler library paths"
+        },
+        "include_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Directories prepended to CPATH"
+        },
+        "pkg_config_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Directories prepended to PKG_CONFIG_PATH"
+        },
+        "cmake_prefix_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Directories prepended to CMAKE_PREFIX_PATH"
+        },
+        "environment": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Environment entries in NAME=value form"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "AddonProvider": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+          "description": "Provider identifier within its slot"
+        },
+        "slot": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+          "description": "Capability supplied by this package"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "exclusive",
+            "multiple"
+          ],
+          "description": "Whether one or several providers may be active"
+        },
+        "exports": {
+          "$ref": "#/$defs/AddonExports",
+          "description": "Runtime paths and environment supplied by the provider"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "slot",
+        "mode"
+      ]
+    },
     "Dependency": {
       "properties": {
         "id": {
@@ -520,6 +601,10 @@
       },
       "type": "array",
       "description": "Optional addons"
+    },
+    "addon_provider": {
+      "$ref": "#/$defs/AddonProvider",
+      "description": "Addon capability supplied by this package"
     },
     "idle_time": {
       "type": "integer",

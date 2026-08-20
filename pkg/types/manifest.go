@@ -49,6 +49,9 @@ type CpakManifest struct {
 	// Addons is the list of additional applications which it supports.
 	Addons []string `json:"addons,omitempty" jsonschema:"description=Optional addons"`
 
+	// AddonProvider describes the slot supplied when this package is used as an addon.
+	AddonProvider *AddonProvider `json:"addon_provider,omitempty" jsonschema:"description=Addon capability supplied by this package"`
+
 	// IdleTime is the idle time in minutes, after which to stop the container.
 	IdleTime int `json:"idle_time" jsonschema:"minimum=0,description=Idle time in minutes before stop"`
 

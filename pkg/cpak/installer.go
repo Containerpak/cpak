@@ -233,6 +233,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		ParsedSessions:       manifest.Sessions,
 		ParsedDependencies:   parsedManifestDependencies,
 		ParsedAddons:         manifest.Addons,
+		ParsedAddonProvider:  manifest.AddonProvider,
 		IdleTime:             manifest.IdleTime,
 		ParsedLayers:         layers,
 		RuntimeSources:       manifest.RuntimeSources,

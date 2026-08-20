@@ -109,6 +109,9 @@ func (c *InstallCmd) describeRootPackage(manifest *types.CpakManifest) {
 		c.Logger.Info("  - (%s session) %s", tools.SanitizeForDisplay(session.Kind), tools.SanitizeForDisplay(session.Name))
 		tools.PrintStructKeyVal(session.Override)
 	}
+	if provider := manifest.AddonProvider; provider != nil {
+		c.Logger.Info("  - (addon provider) %s for %s (%s)", tools.SanitizeForDisplay(provider.ID), tools.SanitizeForDisplay(provider.Slot), tools.SanitizeForDisplay(provider.Mode))
+	}
 	c.Logger.Info("")
 }
 
