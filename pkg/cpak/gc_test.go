@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/storaged"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
@@ -39,6 +40,45 @@ func TestCollectGarbageKeepsReferencedLayers(t *testing.T) {
 	for _, path := range []string{c.GetInStoreDir("layers", "orphan"), c.GetInStoreDir("layers", "stale.partial"), filepath.Join(c.Options.CachePath, "download.partial")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected garbage to be removed: %s", path)
+		}
+	}
+}
+
+func TestCollectGarbageRemovesOrphanedLayerRecords(t *testing.T) {
+	c := newTestCpak(t)
+	c.Options.CachePath = filepath.Join(t.TempDir(), "cache")
+	layer := strings.Repeat("c", 64)
+	bindings, err := c.layerBindings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = bindings.Bind(integrity.LayerBinding{
+		OCIDigest: layer,
+		StateID:   "state",
+		StateRoot: "root",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binding := c.GetInStoreDir("bindings", layer+".json")
+	checkout := c.GetInStoreDir("bindings", layer+".checkout.json")
+	if err = os.WriteFile(checkout, []byte("record"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = c.collectGarbageReport(nil, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{binding, checkout} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("dry run removed %s: %v", path, statErr)
+		}
+	}
+	if _, err = c.collectGarbageReport(nil, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{binding, checkout} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("orphaned layer record remained: %s", path)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/logger"
@@ -89,6 +90,9 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 	if err != nil {
 		return report, err
 	}
+	if err = c.collectOrphanedLayerRecords(referencedLayers, apply); err != nil {
+		return report, err
+	}
 	report.Cache, err = c.collectCachedLayers(apply)
 	if err != nil {
 		return report, err
@@ -148,6 +152,53 @@ func (c *Cpak) collectGarbageReport(apps []types.Application, apply bool) (Garba
 	report.Bytes += report.ObjectBytes
 	report.Bytes += report.DriverBytes
 	return report, nil
+}
+
+func (c *Cpak) collectOrphanedLayerRecords(referenced map[string]struct{}, apply bool) error {
+	if !apply {
+		return nil
+	}
+	directory := c.GetInStoreDir("bindings")
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		layer, found := layerRecordDigest(entry.Name())
+		if entry.IsDir() || !found {
+			continue
+		}
+		if _, exists := referenced[layer]; exists {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove orphaned layer record %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func layerRecordDigest(name string) (string, bool) {
+	for _, suffix := range []string{".checkout.json", ".json"} {
+		if !strings.HasSuffix(name, suffix) {
+			continue
+		}
+		digest := strings.TrimSuffix(name, suffix)
+		if len(digest) != 64 {
+			return "", false
+		}
+		for _, character := range digest {
+			if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+				return "", false
+			}
+		}
+		return digest, true
+	}
+	return "", false
 }
 
 func (c *Cpak) collectOrphanedLayers(referenced map[string]struct{}, apply bool) ([]GarbageItem, error) {
