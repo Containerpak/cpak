@@ -145,6 +145,31 @@ func TestPolicyRootIgnoresGrantOrderButNotContent(t *testing.T) {
 	}
 }
 
+func TestPolicyRootReadsTheSchemaBeforeSerialDevices(t *testing.T) {
+	policy := types.Override{SocketWayland: true, Network: true}
+	legacy, err := PolicyRootForSchema(policy, PolicySchemaWithoutSerial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy != "60f22559e6e387ce9a91f00256d8883ff55c0316a0dc85f4453c2bf16c3d8460" {
+		t.Fatalf("legacy policy root changed to %s", legacy)
+	}
+	current, err := PolicyRoot(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current != "d52cc55c1926145efb578cd47ca4e30aad5e4ee36769a6ffa82a799a3ca1813a" {
+		t.Fatalf("current policy root changed to %s", current)
+	}
+}
+
+func TestPolicyRootDoesNotDropSerialDeviceAccessFromAnOldSchema(t *testing.T) {
+	policy := types.Override{DeviceSerial: true}
+	if _, err := PolicyRootForSchema(policy, PolicySchemaWithoutSerial); err == nil {
+		t.Fatal("the schema without serial devices accepted serial device access")
+	}
+}
+
 func TestRestrictionsDoNotNeedConsent(t *testing.T) {
 	current := types.Override{
 		Network:    true,

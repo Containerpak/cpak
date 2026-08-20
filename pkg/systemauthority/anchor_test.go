@@ -567,6 +567,99 @@ func TestEnrolmentPolicyMustHashToItsPolicyRoot(t *testing.T) {
 	}
 }
 
+func TestEnrolmentReadsAndSupersedesAPolicyFromBeforeSerialDevices(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true, Network: true}
+	legacyRoot, err := integrity.PolicyRootForSchema(policy, integrity.PolicySchemaWithoutSerial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := anchorOver(t, policy, strings.Repeat("a1", 32), 1)
+	anchor.PolicyRoot = legacyRoot
+	anchor.LaunchRoot = integrity.LaunchRoot(anchor.PackageRoot, legacyRoot)
+	legacy := Enrolment{Anchor: anchor, Policy: &policy}
+	encoded, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded = bytes.Replace(encoded, []byte("    \"deviceSerial\": false,\n"), nil, 1)
+	if bytes.Contains(encoded, []byte("\"deviceSerial\"")) {
+		t.Fatal("legacy enrolment still contains the serial device field")
+	}
+	writeAnchorFile(t, ledger, anchor.UID, anchor.Origin, append(encoded, '\n'))
+
+	recorded, found, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("the legacy enrolment was not read: %v, %v", found, err)
+	}
+	if recorded.PolicySchema != integrity.PolicySchemaWithoutSerial {
+		t.Fatalf("legacy policy uses schema %d", recorded.PolicySchema)
+	}
+
+	currentRoot, err := integrity.PolicyRoot(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := anchor
+	update.Generation++
+	update.PackageRoot = strings.Repeat("d4", 32)
+	update.PolicyRoot = currentRoot
+	update.LaunchRoot = integrity.LaunchRoot(update.PackageRoot, currentRoot)
+	if err := ledger.Record(Enrolment{Anchor: update, Policy: &policy}); err != nil {
+		t.Fatalf("the legacy enrolment could not be superseded: %v", err)
+	}
+
+	recorded, found, err = ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("the current enrolment was not read: %v, %v", found, err)
+	}
+	if recorded.PolicySchema != integrity.CurrentPolicySchema {
+		t.Fatalf("updated policy uses schema %d", recorded.PolicySchema)
+	}
+}
+
+func TestForgottenAnchorReadsAPolicyFromBeforeSerialDevices(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	policy := types.Override{SocketWayland: true, Network: true}
+	root, err := integrity.PolicyRootForSchema(policy, integrity.PolicySchemaWithoutSerial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buried := Tombstone{
+		UID:        uint32(os.Getuid()),
+		Origin:     testAnchor().Origin,
+		Generation: 3,
+		PolicyRoot: root,
+		Policy:     &policy,
+	}
+	encoded, err := json.MarshalIndent(buried, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded = bytes.Replace(encoded, []byte("    \"deviceSerial\": false,\n"), nil, 1)
+	if bytes.Contains(encoded, []byte("\"deviceSerial\"")) {
+		t.Fatal("legacy tombstone still contains the serial device field")
+	}
+	path, err := ledger.tombstonePath(buried.UID, buried.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDirectory(filepath.Dir(path), ledger.OwnerUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	read, found, err := ledger.Forgotten(buried.UID, buried.Origin)
+	if err != nil || !found {
+		t.Fatalf("the legacy tombstone was not read: %v, %v", found, err)
+	}
+	if read.PolicySchema != integrity.PolicySchemaWithoutSerial {
+		t.Fatalf("legacy tombstone uses schema %d", read.PolicySchema)
+	}
+}
+
 func TestAuthorizationFollowsWhatTheLedgerHolds(t *testing.T) {
 	recordedPolicy := types.Override{SocketWayland: true, Network: true}
 	narrower := types.Override{SocketWayland: true}

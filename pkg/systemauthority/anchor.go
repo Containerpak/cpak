@@ -130,7 +130,8 @@ var verifyBundle = separatedVerify
 // has to be put to the owner every time.
 type Enrolment struct {
 	integrity.Anchor
-	Policy *types.Override `json:"policy,omitempty"`
+	Policy       *types.Override `json:"policy,omitempty"`
+	PolicySchema int             `json:"policy_schema,omitempty"`
 
 	// Signature is the publisher signature the installation was verified
 	// against, and it is the bundle and not a verdict. A verdict would be the
@@ -165,8 +166,9 @@ type Tombstone struct {
 	// hashes cannot be ordered against each other, so without the policy a
 	// narrowing that went missing along with the record would be a change
 	// nobody can order and would be put to the owner every time.
-	PolicyRoot string          `json:"policy_root"`
-	Policy     *types.Override `json:"policy,omitempty"`
+	PolicyRoot   string          `json:"policy_root"`
+	Policy       *types.Override `json:"policy,omitempty"`
+	PolicySchema int             `json:"policy_schema,omitempty"`
 
 	// Signed says a publisher had answered for this application, which is the
 	// fact the record was the only place of. SignatureGeneration says which
@@ -185,6 +187,7 @@ func (t Tombstone) raisedBy(other Tombstone) Tombstone {
 		t.Generation = other.Generation
 		t.PolicyRoot = other.PolicyRoot
 		t.Policy = other.Policy
+		t.PolicySchema = other.PolicySchema
 	}
 	if other.Signed {
 		t.Signed = true
@@ -271,7 +274,7 @@ func (l AnchorLedger) Recorded(uid uint32, origin string) (Enrolment, bool, erro
 	if enrolment.UID != uid || enrolment.Origin != origin {
 		return Enrolment{}, false, errors.New("enrolled anchor does not match its file")
 	}
-	if err := validateEnrolment(enrolment); err != nil {
+	if err := completeEnrolmentPolicySchema(&enrolment); err != nil {
 		return Enrolment{}, false, err
 	}
 	return enrolment, true, nil
@@ -285,7 +288,7 @@ func (l AnchorLedger) Store(anchor integrity.Anchor) error {
 // next enrolment can be ordered against this one instead of being put to the
 // owner because two hashes differ.
 func (l AnchorLedger) Record(enrolment Enrolment) error {
-	if err := validateEnrolment(enrolment); err != nil {
+	if err := completeEnrolmentPolicySchema(&enrolment); err != nil {
 		return err
 	}
 	if err := l.admitSignature(enrolment); err != nil {
@@ -330,6 +333,7 @@ func (l AnchorLedger) Record(enrolment Enrolment) error {
 	// make the next narrowing look like a change nobody can order.
 	if enrolment.Policy == nil && found && existing.PolicyRoot == enrolment.PolicyRoot {
 		enrolment.Policy = existing.Policy
+		enrolment.PolicySchema = existing.PolicySchema
 	}
 	data, err := json.MarshalIndent(enrolment, "", "  ")
 	if err != nil {
@@ -435,11 +439,12 @@ func (l AnchorLedger) Forget(uid uint32, origin string) error {
 // an application twice must not walk the floor back down either.
 func (l AnchorLedger) entomb(recorded Enrolment) error {
 	buried := Tombstone{
-		UID:        recorded.UID,
-		Origin:     recorded.Origin,
-		Generation: recorded.Generation,
-		PolicyRoot: recorded.PolicyRoot,
-		Policy:     recorded.Policy,
+		UID:          recorded.UID,
+		Origin:       recorded.Origin,
+		Generation:   recorded.Generation,
+		PolicyRoot:   recorded.PolicyRoot,
+		Policy:       recorded.Policy,
+		PolicySchema: recorded.PolicySchema,
 	}
 	if recorded.Signature != nil {
 		buried.Signed = true
@@ -497,7 +502,7 @@ func (l AnchorLedger) Forgotten(uid uint32, origin string) (Tombstone, bool, err
 	if buried.UID != uid || buried.Origin != origin {
 		return Tombstone{}, false, errors.New("forgotten anchor does not match its file")
 	}
-	if err := validateTombstone(buried); err != nil {
+	if err := completeTombstonePolicySchema(&buried); err != nil {
 		return Tombstone{}, false, err
 	}
 	return buried, true, nil
@@ -743,22 +748,21 @@ func validateAnchor(anchor integrity.Anchor) error {
 // enrolled: a caller that sent a narrow policy with a wide root would be asking
 // to be authorized for something other than what it is recording.
 func validateEnrolment(enrolment Enrolment) error {
+	return completeEnrolmentPolicySchema(&enrolment)
+}
+
+func completeEnrolmentPolicySchema(enrolment *Enrolment) error {
 	if err := validateAnchor(enrolment.Anchor); err != nil {
 		return err
 	}
-	if err := validateSignedState(enrolment); err != nil {
+	if err := validateSignedState(*enrolment); err != nil {
 		return err
 	}
-	if enrolment.Policy == nil {
-		return nil
-	}
-	root, err := integrity.PolicyRoot(*enrolment.Policy)
+	schema, err := matchingPolicySchema(enrolment.Policy, enrolment.PolicyRoot, enrolment.PolicySchema, "enrolment")
 	if err != nil {
-		return fmt.Errorf("derive the policy root of the enrolment: %w", err)
+		return err
 	}
-	if root != enrolment.PolicyRoot {
-		return errors.New("enrolment policy does not hash to its policy root")
-	}
+	enrolment.PolicySchema = schema
 	return nil
 }
 
@@ -768,23 +772,48 @@ func validateEnrolment(enrolment Enrolment) error {
 // a narrow policy under a wide root would answer the widening question with
 // something nobody ever enrolled.
 func validateTombstone(buried Tombstone) error {
+	return completeTombstonePolicySchema(&buried)
+}
+
+func completeTombstonePolicySchema(buried *Tombstone) error {
 	if err := validateOrigin(buried.Origin); err != nil {
 		return err
 	}
 	if !anchorRootPattern.MatchString(buried.PolicyRoot) {
 		return errors.New("invalid forgotten anchor policy root")
 	}
-	if buried.Policy == nil {
-		return nil
-	}
-	root, err := integrity.PolicyRoot(*buried.Policy)
+	schema, err := matchingPolicySchema(buried.Policy, buried.PolicyRoot, buried.PolicySchema, "forgotten anchor")
 	if err != nil {
-		return fmt.Errorf("derive the policy root of the forgotten anchor: %w", err)
+		return err
 	}
-	if root != buried.PolicyRoot {
-		return errors.New("forgotten anchor policy does not hash to its policy root")
-	}
+	buried.PolicySchema = schema
 	return nil
+}
+
+func matchingPolicySchema(policy *types.Override, root string, declared int, subject string) (int, error) {
+	if policy == nil {
+		if declared != 0 {
+			return 0, fmt.Errorf("%s has a policy schema without a policy", subject)
+		}
+		return 0, nil
+	}
+	schemas := []int{declared}
+	if declared == 0 {
+		schemas = []int{integrity.CurrentPolicySchema, integrity.PolicySchemaWithoutSerial}
+	}
+	for _, schema := range schemas {
+		candidate, err := integrity.PolicyRootForSchema(*policy, schema)
+		if err != nil {
+			if declared != 0 {
+				return 0, fmt.Errorf("derive the policy root of the %s: %w", subject, err)
+			}
+			continue
+		}
+		if candidate == root {
+			return schema, nil
+		}
+	}
+	return 0, fmt.Errorf("%s policy does not hash to its policy root", subject)
 }
 
 // validateSignedState is the shape of a signature, not its worth. It runs on

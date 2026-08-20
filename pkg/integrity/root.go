@@ -83,10 +83,14 @@ func digest(kind string, value any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return digestJSON(kind, encoded), nil
+}
+
+func digestJSON(kind string, encoded []byte) string {
 	hash := sha256.New()
 	fmt.Fprintf(hash, "cpak.%s.v%d\n", kind, ABIVersion)
 	hash.Write(encoded)
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func sorted(values []string) []string {

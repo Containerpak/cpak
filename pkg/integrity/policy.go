@@ -5,22 +5,60 @@
 package integrity
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+const (
+	PolicySchemaWithoutSerial = 1
+	CurrentPolicySchema       = 2
+)
+
 // PolicyRoot hashes what an application is allowed to do. Lists whose order
 // carries no meaning are sorted first; the environment is left as it stands
 // because a later assignment wins over an earlier one.
 func PolicyRoot(override types.Override) (string, error) {
+	return PolicyRootForSchema(override, CurrentPolicySchema)
+}
+
+// PolicyRootForSchema derives a root using the policy shape recorded in an
+// enrolment. New policies always use CurrentPolicySchema.
+func PolicyRootForSchema(override types.Override, schema int) (string, error) {
+	canonical := canonicalPolicy(override)
+	switch schema {
+	case PolicySchemaWithoutSerial:
+		if canonical.DeviceSerial {
+			return "", errors.New("serial devices are not part of this policy schema")
+		}
+		encoded, err := json.Marshal(canonical)
+		if err != nil {
+			return "", err
+		}
+		withoutSerial := bytes.Replace(encoded, []byte(`,"deviceSerial":false`), nil, 1)
+		if len(withoutSerial) == len(encoded) {
+			return "", errors.New("serial device field is missing from the current policy schema")
+		}
+		return digestJSON("policy", withoutSerial), nil
+	case CurrentPolicySchema:
+		return digest("policy", canonical)
+	default:
+		return "", fmt.Errorf("unsupported policy schema %d", schema)
+	}
+}
+
+func canonicalPolicy(override types.Override) types.Override {
 	canonical := override
 	canonical.Filesystem = sortedPermissions(override.Filesystem)
 	canonical.HostActions = sortedActions(override.HostActions)
 	canonical.FsExtra = sorted(override.FsExtra)
 	canonical.AllowedHostCommands = sorted(override.AllowedHostCommands)
-	return digest("policy", canonical)
+	return canonical
 }
 
 // Restricts reports whether candidate grants no more than current. Two policies
