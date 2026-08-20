@@ -80,7 +80,7 @@ func (c *Cpak) BuildRuntimeLayers(baseLayers []string, sources []types.RuntimeSo
 			return nil, err
 		}
 	}
-	mountID, lowerDir, managerSocket, err := c.prepareFVSMount(stateDir, baseLayers)
+	mountID, lowerDir, managerSocket, err := c.prepareLayerMount(stateDir, baseLayers)
 	if err != nil {
 		return nil, err
 	}
