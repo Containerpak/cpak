@@ -270,6 +270,11 @@ func validateManifestText(manifest *types.CpakManifest) error {
 			return errors.New("a desktop entry contains a control character or is too long")
 		}
 	}
+	for _, factor := range manifest.FormFactors {
+		if err := validateManifestLine(factor); err != nil {
+			return errors.New("a form factor contains a control character or is too long")
+		}
+	}
 	// The prompt prints a dependency as the whole struct, so every string in
 	// it reaches the terminal, not only the origin.
 	for _, dependency := range manifest.Dependencies {

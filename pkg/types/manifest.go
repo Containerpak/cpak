@@ -37,6 +37,9 @@ type CpakManifest struct {
 	// DesktopEntries is the list of exported desktop entries of the application.
 	DesktopEntries []string `json:"desktop_entries,omitempty" jsonschema:"description=.desktop entry files"`
 
+	// FormFactors identifies the device shapes supported by the application.
+	FormFactors []string `json:"form_factors,omitempty" jsonschema:"minItems=1,uniqueItems=true,enum=desktop,enum=phone,enum=tablet,enum=tv,enum=watch,description=Device form factors supported by the application"`
+
 	// Sessions are login sessions which can be registered with a display manager.
 	Sessions []Session `json:"sessions,omitempty" jsonschema:"description=Desktop and kiosk login sessions"`
 

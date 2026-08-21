@@ -22,6 +22,7 @@ type InitCmd struct {
 	Image           string   `cli:"image,i" help:"OCI image reference (required)"`
 	Binary          []string `cli:"binary,b" help:"Path to a binary to expose (can be repeated, must be absolute paths, required)"`
 	DesktopEntry    []string `cli:"desktop-entry,e" help:"Path to a desktop entry file (can be repeated)"`
+	FormFactor      []string `cli:"form-factor" help:"Supported device form factor (desktop, phone, tablet, tv or watch; can be repeated)"`
 	Dependency      []string `cli:"dependency,D" help:"Origin of a cpak dependency (can be repeated)"`
 	Addon           []string `cli:"addon,a" help:"Name of an addon (can be repeated)"`
 	IdleTime        int      `cli:"idle-time,I" help:"Idle time in minutes after which to destroy the container"`
@@ -43,6 +44,7 @@ func (c *InitCmd) Run() error {
 		Image:           c.Image,
 		Binaries:        c.Binary,
 		DesktopEntries:  c.DesktopEntry,
+		FormFactors:     c.FormFactor,
 		Dependencies:    []types.Dependency{},
 		Addons:          c.Addon,
 		IdleTime:        c.IdleTime,

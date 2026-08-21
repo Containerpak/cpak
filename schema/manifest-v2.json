@@ -598,6 +598,22 @@
       "type": "array",
       "description": ".desktop entry files"
     },
+    "form_factors": {
+      "items": {
+        "type": "string",
+        "enum": [
+          "desktop",
+          "phone",
+          "tablet",
+          "tv",
+          "watch"
+        ]
+      },
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Device form factors supported by the application"
+    },
     "sessions": {
       "items": {
         "$ref": "#/$defs/Session"

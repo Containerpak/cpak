@@ -403,6 +403,9 @@ func TestValidateManifestRefusesTerminalControlInPublisherText(t *testing.T) {
 		"desktop entry": func(m *types.CpakManifest, taint string) {
 			m.DesktopEntries = []string{"/usr/share/applications/demo" + taint + ".desktop"}
 		},
+		"form factor": func(m *types.CpakManifest, taint string) {
+			m.FormFactors = []string{"desktop" + taint}
+		},
 		"dependency origin": func(m *types.CpakManifest, taint string) {
 			m.Dependencies = []types.Dependency{{Origin: "github.com/example/demo" + taint, Mode: "nested"}}
 		},

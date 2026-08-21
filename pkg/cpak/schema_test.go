@@ -27,6 +27,24 @@ func TestManifestV2SchemaExcludesLegacyFilesystemFields(t *testing.T) {
 	}
 }
 
+func TestManifestSchemaValidatesFormFactors(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.FormFactors = []string{"desktop", "phone", "tablet", "tv", "watch"}
+	if err := ValidateManifest(manifest); err != nil {
+		t.Fatalf("supported form factors were refused: %v", err)
+	}
+
+	manifest.FormFactors = []string{"desktop", "desktop"}
+	if err := ValidateManifest(manifest); err == nil {
+		t.Fatal("duplicate form factors were accepted")
+	}
+
+	manifest.FormFactors = []string{"car"}
+	if err := ValidateManifest(manifest); err == nil {
+		t.Fatal("an unsupported form factor was accepted")
+	}
+}
+
 // The committed schema is what an editor reads and what a publisher writes
 // against, and it is generated from the same call the runtime validator uses.
 // It only tells the truth for as long as somebody remembers to regenerate it.

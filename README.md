@@ -150,6 +150,7 @@ and declared features that cpak cannot apply are rejected.
   "image_ref": "source",
   "binaries": ["/usr/bin/example"],
   "desktop_entries": ["/usr/share/applications/example.desktop"],
+  "form_factors": ["desktop"],
   "dependencies": [],
   "addons": [],
   "idle_time": 0,
@@ -170,6 +171,10 @@ cpak validate cpak.json
 cpak gen-schema --output schema/manifest-v2.json
 cpak migrate-manifest cpak.json
 ```
+
+Graphical packages can declare any combination of `desktop`, `phone`, `tablet`,
+`tv` and `watch` in `form_factors`. Package stores may use the list for device
+filters. Leaving it out means that support was not declared.
 
 `runtime_sources` adds checksum-pinned artifacts to a managed runtime layer.
 Use the `dpkg` or `rpm` installer for native packages. Use `deb-extract` when a
