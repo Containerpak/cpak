@@ -97,6 +97,13 @@ func TestInstalledStorageMigrationStatusAndRepair(t *testing.T) {
 	if err := os.Rename(replacement, value); err != nil {
 		t.Fatal(err)
 	}
+	status, err = cp.PrepareInstalledStorage()
+	if err != nil {
+		t.Fatalf("migration revisited a prepared layer: %v", err)
+	}
+	if status.Prepared != 1 || status.Missing != 0 {
+		t.Fatalf("status after repeated migration = %+v", status)
+	}
 	if _, err := cp.VerifyPreparedStorage(false); err == nil {
 		t.Fatal("changed checkout passed verification")
 	}

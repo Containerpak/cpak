@@ -27,9 +27,17 @@ func (c *Cpak) PrepareInstalledStorage() (StorageStatus, error) {
 	if err != nil {
 		return StorageStatus{}, err
 	}
-	if len(layers) > 0 {
-		if _, err := c.prepareStorageDriver(layers); err != nil {
-			return StorageStatus{Apps: len(apps), Layers: len(layers), Missing: len(layers)}, err
+	name, err := c.storageDriverName()
+	if err != nil {
+		return StorageStatus{}, err
+	}
+	missing, err := c.missingStorageLayers(name, layers)
+	if err != nil {
+		return StorageStatus{}, err
+	}
+	if len(missing) > 0 {
+		if _, err := c.prepareStorageDriver(missing); err != nil {
+			return StorageStatus{Driver: name, Apps: len(apps), Layers: len(layers), Missing: len(missing)}, err
 		}
 	}
 	return c.StorageStatus()
@@ -84,18 +92,27 @@ func (c *Cpak) StorageStatus() (StorageStatus, error) {
 		return StorageStatus{}, err
 	}
 	status := StorageStatus{Driver: name, Apps: len(apps), Layers: len(layers)}
-	index, err := storageindex.Load(c.storageDriverIndex(name))
-	if errors.Is(err, os.ErrNotExist) {
-		status.Missing = len(layers)
-		return status, nil
-	}
+	missing, err := c.missingStorageLayers(name, layers)
 	if err != nil {
 		return StorageStatus{}, err
 	}
-	if index.Driver != name {
-		status.Missing = len(layers)
-		return status, nil
+	status.Prepared = len(layers) - len(missing)
+	status.Missing = len(missing)
+	return status, nil
+}
+
+func (c *Cpak) missingStorageLayers(name string, layers []string) ([]string, error) {
+	index, err := storageindex.Load(c.storageDriverIndex(name))
+	if errors.Is(err, os.ErrNotExist) {
+		return append([]string(nil), layers...), nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	if index.Driver != name {
+		return append([]string(nil), layers...), nil
+	}
+	missing := make([]string, 0)
 	for _, layer := range layers {
 		path, exists := index.Layers[layer]
 		valid := false
@@ -103,13 +120,11 @@ func (c *Cpak) StorageStatus() (StorageStatus, error) {
 			_, validateErr := storage.ValidateDriverPath(c.storageDriverRoot(name), path)
 			valid = validateErr == nil
 		}
-		if valid {
-			status.Prepared++
-		} else {
-			status.Missing++
+		if !valid {
+			missing = append(missing, layer)
 		}
 	}
-	return status, nil
+	return missing, nil
 }
 
 func (c *Cpak) installedStorageLayers() ([]string, error) {
