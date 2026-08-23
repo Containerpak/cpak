@@ -112,7 +112,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 	if err != nil {
 		return types.Container{}, err
 	}
-	policyHash, err := containerLaunchPolicyHash(containerRuntimePolicyVersion, identity.LaunchRoot, override, components, addons)
+	policyHash, err := containerLaunchPolicyHash(containerRuntimeVersion(instance), identity.LaunchRoot, override, components, addons)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -332,6 +332,14 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 }
 
 const containerRuntimePolicyVersion = 6
+const loginSessionRuntimePolicyVersion = 7
+
+func containerRuntimeVersion(instance string) int {
+	if isSessionInstance(instance) {
+		return loginSessionRuntimePolicyVersion
+	}
+	return containerRuntimePolicyVersion
+}
 
 const openURIMimeApps = `[Default Applications]
 x-scheme-handler/http=cpak-open-uri.desktop;
@@ -457,6 +465,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--idle-time", strconv.Itoa(app.IdleTime))
 	if override.FsHost {
 		cmds = append(cmds, "--mount-host-root")
+	}
+	if isSessionInstance(container.Instance) {
+		cmds = append(cmds, "--login-session")
 	}
 	if override.DeviceDri || override.DeviceAll {
 		cmds = append(cmds, "--nvidia")

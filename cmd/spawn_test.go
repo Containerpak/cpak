@@ -65,6 +65,40 @@ func TestBaseSandboxGrantsLimitProcWritesToNestedSandboxes(t *testing.T) {
 	}
 }
 
+func TestLoginSessionStateMountsIncludeAvailableSystemdState(t *testing.T) {
+	hostRoot := t.TempDir()
+	for _, path := range []string{"run/systemd/sessions", "run/systemd/users"} {
+		if err := os.MkdirAll(filepath.Join(hostRoot, path), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := loginSessionStateMounts(hostRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []loginSessionStateMount{
+		{source: filepath.Join(hostRoot, "run/systemd/sessions"), target: "/run/systemd/sessions"},
+		{source: filepath.Join(hostRoot, "run/systemd/users"), target: "/run/systemd/users"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("login session state mounts: got %+v, want %+v", got, want)
+	}
+}
+
+func TestLoginSessionStateMountsRejectSymlinks(t *testing.T) {
+	hostRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hostRoot, "run/systemd"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(hostRoot, "run/systemd/sessions")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loginSessionStateMounts(hostRoot); err == nil {
+		t.Fatal("symbolic logind state directory was accepted")
+	}
+}
+
 func TestPrepareRootfsBindTargetReusesAnExistingMount(t *testing.T) {
 	rootfs := t.TempDir()
 	source := filepath.Join(t.TempDir(), "service.sock")

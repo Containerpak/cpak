@@ -88,6 +88,7 @@ type SpawnCmd struct {
 	PrivateHome        string   `cli:"private-home" help:"persistent private application home"`
 	IdleTime           int      `cli:"idle-time" help:"idle timeout in minutes"`
 	MountHostRoot      bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
+	LoginSession       bool     `cli:"login-session" help:"mount host login session state read-only"`
 	Nvidia             bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
 	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
@@ -150,6 +151,13 @@ func (c *SpawnCmd) Run() error {
 	grants, err := c.setupMountPoints(c.UserUid, c.Rootfs, c.MountOverrides, filesystem, c.MountHostRoot)
 	if err != nil {
 		return err
+	}
+	if c.LoginSession {
+		sessionGrants, sessionErr := c.setupLoginSessionState(c.Rootfs)
+		if sessionErr != nil {
+			return sessionErr
+		}
+		grants = append(grants, sessionGrants...)
 	}
 	grants = append(grants, machineIDGrant)
 
@@ -511,6 +519,51 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	}
 	if mounted {
 		grants = append(grants, serviceGrant)
+	}
+	return grants, nil
+}
+
+type loginSessionStateMount struct {
+	source string
+	target string
+}
+
+func loginSessionStateMounts(hostRoot string) ([]loginSessionStateMount, error) {
+	targets := []string{"/run/systemd/sessions", "/run/systemd/seats", "/run/systemd/users"}
+	mounts := make([]loginSessionStateMount, 0, len(targets))
+	for _, target := range targets {
+		source := filepath.Join(hostRoot, strings.TrimPrefix(target, "/"))
+		info, err := os.Lstat(source)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect login session state %s: %w", source, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("login session state is not a directory: %s", source)
+		}
+		mounts = append(mounts, loginSessionStateMount{source: source, target: target})
+	}
+	return mounts, nil
+}
+
+func (c *SpawnCmd) setupLoginSessionState(rootFs string) ([]sandbox.PathGrant, error) {
+	mounts, err := loginSessionStateMounts("/")
+	if err != nil {
+		return nil, err
+	}
+	grants := make([]sandbox.PathGrant, 0, len(mounts))
+	for _, mount := range mounts {
+		c.spawnVerbose("Mounting login session state: ", mount.target)
+		destination, err := prepareRootfsDirectory(rootFs, mount.target)
+		if err != nil {
+			return nil, fmt.Errorf("prepare login session state %s: %w", mount.target, err)
+		}
+		if err = tools.MountBindReadOnlyPrepared(mount.source, destination, true); err != nil {
+			return nil, fmt.Errorf("mount login session state %s: %w", mount.target, err)
+		}
+		grants = append(grants, sandbox.PathGrant{Path: mount.target, ReadOnly: true})
 	}
 	return grants, nil
 }

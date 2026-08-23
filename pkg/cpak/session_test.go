@@ -77,3 +77,23 @@ func TestSessionsRemovedByVersionSelectionKeepsSharedSession(t *testing.T) {
 		t.Fatalf("unexpected selection: sessions=%v remaining=%d", sessions, remaining)
 	}
 }
+
+func TestSessionInstanceRecognitionDoesNotIncludeApplicationInstances(t *testing.T) {
+	if !isSessionInstance(sessionInstance("dev.sinty.singularity")) {
+		t.Fatal("session instance was not recognised")
+	}
+	for _, instance := range []string{"", "default", "desktop-session"} {
+		if isSessionInstance(instance) {
+			t.Fatalf("application instance %q was recognised as a session", instance)
+		}
+	}
+}
+
+func TestLoginSessionRuntimeChangeDoesNotRebuildApplicationContainers(t *testing.T) {
+	if got := containerRuntimeVersion(sessionInstance("dev.sinty.singularity")); got != loginSessionRuntimePolicyVersion {
+		t.Fatalf("login session runtime version: got %d, want %d", got, loginSessionRuntimePolicyVersion)
+	}
+	if got := containerRuntimeVersion(""); got != containerRuntimePolicyVersion {
+		t.Fatalf("application runtime version: got %d, want %d", got, containerRuntimePolicyVersion)
+	}
+}
