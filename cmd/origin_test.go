@@ -39,3 +39,19 @@ func TestResolveApplicationOriginUsesAlias(t *testing.T) {
 		t.Fatalf("origin: %s", origin)
 	}
 }
+
+func TestResolveRunOriginDoesNotRequireInstallation(t *testing.T) {
+	installation := t.TempDir()
+	t.Setenv("CPAK_INSTALLATION_PATH", installation)
+	cp, err := cpak.NewCpak()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := resolveRunOrigin(cp, "GitHub.com/Containerpak/UMU")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin != "github.com/containerpak/umu" {
+		t.Fatalf("origin: %s", origin)
+	}
+}

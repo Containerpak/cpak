@@ -9,3 +9,7 @@ import "github.com/mirkobrombin/cpak/pkg/cpak"
 func resolveApplicationOrigin(cp cpak.Cpak, value string) (string, error) {
 	return cp.ResolveInstalledOrigin(value)
 }
+
+func resolveRunOrigin(cp cpak.Cpak, value string) (string, error) {
+	return cp.ResolveOrigin(value)
+}
