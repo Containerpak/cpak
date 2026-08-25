@@ -55,7 +55,7 @@ func (c *RunCmd) Run() error {
 		return c.runError(err)
 	}
 
-	remote, err := resolveApplicationOrigin(cp, c.Remote)
+	remote, err := resolveRunOrigin(cp, c.Remote)
 	if err != nil {
 		return c.runError(err)
 	}
