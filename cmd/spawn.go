@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -412,6 +413,11 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	if err != nil {
 		return nil, fmt.Errorf("mount:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
+	runtimeGrant, err := setupUserRuntimeDirectory(userUid, rootFs)
+	if err != nil {
+		return nil, err
+	}
+	grants = append(grants, runtimeGrant)
 	deviceGrants, err := c.setupBaseDevices(rootFs)
 	if err != nil {
 		return nil, err
@@ -521,6 +527,21 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, serviceGrant)
 	}
 	return grants, nil
+}
+
+func setupUserRuntimeDirectory(userUid int, rootFs string) (sandbox.PathGrant, error) {
+	if userUid < 0 {
+		return sandbox.PathGrant{}, fmt.Errorf("invalid user uid: %d", userUid)
+	}
+	runtimePath := filepath.Join("/run/user", strconv.Itoa(userUid))
+	destination, err := prepareRootfsDirectory(rootFs, runtimePath)
+	if err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("mkdir:%s: an error occurred while spawning the namespace: %w", runtimePath, err)
+	}
+	if err = syscall.Mount("tmpfs", destination, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0700"); err != nil {
+		return sandbox.PathGrant{}, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %w", runtimePath, err)
+	}
+	return sandbox.PathGrant{Path: runtimePath}, nil
 }
 
 type loginSessionStateMount struct {
