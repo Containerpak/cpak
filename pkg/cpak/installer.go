@@ -562,6 +562,9 @@ func (c *Cpak) createExports(app types.Application) (err error) {
 			return
 		}
 	}
+	if refreshErr := refreshDesktopDatabase(); refreshErr != nil {
+		logger.Printf("Warning: could not refresh the desktop database: %v", refreshErr)
+	}
 	return
 }
 
@@ -1246,6 +1249,9 @@ func (c *Cpak) removeExports(app types.Application) error {
 			logger.Printf("Warning: could not remove binary export %s: %v", binary, err)
 		}
 	}
+	if refreshErr := refreshDesktopDatabase(); refreshErr != nil {
+		logger.Printf("Warning: could not refresh the desktop database: %v", refreshErr)
+	}
 
 	return nil
 }
@@ -1341,6 +1347,9 @@ func (c *Cpak) removeStaleExports(old types.Application, updated types.Applicati
 		if err := c.removeBinaryExport(old.Origin, name); err != nil {
 			return err
 		}
+	}
+	if refreshErr := refreshDesktopDatabase(); refreshErr != nil {
+		logger.Printf("Warning: could not refresh the desktop database: %v", refreshErr)
 	}
 
 	return nil
