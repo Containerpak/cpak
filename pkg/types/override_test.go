@@ -45,6 +45,24 @@ func TestOverrideAdditionsReportsFilePickerCapabilities(t *testing.T) {
 	}
 }
 
+func TestOverrideAdditionsReportsSessionBusWidening(t *testing.T) {
+	before := Override{SessionBus: DBusPolicy{Talk: []DBusCallGrant{{
+		Name: "org.example.Player", Path: "/org/example/Player", Interface: "org.example.Player", Members: []string{"Play"},
+	}}}}
+	after := before
+	after.SessionBus.Talk = []DBusCallGrant{{
+		Name: "org.example.Player", Path: "/org/example/Player", Interface: "org.example.Player", Members: []string{"Play", "Stop"},
+	}}
+
+	additions := before.Additions(after)
+	if len(additions) != 1 || additions[0] != "sessionBus" {
+		t.Fatalf("unexpected additions: %v", additions)
+	}
+	if additions = after.Additions(before); len(additions) != 0 {
+		t.Fatalf("narrowing a session bus policy was reported as an addition: %v", additions)
+	}
+}
+
 func TestDecodeFilePickerGrantJSON(t *testing.T) {
 	grant, err := DecodeFilePickerGrantJSON([]byte(`{"openFile":true,"openFolder":true,"saveFile":true,"persistent":true,"containingFolder":true}`))
 	if err != nil {

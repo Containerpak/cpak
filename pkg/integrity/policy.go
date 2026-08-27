@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	PolicySchemaWithoutSerial = 1
-	CurrentPolicySchema       = 2
+	PolicySchemaWithoutSerial     = 1
+	PolicySchemaWithoutSessionBus = 2
+	CurrentPolicySchema           = 3
 )
 
 // PolicyRoot hashes what an application is allowed to do. Lists whose order
@@ -36,6 +37,9 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if canonical.DeviceSerial {
 			return "", errors.New("serial devices are not part of this policy schema")
 		}
+		if canonical.SessionBus.Enabled() {
+			return "", errors.New("session bus rules are not part of this policy schema")
+		}
 		encoded, err := json.Marshal(canonical)
 		if err != nil {
 			return "", err
@@ -44,7 +48,24 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if len(withoutSerial) == len(encoded) {
 			return "", errors.New("serial device field is missing from the current policy schema")
 		}
-		return digestJSON("policy", withoutSerial), nil
+		withoutSessionBus := bytes.Replace(withoutSerial, []byte(`,"sessionBus":{}`), nil, 1)
+		if len(withoutSessionBus) == len(withoutSerial) {
+			return "", errors.New("session bus field is missing from the current policy schema")
+		}
+		return digestJSON("policy", withoutSessionBus), nil
+	case PolicySchemaWithoutSessionBus:
+		if canonical.SessionBus.Enabled() {
+			return "", errors.New("session bus rules are not part of this policy schema")
+		}
+		encoded, err := json.Marshal(canonical)
+		if err != nil {
+			return "", err
+		}
+		withoutSessionBus := bytes.Replace(encoded, []byte(`,"sessionBus":{}`), nil, 1)
+		if len(withoutSessionBus) == len(encoded) {
+			return "", errors.New("session bus field is missing from the current policy schema")
+		}
+		return digestJSON("policy", withoutSessionBus), nil
 	case CurrentPolicySchema:
 		return digest("policy", canonical)
 	default:
@@ -56,6 +77,7 @@ func canonicalPolicy(override types.Override) types.Override {
 	canonical := override
 	canonical.Filesystem = sortedPermissions(override.Filesystem)
 	canonical.HostActions = sortedActions(override.HostActions)
+	canonical.SessionBus = types.CanonicalDBusPolicy(override.SessionBus)
 	canonical.FsExtra = sorted(override.FsExtra)
 	canonical.AllowedHostCommands = sorted(override.AllowedHostCommands)
 	return canonical
@@ -140,6 +162,9 @@ func Restricts(current, candidate types.Override) bool {
 		return false
 	}
 	if !actionsCovered(current.HostActions, candidate.HostActions) {
+		return false
+	}
+	if !types.DBusPolicyRestricts(current.SessionBus, candidate.SessionBus) {
 		return false
 	}
 	if !permissionsCovered(current.Filesystem, candidate.Filesystem) {

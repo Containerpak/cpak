@@ -54,6 +54,94 @@ func TestValidateManifestAcceptsFilesystemPermissions(t *testing.T) {
 	}
 }
 
+func TestManifestVersionThreeAcceptsOnlyFilteredSessionBusCalls(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.ManifestVersion = "3.0"
+	manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+	manifest.Override.SessionBus = types.DBusPolicy{
+		Talk: []types.DBusCallGrant{{
+			Name:      "org.example.Editor",
+			Path:      "/org/example/Editor",
+			Interface: "org.example.Editor.Documents",
+			Members:   []string{"Open"},
+		}},
+		Own: []string{"org.example.Editor.Instance"},
+	}
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest.Override.SessionBus.Talk[0].Name = "org.freedesktop.systemd1"
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("a host execution service was accepted")
+	}
+}
+
+func TestManifestVersionThreeRequiresPinnedCode(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.ManifestVersion = "3.0"
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("a mutable image tag was accepted")
+	}
+	manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+	manifest.ImageRef = "source"
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("a source-derived image tag was accepted")
+	}
+}
+
+func TestInstalledOverrideAcceptsManifestVersionThree(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.ManifestVersion = "3.0"
+	manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+	manifest.Override.SessionBus = types.DBusPolicy{Own: []string{"org.example.Editor"}}
+
+	override, err := installedOverride(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(override, manifest.Override) {
+		t.Fatalf("installed override changed: got %+v, want %+v", override, manifest.Override)
+	}
+	if manifest.ManifestVersion != "3.0" {
+		t.Fatalf("published manifest changed to version %s", manifest.ManifestVersion)
+	}
+}
+
+func TestManifestRejectsRawHostDesktopSockets(t *testing.T) {
+	for _, permission := range []func(*types.Override){
+		func(override *types.Override) { override.SocketSessionBus = true },
+		func(override *types.Override) { override.SocketSystemBus = true },
+		func(override *types.Override) { override.SocketX11 = true },
+		func(override *types.Override) { override.SocketAtSpiBus = true },
+		func(override *types.Override) { override.SocketBluetooth = true; override.Network = true },
+	} {
+		manifest := validManifestForTest()
+		permission(&manifest.Override)
+		if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+			t.Fatalf("raw host socket was accepted: %+v", manifest.Override)
+		}
+	}
+}
+
+func TestManifestVersionThreeRejectsDeclaredRemovedFields(t *testing.T) {
+	manifest, err := DecodeManifest([]byte(`{"manifest_version":"3.0","name":"Demo","description":"Demo application","image":"ghcr.io/example/demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","binaries":["/usr/bin/demo"],"override":{"socketX11":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("a removed v3 field was accepted when explicitly set to false")
+	}
+}
+
+func TestFilteredSessionBusPolicyRequiresManifestVersionThree(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Override.SessionBus = types.DBusPolicy{Own: []string{"org.example.Editor"}}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("a v2 manifest used the v3 session bus policy")
+	}
+}
+
 func TestValidateManifestAcceptsAddonProvider(t *testing.T) {
 	manifest := validManifestForTest()
 	manifest.AddonProvider = &types.AddonProvider{
@@ -304,7 +392,7 @@ func TestValidatingAV1ManifestLeavesEveryDigestAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := manifestIdentityDigest(manifest)
+	identity, err := ManifestIdentityDigest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +409,7 @@ func TestValidatingAV1ManifestLeavesEveryDigestAlone(t *testing.T) {
 	if validated != published {
 		t.Fatalf("the lock digest moved across validation: %s became %s", published, validated)
 	}
-	validatedIdentity, err := manifestIdentityDigest(manifest)
+	validatedIdentity, err := ManifestIdentityDigest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}

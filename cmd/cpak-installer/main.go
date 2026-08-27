@@ -6,9 +6,7 @@ package main
 
 import (
 	"bufio"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,8 +21,6 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"golang.org/x/term"
 )
-
-const publicKeyBase64 = "pOCiCYoqrBX+5Laung0E5d/XysacWo3hYduW764U5o8="
 
 type progressFunc func(string)
 
@@ -46,7 +42,7 @@ func main() {
 
 	if !*forceTerminal && !term.IsTerminal(int(os.Stdin.Fd())) && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
 		backend := desktopui.SelectBackend("")
-		handled, nativeErr := desktopui.Install(backend, capsule.Metadata.Name, capsule.Metadata.Description, capsule.Metadata.Origin, func(progress func(string)) error {
+		handled, nativeErr := desktopui.Install(backend, capsule.Metadata.Name, capsule.Metadata.Description, capsule.Metadata.Origin, permissionLines(capsule.Metadata.Permissions), func(progress func(string)) error {
 			return install(capsule, progress)
 		})
 		if handled {
@@ -77,11 +73,11 @@ func readSelf() (bootstrap.Capsule, error) {
 	if err != nil {
 		return bootstrap.Capsule{}, err
 	}
-	key, err := base64.StdEncoding.DecodeString(publicKeyBase64)
+	key, err := bootstrap.InstallerPublicKey()
 	if err != nil {
 		return bootstrap.Capsule{}, err
 	}
-	return bootstrap.ReadCapsule(file, stat.Size(), ed25519.PublicKey(key))
+	return bootstrap.ReadCapsule(file, stat.Size(), key)
 }
 
 func runTerminal(capsule bootstrap.Capsule) error {
@@ -89,6 +85,12 @@ func runTerminal(capsule bootstrap.Capsule) error {
 	fmt.Printf("Install %s\n\n%s\n\nOrigin: %s\n", m.Name, m.Description, m.Origin)
 	if m.Ref != "" {
 		fmt.Printf("Reference: %s %s\n", m.RefType, m.Ref)
+	}
+	if len(m.Permissions) > 0 {
+		fmt.Println("\nPermissions requested:")
+		for _, line := range permissionLines(m.Permissions) {
+			fmt.Println("  " + line)
+		}
 	}
 	fmt.Print("\nInstall this application? [Y/n] ")
 	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -99,6 +101,14 @@ func runTerminal(capsule bootstrap.Capsule) error {
 	return install(capsule, func(message string) {
 		fmt.Println(message)
 	})
+}
+
+func permissionLines(permissions []bootstrap.Permission) []string {
+	result := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		result = append(result, permission.Name+": "+permission.Detail)
+	}
+	return result
 }
 
 func install(capsule bootstrap.Capsule, progress progressFunc) error {
@@ -130,10 +140,7 @@ func install(capsule bootstrap.Capsule, progress progressFunc) error {
 	}
 
 	metadata := capsule.Metadata
-	args := []string{"install", "--yes"}
-	if metadata.Ref != "" {
-		args = append(args, "--"+metadata.RefType, metadata.Ref)
-	}
+	args := []string{"install", "--commit", metadata.Ref, "--signed-installer"}
 	args = append(args, metadata.Origin)
 	progress("Resolving " + metadata.Name)
 	return runCommand(cpakPath, args, progress)

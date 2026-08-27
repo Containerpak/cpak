@@ -5,19 +5,159 @@
 package tools
 
 import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
+	"errors"
+	"fmt"
+	"io"
 	"os"
-	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
 )
 
-// TarPack packs the given directory into a tarball.
-//
-// Note: we are not using the tar package from the standard library
-// because it does not support tarballs with an unknown header type.
 func TarUnpack(srcPath, dstPath string) error {
-	// TODO: find a way to use the tar package from the standard library
-	// instead of relying on the tar command
-	cmd := exec.Command("tar", "--exclude", "dev", "-xf", srcPath, "-C", dstPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	source, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	reader := bufio.NewReader(source)
+	archiveReader, closeReader, err := decodedTarReader(reader)
+	if err != nil {
+		return err
+	}
+	defer closeReader()
+
+	root, err := os.OpenRoot(dstPath)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	archive := tar.NewReader(archiveReader)
+	for {
+		header, readErr := archive.Next()
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("read tar archive: %w", readErr)
+		}
+		name, pathErr := safeArchivePath(header.Name)
+		if pathErr != nil {
+			return pathErr
+		}
+		if name == "" || name == "dev" || strings.HasPrefix(name, "dev/") {
+			continue
+		}
+		if err = unpackTarEntry(root, archive, header, name); err != nil {
+			return fmt.Errorf("extract %s: %w", header.Name, err)
+		}
+	}
+}
+
+func decodedTarReader(reader *bufio.Reader) (io.Reader, func() error, error) {
+	magic, err := reader.Peek(2)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, nil, err
+	}
+	if len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		decoded, gzipErr := gzip.NewReader(reader)
+		if gzipErr != nil {
+			return nil, nil, gzipErr
+		}
+		return decoded, decoded.Close, nil
+	}
+	return reader, func() error { return nil }, nil
+}
+
+func safeArchivePath(value string) (string, error) {
+	value = strings.ReplaceAll(value, "\\", "/")
+	cleaned := path.Clean(value)
+	if cleaned == "." {
+		return "", nil
+	}
+	if strings.HasPrefix(cleaned, "/") || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("archive path escapes destination: %q", value)
+	}
+	return filepath.FromSlash(cleaned), nil
+}
+
+func unpackTarEntry(root *os.Root, reader io.Reader, header *tar.Header, name string) error {
+	mode := os.FileMode(header.Mode & 0o777)
+	switch header.Typeflag {
+	case tar.TypeDir:
+		if err := root.MkdirAll(name, mode); err != nil {
+			return err
+		}
+		return root.Chmod(name, mode)
+	case tar.TypeReg, tar.TypeRegA:
+		if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			return err
+		}
+		if info, err := root.Lstat(name); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if err = root.Remove(name); err != nil {
+				return err
+			}
+		}
+		file, err := root.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.CopyN(file, reader, header.Size)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return root.Chmod(name, mode)
+	case tar.TypeSymlink:
+		target := strings.ReplaceAll(header.Linkname, "\\", "/")
+		if strings.HasPrefix(target, "/") {
+			return fmt.Errorf("absolute symbolic link target: %q", header.Linkname)
+		}
+		resolved, err := safeArchivePath(path.Join(path.Dir(filepath.ToSlash(name)), target))
+		if err != nil || resolved == "" {
+			return fmt.Errorf("symbolic link escapes destination: %q", header.Linkname)
+		}
+		if err = root.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			return err
+		}
+		if _, err = root.Lstat(name); err == nil {
+			if err = root.Remove(name); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		return root.Symlink(header.Linkname, name)
+	case tar.TypeLink:
+		target, err := safeArchivePath(header.Linkname)
+		if err != nil || target == "" {
+			return fmt.Errorf("invalid hard link target: %q", header.Linkname)
+		}
+		info, err := root.Lstat(target)
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("hard link target is not a regular file: %q", header.Linkname)
+		}
+		if err = root.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			return err
+		}
+		if _, err = root.Lstat(name); err == nil {
+			if err = root.Remove(name); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		return root.Link(target, name)
+	case tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
+		return nil
+	default:
+		return fmt.Errorf("unsupported tar entry type %d", header.Typeflag)
+	}
 }

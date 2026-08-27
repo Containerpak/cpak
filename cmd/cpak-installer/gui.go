@@ -56,7 +56,11 @@ type guiUpdate struct{}
 
 func runGUI(capsule bootstrap.Capsule) {
 	driver.Main(func(s screen.Screen) {
-		const width, height = 552, 540
+		const width = 552
+		height := 540
+		if len(capsule.Metadata.Permissions) > 0 {
+			height = expandedWindowHeight(len(capsule.Metadata.Permissions))
+		}
 		windowTitle := fmt.Sprintf("cpak-installer-%d", os.Getpid())
 		window, err := s.NewWindow(&screen.NewWindowOptions{
 			Width:  width,
@@ -72,7 +76,7 @@ func runGUI(capsule bootstrap.Capsule) {
 			defer frame.Close()
 		}
 
-		state := &guiState{status: "Ready to install", style: desktopui.CurrentDialogStyle()}
+		state := &guiState{status: "Ready to install", permissionsOpen: len(capsule.Metadata.Permissions) > 0, style: desktopui.CurrentDialogStyle()}
 		icon := renderIcon(capsule.Metadata.IconSVG, capsule.Metadata.IconPNG, capsule.Metadata.Name, 108, state.style)
 		var dimensions size.Event
 		button := buttonRect(width, height)

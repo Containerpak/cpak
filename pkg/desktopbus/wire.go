@@ -24,7 +24,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const maxMessageSize = 16 << 20
+const (
+	maxMessageSize = 16 << 20
+	maxMessageFDs  = 64
+)
 
 type messagePacket struct {
 	message *dbus.Message
@@ -63,18 +66,75 @@ func (c *serializedConn) writeSyntheticMessage(message *dbus.Message) error {
 }
 
 func (c *serializedConn) writeMessageWithSerial(message *dbus.Message, serial uint32) error {
-	var encoded bytes.Buffer
-	fds, err := message.EncodeToWithFDs(&encoded, binary.LittleEndian)
+	data, fds, err := encodeMessage(message, binary.LittleEndian)
 	if err != nil {
 		return err
 	}
-	data := encoded.Bytes()
 	if serial != 0 {
 		binary.LittleEndian.PutUint32(data[8:12], serial)
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	return writeWireMessage(c.UnixConn, data, fds)
+}
+
+func writeCanonicalPacket(connection *net.UnixConn, packet messagePacket) error {
+	data, err := canonicalPacketData(packet)
+	if err != nil {
+		return err
+	}
+	return writeWireMessage(connection, data, packet.fds)
+}
+
+func canonicalPacketData(packet messagePacket) ([]byte, error) {
+	order, originalBodyOffset, originalBodyLength, err := messageLayout(packet.data)
+	if err != nil {
+		return nil, err
+	}
+	encoded, _, err := encodeMessage(packet.message, order)
+	if err != nil {
+		return nil, err
+	}
+	_, canonicalBodyOffset, _, err := messageLayout(encoded)
+	if err != nil {
+		return nil, err
+	}
+	canonical := make([]byte, 0, canonicalBodyOffset+originalBodyLength)
+	canonical = append(canonical, encoded[:canonicalBodyOffset]...)
+	canonical = append(canonical, packet.data[originalBodyOffset:originalBodyOffset+originalBodyLength]...)
+	order.PutUint32(canonical[4:8], uint32(originalBodyLength))
+	return canonical, nil
+}
+
+func messageLayout(data []byte) (binary.ByteOrder, int, int, error) {
+	if len(data) < 16 {
+		return nil, 0, 0, errors.New("desktop bus message is truncated")
+	}
+	var order binary.ByteOrder
+	switch data[0] {
+	case 'l':
+		order = binary.LittleEndian
+	case 'B':
+		order = binary.BigEndian
+	default:
+		return nil, 0, 0, errors.New("desktop bus message has invalid byte order")
+	}
+	bodyLength := int(order.Uint32(data[4:8]))
+	headerLength := int(order.Uint32(data[12:16]))
+	bodyOffset := 16 + (headerLength+7)&^7
+	if bodyOffset > len(data) || bodyLength > len(data)-bodyOffset {
+		return nil, 0, 0, errors.New("desktop bus message length is invalid")
+	}
+	return order, bodyOffset, bodyLength, nil
+}
+
+func encodeMessage(message *dbus.Message, order binary.ByteOrder) ([]byte, []int, error) {
+	var encoded bytes.Buffer
+	fds, err := message.EncodeToWithFDs(&encoded, order)
+	if err != nil {
+		return nil, nil, err
+	}
+	return encoded.Bytes(), fds, nil
 }
 
 func (c *serializedConn) writePacket(packet messagePacket) error {
@@ -125,11 +185,17 @@ func readMessage(connection *net.UnixConn) (messagePacket, error) {
 	data := make([]byte, 16+int(remaining))
 	copy(data, header)
 	moreFDs, err := readMessageBytes(connection, data[16:])
-	fds = append(fds, moreFDs...)
 	if err != nil {
+		closeFDs(moreFDs)
 		closeFDs(fds)
 		return messagePacket{}, err
 	}
+	if len(moreFDs) > maxMessageFDs-len(fds) {
+		closeFDs(moreFDs)
+		closeFDs(fds)
+		return messagePacket{}, errors.New("desktop bus message contains too many file descriptors")
+	}
+	fds = append(fds, moreFDs...)
 	message, err := dbus.DecodeMessageWithFDs(bytes.NewReader(data), fds)
 	if err != nil {
 		closeFDs(fds)
@@ -161,6 +227,10 @@ func readMessageBytes(connection *net.UnixConn, target []byte) ([]int, error) {
 				rights, rightsErr := syscall.ParseUnixRights(&message)
 				if rightsErr != nil {
 					return fds, rightsErr
+				}
+				if len(rights) > maxMessageFDs-len(fds) {
+					closeFDs(rights)
+					return fds, errors.New("desktop bus message contains too many file descriptors")
 				}
 				fds = append(fds, rights...)
 			}

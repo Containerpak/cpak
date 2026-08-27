@@ -21,40 +21,12 @@ import (
 func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	curUid := fmt.Sprintf("%d", os.Getuid())
 
-	if o.SocketX11 {
-		mounts = append(mounts, "/tmp/.X11-unix/")
-		mounts = append(mounts, "/tmp/.ICE-unix/")
-		mounts = append(mounts, "/tmp/.XIM-unix/")
-		mounts = append(mounts, "/tmp/.font-unix/")
-		mounts = append(mounts, "/run/user/"+curUid+"/ICEauthority")
-	}
-
 	if o.SocketWayland {
 		mounts = append(mounts, waylandSocketMounts(waylandSocketPath(curUid))...)
 	}
 
-	if o.SocketX11 && o.SocketWayland {
-		xauthority := os.Getenv("XAUTHORITY")
-		if xauthority != "" {
-			mounts = append(mounts, xauthority)
-		} else {
-			files, err := filepath.Glob("/run/user/" + curUid + "/.*-Xwaylandauth.*")
-			if err == nil {
-				mounts = append(mounts, files...)
-			}
-		}
-	}
-
 	if o.SocketPulseAudio {
 		mounts = append(mounts, "/run/user/"+curUid+"/pulse/native")
-	}
-
-	if o.SocketSessionBus {
-		mounts = append(mounts, "/run/user/"+curUid+"/bus")
-	}
-
-	if o.SocketSystemBus {
-		mounts = append(mounts, "/run/dbus/system_bus_socket")
 	}
 
 	if o.SocketSshAgent {
@@ -67,13 +39,6 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 
 	if o.SocketGpgAgent {
 		mounts = append(mounts, "/run/user/"+curUid+"/gnupg/S.gpg-agent")
-	}
-
-	if o.SocketAtSpiBus {
-		mounts = append(mounts, atSpiSocketPaths(curUid)...)
-	}
-	if o.SocketBluetooth {
-		mounts = append(mounts, "/run/dbus/system_bus_socket")
 	}
 
 	if o.DeviceAll {
@@ -354,6 +319,9 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 	if err = types.ValidateHostActions(override.HostActions); err != nil {
 		return types.Override{}, err
 	}
+	if err = types.ValidateDBusPolicy(override.SessionBus); err != nil {
+		return types.Override{}, err
+	}
 
 	return
 }
@@ -367,6 +335,9 @@ func SaveOverride(override types.Override, name, version string) (err error) {
 		return err
 	}
 	if err = types.ValidateHostActions(override.HostActions); err != nil {
+		return err
+	}
+	if err = types.ValidateDBusPolicy(override.SessionBus); err != nil {
 		return err
 	}
 	homeDir, err := os.UserHomeDir()

@@ -799,7 +799,7 @@ func matchingPolicySchema(policy *types.Override, root string, declared int, sub
 	}
 	schemas := []int{declared}
 	if declared == 0 {
-		schemas = []int{integrity.CurrentPolicySchema, integrity.PolicySchemaWithoutSerial}
+		schemas = []int{integrity.CurrentPolicySchema, integrity.PolicySchemaWithoutSessionBus, integrity.PolicySchemaWithoutSerial}
 	}
 	for _, schema := range schemas {
 		candidate, err := integrity.PolicyRootForSchema(*policy, schema)

@@ -27,6 +27,7 @@ func signCapsule(arguments []string) error {
 	iconPath := flags.String("icon", "", "path to the package SVG icon")
 	refType := flags.String("ref-type", "", "package reference type")
 	ref := flags.String("ref", "", "package reference")
+	manifestDigest := flags.String("manifest-digest", "", "digest of the package manifest")
 	arch := flags.String("arch", runtime.GOARCH, "target architecture")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -39,7 +40,7 @@ func signCapsule(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	metadata, err := capsuleMetadata(*metadataPath, *origin, *name, *description, *iconPath, *refType, *ref, *arch)
+	metadata, err := capsuleMetadata(*metadataPath, *origin, *name, *description, *iconPath, *refType, *ref, *manifestDigest, *arch)
 	if err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func signCapsule(arguments []string) error {
 	return os.WriteFile(*outputPath, packed, 0755)
 }
 
-func capsuleMetadata(metadataPath, origin, name, description, iconPath, refType, ref, arch string) (bootstrap.Metadata, error) {
+func capsuleMetadata(metadataPath, origin, name, description, iconPath, refType, ref, manifestDigest, arch string) (bootstrap.Metadata, error) {
 	if metadataPath != "" {
 		encoded, err := os.ReadFile(metadataPath)
 		if err != nil {
@@ -78,14 +79,15 @@ func capsuleMetadata(metadataPath, origin, name, description, iconPath, refType,
 		icon = string(encoded)
 	}
 	return bootstrap.Metadata{
-		Schema:      bootstrap.SchemaVersion,
-		Origin:      origin,
-		Name:        name,
-		Description: description,
-		IconSVG:     icon,
-		RefType:     refType,
-		Ref:         ref,
-		Arch:        arch,
+		Schema:         bootstrap.SchemaVersion,
+		Origin:         origin,
+		Name:           name,
+		Description:    description,
+		IconSVG:        icon,
+		RefType:        refType,
+		Ref:            ref,
+		ManifestDigest: manifestDigest,
+		Arch:           arch,
 	}, nil
 }
 

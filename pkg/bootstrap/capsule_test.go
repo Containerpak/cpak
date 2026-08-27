@@ -99,6 +99,19 @@ func TestMetadataRejectsInvalidPermissions(t *testing.T) {
 	}
 }
 
+func TestMetadataRequiresManifestBoundToACommit(t *testing.T) {
+	metadata := testMetadata()
+	metadata.RefType = "branch"
+	if err := metadata.Validate(); err == nil {
+		t.Fatal("metadata accepted a mutable branch")
+	}
+	metadata = testMetadata()
+	metadata.ManifestDigest = ""
+	if err := metadata.Validate(); err == nil {
+		t.Fatal("metadata accepted no manifest digest")
+	}
+}
+
 func TestCapsuleRejectsTamperedMetadata(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -198,12 +211,13 @@ func testPackInstaller(t *testing.T) []byte {
 
 func testMetadata() Metadata {
 	return Metadata{
-		Schema:      SchemaVersion,
-		Origin:      "github.com/bottlesdevs/bottles",
-		Name:        "Bottles",
-		Description: "Run Windows software on Linux.",
-		RefType:     "branch",
-		Ref:         "main",
-		Arch:        runtime.GOARCH,
+		Schema:         SchemaVersion,
+		Origin:         "github.com/bottlesdevs/bottles",
+		Name:           "Bottles",
+		Description:    "Run Windows software on Linux.",
+		RefType:        "commit",
+		Ref:            strings.Repeat("a", 40),
+		ManifestDigest: "sha256:" + strings.Repeat("b", 64),
+		Arch:           runtime.GOARCH,
 	}
 }

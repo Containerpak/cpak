@@ -93,6 +93,9 @@ func parseCeiling(data []byte) (types.Override, map[string]bool, error) {
 	if err := types.ValidateFilesystemPermissions(policy.Filesystem); err != nil {
 		return types.Override{}, nil, err
 	}
+	if err := types.ValidateDBusPolicy(policy.SessionBus); err != nil {
+		return types.Override{}, nil, err
+	}
 	var written map[string]json.RawMessage
 	if err := json.Unmarshal(data, &written); err != nil {
 		return types.Override{}, nil, err

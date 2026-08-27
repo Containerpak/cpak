@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -21,10 +22,12 @@ import (
 )
 
 const (
-	SchemaVersion = 1
+	SchemaVersion = 2
 	footerSize    = 16
 	signatureSize = ed25519.SignatureSize
 )
+
+const installerPublicKeyBase64 = "pOCiCYoqrBX+5Laung0E5d/XysacWo3hYduW764U5o8="
 
 var (
 	payloadMagic   = [8]byte{'C', 'P', 'A', 'K', 'P', 'A', 'Y', '1'}
@@ -43,6 +46,7 @@ type Metadata struct {
 	Permissions     []Permission `json:"permissions,omitempty"`
 	RefType         string       `json:"ref_type,omitempty"`
 	Ref             string       `json:"ref,omitempty"`
+	ManifestDigest  string       `json:"manifest_digest"`
 	Arch            string       `json:"arch"`
 	InstallerSHA256 string       `json:"installer_sha256"`
 }
@@ -57,6 +61,17 @@ type Capsule struct {
 	Payload   []byte
 	Companion []byte
 	BrandIcon []byte
+}
+
+func InstallerPublicKey() (ed25519.PublicKey, error) {
+	encoded, err := base64.StdEncoding.DecodeString(installerPublicKeyBase64)
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) != ed25519.PublicKeySize {
+		return nil, errors.New("installer public key is invalid")
+	}
+	return ed25519.PublicKey(encoded), nil
 }
 
 func ParsePrivateKeyPEM(encoded []byte) (ed25519.PrivateKey, error) {
@@ -101,19 +116,25 @@ func (m Metadata) Validate() error {
 	if err != nil || len(digest) != sha256.Size {
 		return errors.New("installer SHA-256 is invalid")
 	}
-	switch m.RefType {
-	case "":
-		if m.Ref != "" {
-			return errors.New("package reference type is missing")
-		}
-	case "branch", "release", "commit":
-		if m.Ref == "" {
-			return errors.New("package reference is missing")
-		}
-	default:
-		return fmt.Errorf("unsupported package reference type: %s", m.RefType)
+	if m.RefType != "commit" {
+		return errors.New("signed installers require an immutable commit reference")
+	}
+	commit, err := hex.DecodeString(m.Ref)
+	if err != nil || len(commit) != 20 {
+		return errors.New("signed installer commit is invalid")
+	}
+	if !validSHA256Reference(m.ManifestDigest) {
+		return errors.New("signed installer manifest digest is invalid")
 	}
 	return nil
+}
+
+func validSHA256Reference(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	digest, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(digest) == sha256.Size
 }
 
 func validMetadataText(value string, limit int) bool {

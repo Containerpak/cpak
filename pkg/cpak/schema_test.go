@@ -7,7 +7,10 @@ package cpak
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 func TestManifestV2SchemaExcludesLegacyFilesystemFields(t *testing.T) {
@@ -20,10 +23,88 @@ func TestManifestV2SchemaExcludesLegacyFilesystemFields(t *testing.T) {
 	if !ok {
 		t.Fatal("override definition is missing")
 	}
-	for _, field := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra"} {
+	for _, field := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus"} {
 		if _, exists := override.Properties.Get(field); exists {
 			t.Fatalf("legacy field %s is present in v2 schema", field)
 		}
+	}
+}
+
+func TestManifestV3SchemaExcludesRawHostSockets(t *testing.T) {
+	schema := ManifestV3Schema()
+	version, ok := schema.Properties.Get("manifest_version")
+	if !ok || version.Const != "3.0" {
+		t.Fatalf("manifest version is not pinned to 3.0: %+v", version)
+	}
+	override, ok := schema.Definitions["Override"]
+	if !ok {
+		t.Fatal("override definition is missing")
+	}
+	for _, field := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "socketX11", "socketSessionBus", "socketSystemBus", "socketAtSpiBus", "socketBluetooth"} {
+		if _, exists := override.Properties.Get(field); exists {
+			t.Fatalf("unsafe field %s is present in v3 schema", field)
+		}
+		for _, required := range override.Required {
+			if required == field {
+				t.Fatalf("removed field %s is still required by v3 schema", field)
+			}
+		}
+	}
+	if _, exists := override.Properties.Get("sessionBus"); !exists {
+		t.Fatal("filtered session bus policy is missing from v3 schema")
+	}
+	if _, exists := schema.Properties.Get("image_ref"); exists {
+		t.Fatal("mutable source image selection is present in v3 schema")
+	}
+	image, exists := schema.Properties.Get("image")
+	if !exists || image.Pattern == "" {
+		t.Fatal("v3 image is not constrained to an immutable digest")
+	}
+}
+
+func TestManifestV3SchemaAcceptsThePublishedManifestShape(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.ManifestVersion = "3.0"
+	manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+	manifest.Override.SocketWayland = true
+	encoded, err := MarshalManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range manifestV3RemovedOverrideFields() {
+		if strings.Contains(string(encoded), `"`+field+`"`) {
+			t.Fatalf("published v3 manifest contains removed field %s", field)
+		}
+	}
+	assertManifestMatchesSchema(t, encoded, ManifestV3Schema())
+}
+
+func TestManifestV2SchemaAcceptsThePublishedManifestShape(t *testing.T) {
+	manifest := validManifestForTest()
+	encoded, err := MarshalManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range manifestV2RemovedOverrideFields() {
+		if strings.Contains(string(encoded), `"`+field+`"`) {
+			t.Fatalf("published v2 manifest contains removed field %s", field)
+		}
+	}
+	assertManifestMatchesSchema(t, encoded, ManifestV2Schema())
+}
+
+func assertManifestMatchesSchema(t *testing.T, manifest []byte, schemaValue any) {
+	t.Helper()
+	schema, err := json.Marshal(schemaValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := gojsonschema.Validate(gojsonschema.NewBytesLoader(schema), gojsonschema.NewBytesLoader(manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Valid() {
+		t.Fatalf("published manifest does not match its schema: %v", result.Errors())
 	}
 }
 
@@ -60,6 +141,21 @@ func TestCommittedSchemaMatchesTheGenerator(t *testing.T) {
 	}
 	if string(committed) != string(generated) {
 		t.Fatal("schema/manifest-v2.json is stale: run cpak gen-schema --output schema/manifest-v2.json")
+	}
+}
+
+func TestCommittedV3SchemaMatchesTheGenerator(t *testing.T) {
+	generated, err := json.MarshalIndent(ManifestV3Schema(), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated = append(generated, '\n')
+	committed, err := os.ReadFile("../../schema/manifest-v3.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(committed) != string(generated) {
+		t.Fatal("schema/manifest-v3.json is stale: run cpak gen-schema --output schema/manifest-v3.json")
 	}
 }
 

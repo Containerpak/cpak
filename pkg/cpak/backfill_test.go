@@ -289,11 +289,11 @@ func TestManifestIdentityDigestFollowsTheManifest(t *testing.T) {
 		Image:           "ghcr.io/containerpak/example:latest",
 		Binaries:        []string{"/usr/bin/example"},
 	}
-	first, err := manifestIdentityDigest(manifest)
+	first, err := ManifestIdentityDigest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := manifestIdentityDigest(manifest)
+	second, err := ManifestIdentityDigest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestManifestIdentityDigestFollowsTheManifest(t *testing.T) {
 
 	changed := *manifest
 	changed.Image = "ghcr.io/containerpak/example:other"
-	other, err := manifestIdentityDigest(&changed)
+	other, err := ManifestIdentityDigest(&changed)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
@@ -54,6 +55,9 @@ func TestCapsuleSigningReadsBackAndOnlyWithTheKeyThatSignedIt(t *testing.T) {
 		"--origin", testOrigin,
 		"--name", "Example",
 		"--description", "An example package",
+		"--ref-type", "commit",
+		"--ref", strings.Repeat("a", 40),
+		"--manifest-digest", "sha256:" + strings.Repeat("b", 64),
 	}); err != nil {
 		t.Fatalf("signing the capsule failed: %v", err)
 	}

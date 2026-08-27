@@ -20,6 +20,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 const (
@@ -36,7 +37,8 @@ type Options struct {
 	UpstreamAddress  string
 	BrokerSocketPath string
 	BrokerToken      string
-	AllowSessionBus  bool
+	FilePicker       bool
+	Policy           types.DBusPolicy
 	PickFile         func(context.Context, systembroker.FilePickerRequest) (systembroker.FilePickerResult, error)
 }
 
@@ -110,7 +112,10 @@ func validateOptions(options Options) error {
 	if !filepath.IsAbs(options.SocketPath) || options.UpstreamAddress == "" {
 		return errors.New("desktop bus socket and upstream address are required")
 	}
-	if options.PickFile == nil && (!filepath.IsAbs(options.BrokerSocketPath) || len(options.BrokerToken) < 32) {
+	if err := types.ValidateDBusPolicy(options.Policy); err != nil {
+		return err
+	}
+	if options.FilePicker && options.PickFile == nil && (!filepath.IsAbs(options.BrokerSocketPath) || len(options.BrokerToken) < 32) {
 		return errors.New("desktop bus broker credentials are invalid")
 	}
 	return nil
@@ -144,7 +149,7 @@ func (p *Proxy) serveConnection(parent context.Context, raw *net.UnixConn) {
 			}
 			message := packet.message
 			state.observeUpstream(message)
-			if !p.options.AllowSessionBus && !restrictedUpstreamMessage(message) {
+			if !restrictedUpstreamMessage(message, p.options.Policy) {
 				packet.closeFDs()
 				continue
 			}
@@ -168,7 +173,10 @@ func (p *Proxy) serveConnection(parent context.Context, raw *net.UnixConn) {
 				packet.closeFDs()
 				continue
 			}
-			writeErr := writeWireMessage(upstream, packet.data, packet.fds)
+			// The policy decision is made from parsed header fields. Rebuild that
+			// header before forwarding it, while preserving the original body
+			// because godbus cannot re-encode every valid typed empty array.
+			writeErr := writeCanonicalPacket(upstream, packet)
 			packet.closeFDs()
 			if writeErr != nil {
 				errorsChannel <- fmt.Errorf("write upstream bus: %w", writeErr)
@@ -241,7 +249,7 @@ func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *co
 		// session bus carrying its unique name as sender. The policy is the
 		// same for every type it can emit. There is nothing to answer a signal
 		// with, so it is dropped rather than refused.
-		return !p.options.AllowSessionBus
+		return true
 	}
 	path, _ := headerValue[dbus.ObjectPath](message, dbus.FieldPath)
 	interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
@@ -252,7 +260,7 @@ func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *co
 		_ = client.writeSyntheticMessage(methodReply(message, nil))
 		return true
 	}
-	if p.portalDestination(destination) && path == portalObjectPath && interfaceName == fileChooserInterface && (member == "OpenFile" || member == "SaveFile") {
+	if p.options.FilePicker && p.portalDestination(destination) && path == portalObjectPath && interfaceName == fileChooserInterface && (member == "OpenFile" || member == "SaveFile") {
 		request, err := decodeFileChooserCall(member, message.Body)
 		if err != nil {
 			_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.InvalidArgs", err.Error()))
@@ -268,14 +276,14 @@ func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *co
 		go p.pick(requestCtx, client, handle, state.clientName(), request)
 		return true
 	}
-	if p.options.AllowSessionBus {
-		return false
-	}
 	if restrictedBusMatchCall(destination, path, interfaceName, member) {
 		_ = client.writeSyntheticMessage(methodReply(message, nil))
 		return true
 	}
 	if restrictedBusCallAllowed(destination, p.portalSender, path, interfaceName, member, message.Body) {
+		return false
+	}
+	if policyBusCallAllowed(p.options.Policy, destination, path, interfaceName, member, message.Body) {
 		return false
 	}
 	_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "session bus access is not permitted"))
@@ -313,7 +321,21 @@ func (p *Proxy) portalDestination(destination string) bool {
 	return destination == portalDestination || destination == p.portalSender
 }
 
-func restrictedUpstreamMessage(message *dbus.Message) bool {
+func policyBusCallAllowed(policy types.DBusPolicy, destination string, path dbus.ObjectPath, interfaceName, member string, body []any) bool {
+	if destination == "org.freedesktop.DBus" && path == dbus.ObjectPath("/org/freedesktop/DBus") && interfaceName == "org.freedesktop.DBus" {
+		if member == "RequestName" && len(body) == 2 {
+			name, ok := body[0].(string)
+			return ok && policy.AllowsOwn(name)
+		}
+		if (member == "ReleaseName" || member == "GetNameOwner" || member == "NameHasOwner") && len(body) == 1 {
+			name, ok := body[0].(string)
+			return ok && policy.AllowsOwn(name)
+		}
+	}
+	return policy.AllowsCall(destination, string(path), interfaceName, member)
+}
+
+func restrictedUpstreamMessage(message *dbus.Message, policy types.DBusPolicy) bool {
 	if message.Type == dbus.TypeMethodReply || message.Type == dbus.TypeError {
 		return true
 	}
@@ -322,7 +344,11 @@ func restrictedUpstreamMessage(message *dbus.Message) bool {
 	}
 	interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
 	member, _ := headerValue[string](message, dbus.FieldMember)
-	return interfaceName == "org.freedesktop.DBus" && (member == "NameAcquired" || member == "NameLost")
+	if interfaceName != "org.freedesktop.DBus" || member != "NameAcquired" && member != "NameLost" || len(message.Body) != 1 {
+		return false
+	}
+	name, ok := message.Body[0].(string)
+	return ok && (strings.HasPrefix(name, ":") || policy.AllowsOwn(name))
 }
 
 func (s *connectionState) observeClient(message *dbus.Message) {

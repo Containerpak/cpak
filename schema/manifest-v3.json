@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v2.json",
+  "$id": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
   "$defs": {
     "AddonExports": {
       "properties": {
@@ -262,11 +262,6 @@
     },
     "Override": {
       "properties": {
-        "socketX11": {
-          "type": "boolean",
-          "description": "Unsupported legacy raw X11 socket access",
-          "default": false
-        },
         "socketWayland": {
           "type": "boolean",
           "description": "Mount Wayland socket",
@@ -275,16 +270,6 @@
         "socketPulseAudio": {
           "type": "boolean",
           "description": "Mount PulseAudio socket",
-          "default": false
-        },
-        "socketSessionBus": {
-          "type": "boolean",
-          "description": "Unsupported legacy raw session bus access",
-          "default": false
-        },
-        "socketSystemBus": {
-          "type": "boolean",
-          "description": "Unsupported legacy raw system bus access",
           "default": false
         },
         "socketSshAgent": {
@@ -300,16 +285,6 @@
         "socketGpgAgent": {
           "type": "boolean",
           "description": "Mount GPG agent socket",
-          "default": false
-        },
-        "socketAtSpiBus": {
-          "type": "boolean",
-          "description": "Mount AT-SPI bus socket",
-          "default": false
-        },
-        "socketBluetooth": {
-          "type": "boolean",
-          "description": "Mount Bluetooth socket",
           "default": false
         },
         "deviceDri": {
@@ -398,6 +373,10 @@
           "$ref": "#/$defs/FilePickerGrant",
           "description": "Native file chooser capabilities"
         },
+        "sessionBus": {
+          "$ref": "#/$defs/DBusPolicy",
+          "description": "Filtered session bus policy"
+        },
         "filesystem": {
           "items": {
             "$ref": "#/$defs/FilesystemPermission"
@@ -464,41 +443,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "socketX11",
-        "socketWayland",
-        "socketPulseAudio",
-        "socketSessionBus",
-        "socketSystemBus",
-        "socketSshAgent",
-        "socketCups",
-        "socketGpgAgent",
-        "socketAtSpiBus",
-        "socketBluetooth",
-        "deviceDri",
-        "deviceKvm",
-        "deviceShm",
-        "deviceAlsa",
-        "deviceVideo",
-        "deviceFuse",
-        "deviceTun",
-        "deviceUsb",
-        "deviceSerial",
-        "deviceInput",
-        "deviceTTY",
-        "deviceAll",
-        "notification",
-        "openURI",
-        "hostApplications",
-        "network",
-        "process",
-        "userNamespaces",
-        "memoryMaxMB",
-        "cpuQuota",
-        "pidsMax",
-        "asRoot"
-      ]
+      "type": "object"
     },
     "RuntimeSource": {
       "properties": {
@@ -612,7 +557,7 @@
     },
     "manifest_version": {
       "type": "string",
-      "const": "2.0",
+      "const": "3.0",
       "description": "Manifest schema version"
     },
     "name": {
@@ -632,14 +577,8 @@
     "image": {
       "type": "string",
       "minLength": 1,
-      "description": "OCI image reference or digest"
-    },
-    "image_ref": {
-      "type": "string",
-      "enum": [
-        "source"
-      ],
-      "description": "Track the selected Git branch release or commit"
+      "pattern": "^.+@sha256:[A-Fa-f0-9]{64}$",
+      "description": "Digest-pinned OCI image reference"
     },
     "binaries": {
       "items": {

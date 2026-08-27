@@ -25,6 +25,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -119,6 +120,10 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 			if err != nil {
 				return catalog{}, fmt.Errorf("load %s package manifest: %w", origin, err)
 			}
+			manifestDigest, err := signedManifestDigest(packageManifest)
+			if err != nil {
+				return catalog{}, fmt.Errorf("bind %s package manifest: %w", origin, err)
+			}
 			iconBase := strings.TrimSuffix(entry.Manifest, path.Base(entry.Manifest))
 			icon, rasterIcon, err := loadIcon(ctx, client, iconBase)
 			if err != nil {
@@ -147,6 +152,7 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 					Permissions:     summarizePermissions(packageManifest.Override),
 					RefType:         "commit",
 					Ref:             commit,
+					ManifestDigest:  manifestDigest,
 					Arch:            arch,
 					InstallerSHA256: digest,
 				}
@@ -162,6 +168,23 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 		}
 	}
 	return result, nil
+}
+
+func signedManifestDigest(manifest *types.CpakManifest) (string, error) {
+	if len(manifest.Dependencies) > 0 || len(manifest.Sessions) > 0 {
+		return "", errors.New("signed installers do not support dependencies or login sessions")
+	}
+	if manifest.ImageRef != "" {
+		return "", errors.New("signed installers do not accept image_ref")
+	}
+	reference, err := oci.ParseReference(manifest.Image)
+	if err != nil {
+		return "", err
+	}
+	if !reference.IsDigest {
+		return "", errors.New("signed installers require a digest-pinned image")
+	}
+	return cpak.ManifestIdentityDigest(manifest)
 }
 
 func loadPackageManifest(ctx context.Context, client *http.Client, githubAPI, origin, commit string) (*types.CpakManifest, error) {
@@ -185,88 +208,7 @@ func loadPackageManifest(ctx context.Context, client *http.Client, githubAPI, or
 }
 
 func summarizePermissions(override types.Override) []bootstrap.Permission {
-	permissions := []bootstrap.Permission{}
-	add := func(enabled bool, name, detail string) {
-		if enabled {
-			permissions = append(permissions, bootstrap.Permission{Name: name, Detail: detail})
-		}
-	}
-
-	displays := []string{}
-	if override.SocketX11 {
-		displays = append(displays, "X11")
-	}
-	if override.SocketWayland {
-		displays = append(displays, "Wayland")
-	}
-	if len(displays) > 0 {
-		permissions = append(permissions, bootstrap.Permission{Name: "Display", Detail: strings.Join(displays, ", ")})
-	}
-	add(override.SocketPulseAudio, "Audio", "PulseAudio")
-	add(override.SocketSessionBus, "Session services", "session D-Bus")
-	add(override.SocketSystemBus, "System services", "system D-Bus")
-	add(override.SocketSshAgent, "SSH agent", "host authentication socket")
-	add(override.SocketCups, "Printing", "CUPS")
-	add(override.SocketGpgAgent, "GPG agent", "host signing socket")
-	add(override.SocketAtSpiBus, "Accessibility", "AT-SPI")
-	add(override.SocketBluetooth, "Bluetooth", "Bluetooth socket")
-
-	devices := []string{}
-	if override.DeviceAll {
-		devices = append(devices, "all devices")
-	} else {
-		deviceFlags := []struct {
-			enabled bool
-			name    string
-		}{
-			{override.DeviceDri, "graphics"},
-			{override.DeviceKvm, "KVM"},
-			{override.DeviceShm, "shared memory"},
-			{override.DeviceAlsa, "ALSA"},
-			{override.DeviceVideo, "video"},
-			{override.DeviceFuse, "FUSE"},
-			{override.DeviceTun, "TUN/TAP"},
-			{override.DeviceUsb, "USB"},
-			{override.DeviceSerial, "serial ports"},
-			{override.DeviceInput, "input devices"},
-			{override.DeviceTTY, "controlling terminal"},
-		}
-		for _, device := range deviceFlags {
-			if device.enabled {
-				devices = append(devices, device.name)
-			}
-		}
-	}
-	if len(devices) > 0 {
-		permissions = append(permissions, bootstrap.Permission{Name: "Devices", Detail: strings.Join(devices, ", ")})
-	}
-
-	add(override.Notification, "Notifications", "desktop notifications")
-	add(override.OpenURI, "External links", "open URIs on the host")
-	add(override.HostApplications, "Host applications", "desktop catalog and launch broker")
-	for _, filesystem := range override.Filesystem {
-		permissions = append(permissions, bootstrap.Permission{
-			Name:   "Files",
-			Detail: filesystem.Path + ", " + strings.ReplaceAll(filesystem.Access, "-", " "),
-		})
-	}
-	add(override.FsHost, "Files", "host, read only")
-	add(override.FsHostEtc, "Files", "/etc, read only")
-	add(override.FsHostHome, "Files", "home, read and write")
-	for _, filesystem := range override.FsExtra {
-		permissions = append(permissions, bootstrap.Permission{Name: "Files", Detail: filesystem + ", read and write"})
-	}
-	add(override.Network, "Network", "internet and local network")
-	add(override.Process, "Host processes", "shared process namespace")
-	add(override.UserNamespaces, "Nested sandboxes", "user namespaces")
-	add(override.AsRoot, "Root", "runs as root inside the cpak")
-	for _, action := range override.HostActions {
-		permissions = append(permissions, bootstrap.Permission{
-			Name:   "Host service",
-			Detail: truncate(action.Provider+": "+strings.Join(action.Capabilities, ", "), 160),
-		})
-	}
-	return permissions
+	return bootstrap.SummarizePermissions(override)
 }
 
 func installerDigests(dir string) (map[string]string, error) {

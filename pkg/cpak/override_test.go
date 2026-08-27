@@ -15,16 +15,18 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
-func TestBluetoothUsesOneSystemBusMount(t *testing.T) {
-	mounts, _ := GetOverrideMounts(types.Override{SocketBluetooth: true, SocketSystemBus: true})
-	count := 0
+func TestRawDesktopSocketsAreNeverMounted(t *testing.T) {
+	mounts, _ := GetOverrideMounts(types.Override{
+		SocketX11:        true,
+		SocketSessionBus: true,
+		SocketSystemBus:  true,
+		SocketAtSpiBus:   true,
+		SocketBluetooth:  true,
+	})
 	for _, mount := range mounts {
-		if mount == "/run/dbus/system_bus_socket" {
-			count++
+		if mount == "/run/dbus/system_bus_socket" || mount == hostSessionBusPath() || mount == "/tmp/.X11-unix/" {
+			t.Fatalf("raw desktop socket was mounted: %s", mount)
 		}
-	}
-	if count != 1 {
-		t.Fatalf("system bus mount count: %d", count)
 	}
 }
 

@@ -92,7 +92,7 @@ func SelectBackend(preferred Backend) Backend {
 }
 
 // Install shows a native confirmation and progress dialog.
-func Install(backend Backend, name, description, origin string, action func(func(string)) error) (bool, error) {
+func Install(backend Backend, name, description, origin string, permissions []string, action func(func(string)) error) (bool, error) {
 	started := false
 	wrapped := func(progress func(string)) error {
 		started = true
@@ -101,8 +101,12 @@ func Install(backend Backend, name, description, origin string, action func(func
 	var err error
 	switch backend {
 	case BackendAdwaita, BackendGTK, BackendKDE, BackendQt:
+		body := description + "\n\n" + origin
+		if len(permissions) > 0 {
+			body += "\n\nPermissions requested:\n" + strings.Join(permissions, "\n")
+		}
 		result, promptErr := runAdapterPrompt(context.Background(), backend, adapterPrompt{
-			Title: "Install " + name, Heading: name, Body: description + "\n\n" + origin,
+			Title: "Install " + name, Heading: name, Body: body,
 			AcceptLabel: "Install", CancelLabel: "Cancel", Recommended: true,
 		})
 		if promptErr != nil {

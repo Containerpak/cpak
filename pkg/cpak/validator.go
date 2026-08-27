@@ -57,15 +57,50 @@ func ManifestSchema() *jsonschema.Schema {
 // ManifestV2Schema returns the editor schema for manifest version 2.
 func ManifestV2Schema() *jsonschema.Schema {
 	schema := ManifestSchema()
-	schema.ID = jsonschema.ID(types.ManifestSchemaURL)
+	schema.ID = jsonschema.ID(types.ManifestV2SchemaURL)
 	if version, ok := schema.Properties.Get("manifest_version"); ok {
 		version.Enum = nil
 		version.Const = "2.0"
 	}
 	if override, ok := schema.Definitions["Override"]; ok && override.Properties != nil {
-		for _, legacy := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra"} {
+		for _, legacy := range manifestV2RemovedOverrideFields() {
 			override.Properties.Delete(legacy)
 		}
 	}
 	return schema
+}
+
+// ManifestV3Schema returns the editor schema for manifest version 3.
+func ManifestV3Schema() *jsonschema.Schema {
+	schema := ManifestSchema()
+	schema.ID = jsonschema.ID(types.ManifestV3SchemaURL)
+	if version, ok := schema.Properties.Get("manifest_version"); ok {
+		version.Enum = nil
+		version.Const = "3.0"
+	}
+	if schema.Properties != nil {
+		schema.Properties.Delete("image_ref")
+		if image, ok := schema.Properties.Get("image"); ok {
+			image.Pattern = `^.+@sha256:[A-Fa-f0-9]{64}$`
+			image.Description = "Digest-pinned OCI image reference"
+		}
+	}
+	if override, ok := schema.Definitions["Override"]; ok && override.Properties != nil {
+		for _, field := range manifestV3RemovedOverrideFields() {
+			override.Properties.Delete(field)
+		}
+		override.Required = nil
+	}
+	return schema
+}
+
+func manifestV2RemovedOverrideFields() []string {
+	return []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus"}
+}
+
+func manifestV3RemovedOverrideFields() []string {
+	return []string{
+		"fsHost", "fsHostEtc", "fsHostHome", "fsExtra",
+		"socketX11", "socketSessionBus", "socketSystemBus", "socketAtSpiBus", "socketBluetooth",
+	}
 }

@@ -32,8 +32,11 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if manifest.ManifestVersion == "" {
 		manifest.ManifestVersion = "1.0"
 	}
-	if manifest.ManifestVersion != "1.0" && manifest.ManifestVersion != "2.0" {
+	if manifest.ManifestVersion != "1.0" && manifest.ManifestVersion != "2.0" && manifest.ManifestVersion != "3.0" {
 		return fmt.Errorf("unsupported manifest version: %s", manifest.ManifestVersion)
+	}
+	if manifest.ManifestVersion == "3.0" && len(manifest.ManifestV3RemovedFields()) > 0 {
+		return fmt.Errorf("manifest version 3.0 contains removed fields: %s", strings.Join(manifest.ManifestV3RemovedFields(), ", "))
 	}
 	if manifest.Name == "" {
 		return errors.New("name is mandatory and must be populated")
@@ -96,6 +99,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if err = types.ValidateFilePickerGrant(manifest.Override.FilePicker); err != nil {
 		return err
 	}
+	if err = validateManifestBusPolicy(manifest.ManifestVersion, "application", manifest.Override); err != nil {
+		return err
+	}
 	if err = validateSessions(manifest); err != nil {
 		return err
 	}
@@ -111,13 +117,70 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 		}
 	} else {
 		if fields := legacyFilesystemFields(manifest); len(fields) > 0 {
-			return fmt.Errorf("legacy filesystem permissions are not supported in manifest version 2.0: %s", strings.Join(fields, ", "))
+			return fmt.Errorf("legacy filesystem permissions are not supported in manifest version %s: %s", manifest.ManifestVersion, strings.Join(fields, ", "))
 		}
 		if err = types.ValidateFilesystemPermissions(manifest.Override.Filesystem); err != nil {
 			return err
 		}
 	}
+	if manifest.ManifestVersion == "3.0" {
+		if manifest.ImageRef != "" {
+			return errors.New("manifest version 3.0 requires a digest-pinned image")
+		}
+		reference, parseErr := oci.ParseReference(manifest.Image)
+		if parseErr != nil || !reference.IsDigest {
+			return errors.New("manifest version 3.0 requires a digest-pinned image")
+		}
+	}
 	return ValidateManifest(manifest)
+}
+
+func validateManifestBusPolicy(version, scope string, override types.Override) error {
+	for _, permission := range []struct {
+		enabled bool
+		name    string
+	}{
+		{override.SocketSessionBus, "socketSessionBus"},
+		{override.SocketSystemBus, "socketSystemBus"},
+		{override.SocketX11, "socketX11"},
+		{override.SocketAtSpiBus, "socketAtSpiBus"},
+		{override.SocketBluetooth, "socketBluetooth"},
+	} {
+		if permission.enabled {
+			return fmt.Errorf("%s cannot grant raw host access through %s", scope, permission.name)
+		}
+	}
+	if err := types.ValidateDBusPolicy(override.SessionBus); err != nil {
+		return fmt.Errorf("%s session bus policy: %w", scope, err)
+	}
+	if override.SessionBus.Enabled() && version != "3.0" {
+		return fmt.Errorf("%s session bus policy requires manifest version 3.0", scope)
+	}
+	for _, rule := range override.SessionBus.Talk {
+		if forbiddenSessionBusName(rule.Name) {
+			return fmt.Errorf("%s session bus policy cannot call %s", scope, rule.Name)
+		}
+	}
+	for _, name := range override.SessionBus.Own {
+		if forbiddenSessionBusName(name) {
+			return fmt.Errorf("%s session bus policy cannot own %s", scope, name)
+		}
+	}
+	return nil
+}
+
+func forbiddenSessionBusName(name string) bool {
+	switch name {
+	case "org.freedesktop.DBus",
+		"org.freedesktop.Flatpak",
+		"org.freedesktop.portal.Desktop",
+		"org.freedesktop.secrets",
+		"org.freedesktop.systemd1",
+		"org.gnome.keyring":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateAddonProvider(provider *types.AddonProvider) error {
@@ -195,6 +258,9 @@ func validateSessions(manifest *types.CpakManifest) error {
 		}
 		if err := types.ValidateFilePickerGrant(session.Override.FilePicker); err != nil {
 			return fmt.Errorf("session %s: %w", session.ID, err)
+		}
+		if err := validateManifestBusPolicy(manifest.ManifestVersion, "session "+session.ID, session.Override); err != nil {
+			return err
 		}
 		if err := types.ValidateFilesystemPermissions(session.Override.Filesystem); err != nil {
 			return fmt.Errorf("session %s: %w", session.ID, err)
@@ -410,6 +476,9 @@ func DecodeManifest(content []byte) (*types.CpakManifest, error) {
 	}
 	var raw struct {
 		Override map[string]json.RawMessage `json:"override"`
+		Sessions []struct {
+			Override map[string]json.RawMessage `json:"override"`
+		} `json:"sessions"`
 	}
 	if err := json.Unmarshal(content, &raw); err != nil {
 		return nil, err
@@ -423,7 +492,81 @@ func DecodeManifest(content []byte) (*types.CpakManifest, error) {
 	manifest.SetLegacyFilesystemFields(legacy)
 	_, filesystemDeclared := raw.Override["filesystem"]
 	manifest.SetFilesystemDeclared(filesystemDeclared)
+	removed := []string{}
+	for _, field := range manifestV3RemovedOverrideFields() {
+		if _, ok := raw.Override[field]; ok {
+			removed = append(removed, "override."+field)
+		}
+		for index, session := range raw.Sessions {
+			if _, ok := session.Override[field]; ok {
+				removed = append(removed, fmt.Sprintf("sessions[%d].override.%s", index, field))
+			}
+		}
+	}
+	manifest.SetManifestV3RemovedFields(removed)
 	return manifest, nil
+}
+
+// MarshalManifest encodes a validated manifest in its published schema shape.
+func MarshalManifest(manifest *types.CpakManifest) ([]byte, error) {
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		return nil, err
+	}
+	var removed []string
+	switch manifest.ManifestVersion {
+	case "2.0":
+		removed = manifestV2RemovedOverrideFields()
+	case "3.0":
+		removed = manifestV3RemovedOverrideFields()
+	default:
+		return json.MarshalIndent(manifest, "", "  ")
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+	var document map[string]json.RawMessage
+	if err = json.Unmarshal(encoded, &document); err != nil {
+		return nil, err
+	}
+	if raw, ok := document["override"]; ok {
+		document["override"], err = marshalManifestOverride(raw, removed)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if raw, ok := document["sessions"]; ok {
+		var sessions []map[string]json.RawMessage
+		if err = json.Unmarshal(raw, &sessions); err != nil {
+			return nil, err
+		}
+		for index := range sessions {
+			override, ok := sessions[index]["override"]
+			if !ok {
+				continue
+			}
+			sessions[index]["override"], err = marshalManifestOverride(override, removed)
+			if err != nil {
+				return nil, err
+			}
+		}
+		document["sessions"], err = json.Marshal(sessions)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return json.MarshalIndent(document, "", "  ")
+}
+
+func marshalManifestOverride(encoded json.RawMessage, removed []string) (json.RawMessage, error) {
+	var override map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &override); err != nil {
+		return nil, err
+	}
+	for _, field := range removed {
+		delete(override, field)
+	}
+	return json.Marshal(override)
 }
 
 // MigrateManifest upgrades a v1 manifest to v2 while preserving its effective
@@ -432,7 +575,7 @@ func MigrateManifest(manifest *types.CpakManifest) error {
 	if manifest.ManifestVersion == "" {
 		manifest.ManifestVersion = "1.0"
 	}
-	if manifest.ManifestVersion == "2.0" {
+	if manifest.ManifestVersion == "2.0" || manifest.ManifestVersion == "3.0" {
 		return migrateLegacyHostCommands(&manifest.Override)
 	}
 	if manifest.ManifestVersion != "1.0" {

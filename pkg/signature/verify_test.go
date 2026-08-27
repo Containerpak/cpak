@@ -220,6 +220,19 @@ func TestVerifyAcceptsABundleOverTheStateItIsCheckedAgainst(t *testing.T) {
 	}
 }
 
+func TestVerifyArtifactCoversTheExactBytes(t *testing.T) {
+	sigstore := newTestSigstore(t)
+	artifact := []byte("signed checksums\n")
+	bundle := signedBytes(t, sigstore, artifact)
+
+	if _, err := verifyArtifactWith(sigstore, testVerificationOptions(), bundle, artifact); err != nil {
+		t.Fatalf("the signed artifact must verify: %v", err)
+	}
+	if _, err := verifyArtifactWith(sigstore, testVerificationOptions(), bundle, append(artifact, 'x')); !errors.Is(err, ErrStateMismatch) {
+		t.Fatalf("got %v, want an artifact mismatch", err)
+	}
+}
+
 func TestVerifyRefusesABundleForAnotherState(t *testing.T) {
 	sigstore := newTestSigstore(t)
 	signed := validState()

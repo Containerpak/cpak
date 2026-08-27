@@ -5,7 +5,9 @@
 package desktopbus
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"net"
 	"os"
@@ -18,7 +20,73 @@ import (
 
 	"github.com/godbus/dbus/v5"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
+
+func TestCanonicalEncodingUsesTheParsedMessage(t *testing.T) {
+	raw := &dbus.Message{
+		Type: dbus.TypeMethodCall,
+		Headers: map[dbus.HeaderField]dbus.Variant{
+			dbus.FieldPath:        dbus.MakeVariant(dbus.ObjectPath("/org/example/Editor")),
+			dbus.FieldInterface:   dbus.MakeVariant("org.example.Editor"),
+			dbus.FieldMember:      dbus.MakeVariant("Open"),
+			dbus.FieldDestination: dbus.MakeVariant("org.freedesktop.systemd1"),
+			dbus.FieldSignature:   dbus.MakeVariant(dbus.SignatureOf([]string{})),
+		},
+		Body: []any{[]string{}},
+	}
+	encoded, fds, err := encodeMessage(raw, binary.LittleEndian)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := dbus.DecodeMessage(bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Headers[dbus.FieldDestination] = dbus.MakeVariant("org.example.Editor")
+	canonical, err := canonicalPacketData(messagePacket{message: parsed, data: encoded, fds: fds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := dbus.DecodeMessage(bytes.NewReader(canonical))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destination, ok := headerValue[string](got, dbus.FieldDestination); !ok || destination != "org.example.Editor" {
+		t.Fatalf("canonical destination: %q", destination)
+	}
+	if len(got.Body) != 1 {
+		t.Fatalf("canonical body: %#v", got.Body)
+	}
+	values, ok := got.Body[0].([]string)
+	if !ok || len(values) != 0 {
+		t.Fatalf("typed empty array changed: %#v", got.Body[0])
+	}
+}
+
+func TestSessionBusPolicyAllowsOnlyDeclaredCallsAndNames(t *testing.T) {
+	policy := types.DBusPolicy{
+		Talk: []types.DBusCallGrant{{
+			Name:      "org.example.Editor",
+			Path:      "/org/example/Editor",
+			Interface: "org.example.Editor.Documents",
+			Members:   []string{"Open"},
+		}},
+		Own: []string{"org.example.Editor.Instance"},
+	}
+	if !policyBusCallAllowed(policy, "org.example.Editor", "/org/example/Editor", "org.example.Editor.Documents", "Open", nil) {
+		t.Fatal("the declared session bus call was refused")
+	}
+	if policyBusCallAllowed(policy, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "StartTransientUnit", nil) {
+		t.Fatal("an undeclared host execution call was allowed")
+	}
+	if !policyBusCallAllowed(policy, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", []any{"org.example.Editor.Instance", uint32(0)}) {
+		t.Fatal("the declared own name was refused")
+	}
+	if policyBusCallAllowed(policy, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", []any{"org.freedesktop.systemd1", uint32(0)}) {
+		t.Fatal("an undeclared own name was allowed")
+	}
+}
 
 type transientProperty struct {
 	Name  string
@@ -146,7 +214,11 @@ func TestProxyForwardsBusAndInterceptsFileChooser(t *testing.T) {
 		serveError <- Serve(ctx, Options{
 			SocketPath:      proxyPath,
 			UpstreamAddress: "unix:path=" + upstreamPath,
-			AllowSessionBus: true,
+			FilePicker:      true,
+			Policy: types.DBusPolicy{Talk: []types.DBusCallGrant{
+				{Name: "org.example.CpakDesktopBus", Path: "/org/example/CpakDesktopBus", Interface: "org.example.CpakDesktopBus", Members: []string{"StartTransientUnit"}},
+				{Name: "org.freedesktop.DBus", Path: "/org/freedesktop/DBus", Interface: "org.freedesktop.DBus", Members: []string{"ListNames"}},
+			}},
 			PickFile: func(_ context.Context, request systembroker.FilePickerRequest) (systembroker.FilePickerResult, error) {
 				selected <- request
 				return systembroker.FilePickerResult{
@@ -358,6 +430,7 @@ func TestProxyRestrictsSessionBusWithoutPermission(t *testing.T) {
 		_ = Serve(ctx, Options{
 			SocketPath:      proxyPath,
 			UpstreamAddress: "unix:path=" + upstreamPath,
+			FilePicker:      true,
 			PickFile: func(_ context.Context, _ systembroker.FilePickerRequest) (systembroker.FilePickerResult, error) {
 				selected <- struct{}{}
 				return systembroker.FilePickerResult{Path: "/run/cpak/grants/example/document.pdf", Paths: []string{"/run/cpak/grants/example/document.pdf"}}, nil
@@ -402,17 +475,12 @@ func waitForPath(t *testing.T, path string) {
 // nothing else, so a confined application's signals, replies and errors were
 // forwarded to the real bus with its unique name as sender. Every type it can
 // emit is held to the same policy.
-func TestARestrictedClientCannotEmitAnythingButRefusedCalls(t *testing.T) {
-	restricted := &Proxy{options: Options{AllowSessionBus: false}}
-	permitted := &Proxy{options: Options{AllowSessionBus: true}}
-
+func TestAClientCannotEmitSignalsRepliesOrErrors(t *testing.T) {
+	proxy := &Proxy{}
 	for _, kind := range []dbus.Type{dbus.TypeSignal, dbus.TypeMethodReply, dbus.TypeError} {
 		message := &dbus.Message{Type: kind}
-		if !restricted.intercept(context.Background(), nil, nil, message) {
+		if !proxy.intercept(context.Background(), nil, nil, message) {
 			t.Fatalf("a %v from a confined client was forwarded to the session bus", kind)
-		}
-		if permitted.intercept(context.Background(), nil, nil, message) {
-			t.Fatalf("a %v was held back on a connection that is allowed the session bus", kind)
 		}
 	}
 }

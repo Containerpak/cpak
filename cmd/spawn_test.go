@@ -8,6 +8,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -338,6 +339,29 @@ func TestInstallRuntimePackagesRejectsInstallerMismatch(t *testing.T) {
 	}
 	if err := command.installRuntimePackages([]string{"one"}, []string{"file"}, []string{"/opt/one", "/opt/two"}); err == nil {
 		t.Fatal("runtime package and destination count mismatch was accepted")
+	}
+}
+
+func TestBuildLayerAppliesSeccompBeforeRunningAnInstaller(t *testing.T) {
+	original := applyBuildLayerSeccomp
+	t.Cleanup(func() { applyBuildLayerSeccomp = original })
+	want := errors.New("seccomp refused")
+	called := false
+	applyBuildLayerSeccomp = func() error {
+		called = true
+		return want
+	}
+
+	err := (&SpawnCmd{}).installRuntimePackagesInSandbox([]string{"package.deb"}, []string{"dpkg"}, nil)
+	if !called || !errors.Is(err, want) {
+		t.Fatalf("build layer seccomp: called=%v, err=%v", called, err)
+	}
+}
+
+func TestConfigurationFilesRejectAnInvalidNameserverBeforeMounting(t *testing.T) {
+	_, _, err := (&SpawnCmd{}).injectConfigurationFiles(t.TempDir(), false, "not-an-address")
+	if err == nil || !strings.Contains(err.Error(), "invalid nameserver") {
+		t.Fatalf("got %v, want an invalid nameserver error", err)
 	}
 }
 

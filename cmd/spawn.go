@@ -91,6 +91,7 @@ type SpawnCmd struct {
 	MountHostRoot      bool     `cli:"mount-host-root" help:"mount the host root read-only at /run/host"`
 	LoginSession       bool     `cli:"login-session" help:"mount host login session state read-only"`
 	Nvidia             bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
+	Nameserver         string   `cli:"nameserver" help:"replace resolv.conf with this nameserver"`
 	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
 	BuildLayer         bool     `cli:"build-layer" help:"build a managed layer and exit"`
@@ -138,7 +139,7 @@ func (c *SpawnCmd) Run() error {
 		if err = c.pivotRoot(c.Rootfs); err != nil {
 			return err
 		}
-		return c.installRuntimePackages(c.RuntimePackage, c.RuntimeInstaller, c.RuntimeDestination)
+		return c.installRuntimePackagesInSandbox(c.RuntimePackage, c.RuntimeInstaller, c.RuntimeDestination)
 	}
 	machineIDGrant, err := c.injectMachineID(c.Rootfs, c.MachineId)
 	if err != nil {
@@ -162,7 +163,7 @@ func (c *SpawnCmd) Run() error {
 	}
 	grants = append(grants, machineIDGrant)
 
-	configurationGrants, refreshDynamicLinker, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia)
+	configurationGrants, refreshDynamicLinker, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia, c.Nameserver)
 	if err != nil {
 		return err
 	}
@@ -952,9 +953,12 @@ func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) 
 	return grants, nil
 }
 
-func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) ([]sandbox.PathGrant, bool, error) {
+func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, nameserver string) ([]sandbox.PathGrant, bool, error) {
 	grants := []sandbox.PathGrant{}
 	var err error
+	if nameserver != "" && net.ParseIP(nameserver) == nil {
+		return nil, false, fmt.Errorf("invalid nameserver %q", nameserver)
+	}
 	nvidiaMounts := []cpak.NvidiaMount{}
 	if includeNvidia {
 		nvidiaMounts, err = cpak.GetNvidiaMounts(rootFs)
@@ -974,6 +978,10 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool) (
 
 	for _, conf := range files {
 		content, readErr := os.ReadFile(conf)
+		if conf == "/etc/resolv.conf" && nameserver != "" {
+			content = []byte("nameserver " + nameserver + "\n")
+			readErr = nil
+		}
 		if os.IsNotExist(readErr) {
 			continue
 		}
@@ -1162,6 +1170,17 @@ func (c *SpawnCmd) installRuntimePackages(packages, installers, destinations []s
 		first = last
 	}
 	return nil
+}
+
+var applyBuildLayerSeccomp = func() error {
+	return sandbox.ApplySeccomp(false, false)
+}
+
+func (c *SpawnCmd) installRuntimePackagesInSandbox(packages, installers, destinations []string) error {
+	if err := applyBuildLayerSeccomp(); err != nil {
+		return fmt.Errorf("apply build layer seccomp: %w", err)
+	}
+	return c.installRuntimePackages(packages, installers, destinations)
 }
 
 func installRuntimeFile(root, artifact, destination string) error {

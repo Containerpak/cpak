@@ -6,6 +6,7 @@ package signature
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 
@@ -69,6 +70,16 @@ func Verify(bundleJSON []byte, state State) (Verified, error) {
 	return verifyWith(material, verificationOptions(), bundleJSON, state)
 }
 
+// VerifyArtifact checks a keyless bundle over the exact artifact bytes and
+// returns the repository identity from its verified certificate.
+func VerifyArtifact(bundleJSON, artifact []byte) (Identity, error) {
+	material, err := bundledTrustRoot()
+	if err != nil {
+		return Identity{}, err
+	}
+	return verifyArtifactWith(material, verificationOptions(), bundleJSON, artifact)
+}
+
 // verificationOptions is the posture a package signature is held to. Each one
 // is a separate thing an attacker would have to hold: a certificate that chains
 // to Fulcio, that certificate published in certificate transparency, and the
@@ -91,16 +102,29 @@ func verifyWith(material root.TrustedMaterial, options []verify.VerifierOption, 
 	if err != nil {
 		return Verified{}, err
 	}
-	signed := new(sigstorebundle.Bundle)
-	if err = signed.UnmarshalJSON(bundleJSON); err != nil {
-		return Verified{}, fmt.Errorf("%w: %w", ErrUntrusted, err)
-	}
-	if err = coversState(signed, digest[:]); err != nil {
+	identity, err := verifyDigest(material, options, bundleJSON, digest[:])
+	if err != nil {
 		return Verified{}, err
+	}
+	return Verified{State: state, Identity: identity}, nil
+}
+
+func verifyArtifactWith(material root.TrustedMaterial, options []verify.VerifierOption, bundleJSON, artifact []byte) (Identity, error) {
+	digest := sha256.Sum256(artifact)
+	return verifyDigest(material, options, bundleJSON, digest[:])
+}
+
+func verifyDigest(material root.TrustedMaterial, options []verify.VerifierOption, bundleJSON, digest []byte) (Identity, error) {
+	signed := new(sigstorebundle.Bundle)
+	if err := signed.UnmarshalJSON(bundleJSON); err != nil {
+		return Identity{}, fmt.Errorf("%w: %w", ErrUntrusted, err)
+	}
+	if err := coversState(signed, digest); err != nil {
+		return Identity{}, err
 	}
 	verifier, err := verify.NewVerifier(material, options...)
 	if err != nil {
-		return Verified{}, fmt.Errorf("signature: build the verifier: %w", err)
+		return Identity{}, fmt.Errorf("signature: build the verifier: %w", err)
 	}
 	// WithoutIdentitiesUnsafe is the honest option here and not a shortcut. The
 	// identity is not a policy this function holds, it is a result it reports,
@@ -111,16 +135,16 @@ func verifyWith(material root.TrustedMaterial, options []verify.VerifierOption, 
 	// reads what the bundle says about itself. This is the leg that proves the
 	// signature was made over those bytes.
 	result, err := verifier.Verify(signed, verify.NewPolicy(
-		verify.WithArtifactDigest("sha256", digest[:]),
+		verify.WithArtifactDigest("sha256", digest),
 		verify.WithoutIdentitiesUnsafe(),
 	))
 	if err != nil {
-		return Verified{}, fmt.Errorf("%w: %w", ErrUntrusted, err)
+		return Identity{}, fmt.Errorf("%w: %w", ErrUntrusted, err)
 	}
 	if result.Signature == nil || result.Signature.Certificate == nil {
-		return Verified{}, ErrNotKeyless
+		return Identity{}, ErrNotKeyless
 	}
-	return Verified{State: state, Identity: identityOf(*result.Signature.Certificate)}, nil
+	return identityOf(*result.Signature.Certificate), nil
 }
 
 // coversState reads what the bundle claims to be a signature over and puts it

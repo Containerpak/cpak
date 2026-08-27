@@ -214,7 +214,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		return
 	}
 
-	manifestDigest, err := manifestIdentityDigest(manifest)
+	manifestDigest, err := ManifestIdentityDigest(manifest)
 	if err != nil {
 		return
 	}
@@ -296,14 +296,14 @@ func (c *Cpak) refuseCpakStateGrants(override types.Override, sessions []types.S
 	return nil
 }
 
-// manifestIdentityDigest names the manifest an installation was made from, as
+// ManifestIdentityDigest names the manifest an installation was made from, as
 // the publisher wrote it: validation fills the defaults in and changes nothing
 // else, and what an installation applies on top of it is decided afterwards.
 // The lock and the publisher's signature both hash the manifest at this same
 // point, so all three name one thing. The decoded manifest is hashed rather
 // than the bytes that were fetched, because an installation resolved from a
 // lock never sees those bytes and both paths must name the same manifest.
-func manifestIdentityDigest(manifest *types.CpakManifest) (string, error) {
+func ManifestIdentityDigest(manifest *types.CpakManifest) (string, error) {
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
 		return "", fmt.Errorf("encode the manifest of %s: %w", manifest.Name, err)

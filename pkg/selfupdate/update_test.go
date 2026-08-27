@@ -7,6 +7,7 @@ package selfupdate
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,8 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 	digest := sha256.Sum256(binary)
 	companion := []byte("new fvs service")
 	companionDigest := sha256.Sum256(companion)
+	checksums := fmt.Sprintf("%x  cpak-linux-%s\n%x  cpak-storaged-linux-%s\n", digest[:], runtime.GOARCH, companionDigest[:], runtime.GOARCH)
+	bundle := []byte("signed checksums")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/cpak":
@@ -29,8 +32,9 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 		case "/cpak-storaged":
 			_, _ = writer.Write(companion)
 		case "/SHA256SUMS":
-			_, _ = fmt.Fprintf(writer, "%x  cpak-linux-%s\n", digest[:], runtime.GOARCH)
-			_, _ = fmt.Fprintf(writer, "%x  cpak-storaged-linux-%s\n", companionDigest[:], runtime.GOARCH)
+			_, _ = writer.Write([]byte(checksums))
+		case "/SHA256SUMS.sigstore.json":
+			_, _ = writer.Write(bundle)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -41,11 +45,25 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	var migrated string
-	checker := Checker{Executable: target, Migrate: func(_ context.Context, executable string) error {
-		migrated = executable
-		return nil
-	}}
-	release := Release{BinaryURL: server.URL + "/cpak", StorageURL: server.URL + "/cpak-storaged", ChecksumsURL: server.URL + "/SHA256SUMS"}
+	checker := Checker{
+		Executable: target,
+		Migrate: func(_ context.Context, executable string) error {
+			migrated = executable
+			return nil
+		},
+		VerifyChecksums: func(gotChecksums, gotBundle []byte) error {
+			if string(gotChecksums) != checksums || string(gotBundle) != string(bundle) {
+				return errors.New("selfupdate: verifier received the wrong release artifacts")
+			}
+			return nil
+		},
+	}
+	release := Release{
+		BinaryURL:    server.URL + "/cpak",
+		StorageURL:   server.URL + "/cpak-storaged",
+		ChecksumsURL: server.URL + "/SHA256SUMS",
+		SignatureURL: server.URL + "/SHA256SUMS.sigstore.json",
+	}
 	if err := checker.Install(context.Background(), release); err != nil {
 		t.Fatal(err)
 	}
@@ -64,25 +82,76 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 
 func TestCheckerRejectsInvalidChecksum(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/SHA256SUMS" {
+		switch request.URL.Path {
+		case "/SHA256SUMS":
 			_, _ = fmt.Fprintf(writer, "%064d  cpak-linux-%s\n", 0, runtime.GOARCH)
-			return
+		case "/SHA256SUMS.sigstore.json":
+			_, _ = writer.Write([]byte("signature"))
+		default:
+			_, _ = writer.Write([]byte("new cpak"))
 		}
-		_, _ = writer.Write([]byte("new cpak"))
 	}))
 	defer server.Close()
 	target := filepath.Join(t.TempDir(), "cpak")
 	if err := os.WriteFile(target, []byte("old cpak"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	checker := Checker{Executable: target}
-	err := checker.Install(context.Background(), Release{BinaryURL: server.URL, StorageURL: server.URL + "/cpak-storaged", ChecksumsURL: server.URL + "/SHA256SUMS"})
+	checker := Checker{Executable: target, VerifyChecksums: func([]byte, []byte) error { return nil }}
+	err := checker.Install(context.Background(), Release{
+		BinaryURL:    server.URL,
+		StorageURL:   server.URL + "/cpak-storaged",
+		ChecksumsURL: server.URL + "/SHA256SUMS",
+		SignatureURL: server.URL + "/SHA256SUMS.sigstore.json",
+	})
 	if err == nil {
 		t.Fatal("installed a binary with an invalid checksum")
 	}
 	installed, _ := os.ReadFile(target)
 	if string(installed) != "old cpak" {
 		t.Fatalf("modified target after checksum failure: %q", installed)
+	}
+}
+
+func TestCheckerRejectsUntrustedChecksumsBeforeDownloadingBinaries(t *testing.T) {
+	verificationError := errors.New("untrusted checksums")
+	binaryRequested := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/SHA256SUMS":
+			_, _ = writer.Write([]byte("checksums"))
+		case "/SHA256SUMS.sigstore.json":
+			_, _ = writer.Write([]byte("signature"))
+		default:
+			binaryRequested = true
+			_, _ = writer.Write([]byte("new cpak"))
+		}
+	}))
+	defer server.Close()
+	target := filepath.Join(t.TempDir(), "cpak")
+	if err := os.WriteFile(target, []byte("old cpak"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	checker := Checker{
+		Executable: target,
+		VerifyChecksums: func([]byte, []byte) error {
+			return verificationError
+		},
+	}
+	err := checker.Install(context.Background(), Release{
+		BinaryURL:    server.URL + "/cpak",
+		StorageURL:   server.URL + "/cpak-storaged",
+		ChecksumsURL: server.URL + "/SHA256SUMS",
+		SignatureURL: server.URL + "/SHA256SUMS.sigstore.json",
+	})
+	if !errors.Is(err, verificationError) {
+		t.Fatalf("got %v, want the verification failure", err)
+	}
+	if binaryRequested {
+		t.Fatal("downloaded binaries after checksum verification failed")
+	}
+	installed, err := os.ReadFile(target)
+	if err != nil || string(installed) != "old cpak" {
+		t.Fatalf("modified target after signature failure: %q %v", installed, err)
 	}
 }
 
@@ -109,6 +178,31 @@ func TestCheckerUsesCachedRelease(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("expected one release request, got %d", requests)
+	}
+}
+
+func TestCheckerFindsTheChecksumSignatureAsset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		baseURL := "http://" + request.Host
+		_, _ = fmt.Fprintf(writer, `{
+			"tag_name":"v2.1.0",
+			"published_at":"2026-08-12T00:00:00Z",
+			"assets":[
+				{"name":"cpak-linux-%s","browser_download_url":"%s/cpak"},
+				{"name":"cpak-storaged-linux-%s","browser_download_url":"%s/cpak-storaged"},
+				{"name":"SHA256SUMS","browser_download_url":"%s/SHA256SUMS"},
+				{"name":"SHA256SUMS.sigstore.json","browser_download_url":"%s/SHA256SUMS.sigstore.json"}
+			]
+		}`, runtime.GOARCH, baseURL, runtime.GOARCH, baseURL, baseURL, baseURL)
+	}))
+	defer server.Close()
+
+	release, err := (Checker{APIURL: server.URL}).fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release.SignatureURL != server.URL+"/SHA256SUMS.sigstore.json" {
+		t.Fatalf("unexpected checksum signature URL: %q", release.SignatureURL)
 	}
 }
 

@@ -15,13 +15,22 @@ import (
 )
 
 type GenSchemaCmd struct {
-	Output string `cli:"output,o" help:"Output path"`
+	Output          string `cli:"output,o" help:"Output path"`
+	ManifestVersion string `cli:"manifest-version,m" help:"Manifest version (default: 3.0)"`
 
 	cli.Base
 }
 
 func (c *GenSchemaCmd) Run() error {
-	schema := cpak.ManifestV2Schema()
+	var schema any
+	switch c.ManifestVersion {
+	case "", "3.0":
+		schema = cpak.ManifestV3Schema()
+	case "2.0":
+		schema = cpak.ManifestV2Schema()
+	default:
+		return fmt.Errorf("unsupported manifest version: %s", c.ManifestVersion)
+	}
 
 	out, err := json.MarshalIndent(schema, "", "  ")
 	if err != nil {

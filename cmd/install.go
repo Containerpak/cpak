@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/bootstrap"
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -16,11 +17,12 @@ import (
 )
 
 type InstallCmd struct {
-	Remote  string `arg:"remote" help:"Remote Git repository"`
-	Branch  string `cli:"branch,b" help:"Specify a branch"`
-	Release string `cli:"release,r" help:"Install a specific release"`
-	Commit  string `cli:"commit,c" help:"Specify a commit"`
-	Yes     bool   `cli:"yes,y" help:"Skip the confirmation prompt"`
+	Remote          string `arg:"remote" help:"Remote Git repository"`
+	Branch          string `cli:"branch,b" help:"Specify a branch"`
+	Release         string `cli:"release,r" help:"Install a specific release"`
+	Commit          string `cli:"commit,c" help:"Specify a commit"`
+	Yes             bool   `cli:"yes,y" help:"Skip the confirmation prompt"`
+	SignedInstaller bool   `cli:"signed-installer" help:"Verify consent from the parent application installer"`
 
 	cli.Base
 }
@@ -43,6 +45,9 @@ func (c *InstallCmd) Run() error {
 	if versionParamsCount > 1 {
 		return fmt.Errorf("more than one version parameter specified")
 	}
+	if c.SignedInstaller && c.Commit == "" {
+		return fmt.Errorf("a signed installer requires an immutable commit")
+	}
 
 	branch := c.Branch
 	if versionParamsCount == 0 {
@@ -58,6 +63,14 @@ func (c *InstallCmd) Run() error {
 	manifest, err := cp.FetchManifest(remote, branch, c.Release, c.Commit)
 	if err != nil {
 		return err
+	}
+	if err = cp.ValidateManifest(manifest); err != nil {
+		return err
+	}
+	if c.SignedInstaller {
+		if err = verifySignedInstaller(remote, c.Commit, manifest); err != nil {
+			return err
+		}
 	}
 
 	c.describeRootPackage(manifest)
@@ -77,7 +90,7 @@ func (c *InstallCmd) Run() error {
 	c.describeDependencies(dependencies)
 	c.describeRuntimeSourcesAndPermissions(manifest)
 
-	if !c.Yes && !tools.ConfirmOperation("Do you want to continue?") {
+	if !c.Yes && !c.SignedInstaller && !tools.ConfirmOperation("Do you want to continue?") {
 		return nil
 	}
 
@@ -108,7 +121,7 @@ func (c *InstallCmd) describeRootPackage(manifest *types.CpakManifest) {
 	}
 	for _, session := range manifest.Sessions {
 		c.Logger.Info("  - (%s session) %s", tools.SanitizeForDisplay(session.Kind), tools.SanitizeForDisplay(session.Name))
-		tools.PrintStructKeyVal(session.Override)
+		c.describePermissions(session.Override)
 	}
 	if provider := manifest.AddonProvider; provider != nil {
 		c.Logger.Info("  - (addon provider) %s for %s (%s)", tools.SanitizeForDisplay(provider.ID), tools.SanitizeForDisplay(provider.Slot), tools.SanitizeForDisplay(provider.Mode))
@@ -124,7 +137,7 @@ func (c *InstallCmd) describeDependencies(dependencies []cpak.ResolvedDependency
 		// the permissions below them.
 		c.Logger.Info("  - %s: %s", tools.SanitizeForDisplay(dependency.Origin), tools.SanitizeForDisplay(dependency.Manifest.Description))
 		c.Logger.Info("    with the following permissions:")
-		tools.PrintStructKeyVal(dependency.Manifest.Override)
+		c.describePermissions(dependency.Manifest.Override)
 	}
 	c.Logger.Info("")
 }
@@ -140,6 +153,17 @@ func (c *InstallCmd) describeRuntimeSourcesAndPermissions(manifest *types.CpakMa
 	}
 
 	c.Logger.Info("The following permissions will be granted:")
-	tools.PrintStructKeyVal(manifest.Override)
+	c.describePermissions(manifest.Override)
 	c.Logger.Info("")
+}
+
+func (c *InstallCmd) describePermissions(override types.Override) {
+	permissions := bootstrap.SummarizePermissions(override)
+	if len(permissions) == 0 {
+		c.Logger.Info("  - None")
+		return
+	}
+	for _, permission := range permissions {
+		c.Logger.Info("  - %s: %s", tools.SanitizeForDisplay(permission.Name), tools.SanitizeForDisplay(permission.Detail))
+	}
 }

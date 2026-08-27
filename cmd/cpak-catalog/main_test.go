@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
@@ -90,6 +91,27 @@ func TestLoadPackageManifest(t *testing.T) {
 	}
 }
 
+func TestSignedManifestDigestRequiresPinnedCode(t *testing.T) {
+	manifest := &types.CpakManifest{
+		ManifestVersion: "2.0",
+		Name:            "Demo",
+		Description:     "Demo application",
+		Image:           "ghcr.io/containerpak/demo:main",
+		Binaries:        []string{"/usr/bin/demo"},
+	}
+	if _, err := signedManifestDigest(manifest); err == nil {
+		t.Fatal("a signed installer accepted a mutable image tag")
+	}
+	manifest.Image = "ghcr.io/containerpak/demo@sha256:" + strings.Repeat("a", 64)
+	if _, err := signedManifestDigest(manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Dependencies = []types.Dependency{{Origin: "github.com/containerpak/runtime"}}
+	if _, err := signedManifestDigest(manifest); err == nil {
+		t.Fatal("a signed installer accepted an unbound dependency graph")
+	}
+}
+
 func TestFetchRetriesTemporaryFailures(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -124,11 +146,11 @@ func TestSummarizePermissions(t *testing.T) {
 		Network: true,
 	}
 	want := []bootstrap.Permission{
-		{Name: "Display", Detail: "X11, Wayland"},
+		{Name: "Display", Detail: "X11 (no input or screen isolation), Wayland"},
 		{Name: "Audio", Detail: "PulseAudio"},
 		{Name: "Devices", Detail: "all devices"},
 		{Name: "Notifications", Detail: "desktop notifications"},
-		{Name: "Files", Detail: "home, read write"},
+		{Name: "Files", Detail: "home, read write; can run code on the host through startup files"},
 		{Name: "Network", Detail: "internet and local network"},
 	}
 	if got := summarizePermissions(override); !reflect.DeepEqual(got, want) {

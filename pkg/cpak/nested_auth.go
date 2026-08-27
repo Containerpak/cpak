@@ -310,6 +310,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		HostApplications:    parent.HostApplications && child.HostApplications,
 		HostActions:         types.IntersectHostActions(parent.HostActions, child.HostActions),
 		FilePicker:          intersectFilePicker(parent.FilePicker, child.FilePicker),
+		SessionBus:          types.IntersectDBusPolicies(parent.SessionBus, child.SessionBus),
 		Filesystem:          intersectFilesystem(parent.Filesystem, child.Filesystem),
 		FsHost:              parent.FsHost && child.FsHost,
 		FsHostEtc:           parent.FsHostEtc && child.FsHostEtc,

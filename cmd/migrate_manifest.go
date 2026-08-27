@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -31,7 +30,7 @@ func (c *MigrateManifestCmd) Run() error {
 	if err := cpak.MigrateManifest(manifest); err != nil {
 		return err
 	}
-	data, err = json.MarshalIndent(manifest, "", "  ")
+	data, err = cpak.MarshalManifest(manifest)
 	if err != nil {
 		return err
 	}

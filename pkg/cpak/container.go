@@ -7,6 +7,7 @@ package cpak
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -250,9 +251,9 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		container.SystemBrokerSocketPath = ""
 		container.SystemBrokerTokenPath = ""
 	}
-	if override.FilePicker.Enabled() {
+	if override.FilePicker.Enabled() || override.SessionBus.Enabled() {
 		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "desktop-bus.sock")
-		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, override.SocketSessionBus)
+		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, override)
 		if err != nil {
 			cleanupDesktopBusProxy(container)
 			cleanupSystemBrokerRuntime(container)
@@ -388,6 +389,10 @@ func containerLaunchPolicyHash(runtimeVersion int, launchRoot string, override t
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
 func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
+	network, err := resolveUserNetwork(override.Network)
+	if err != nil {
+		return "", 0, "", err
+	}
 	if override.OpenURI {
 		if err = ensureOpenURIMimeApps(os.Environ()); err != nil {
 			return "", 0, "", err
@@ -477,6 +482,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if applicationPtraceAllowed(override) {
 		cmds = append(cmds, "--allow-ptrace")
 	}
+	if network != nil {
+		cmds = append(cmds, "--nameserver", slirpNameserver)
+	}
 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
@@ -562,22 +570,76 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	defer readyReader.Close()
 	defer readyWriter.Close()
 
-	cmd := nativeNamespaceCommand(cpakBinary, cmds, namespaceOptions{
-		IsolateNetwork: !override.Network,
-		ShareProcesses: override.Process,
-		IsolateCgroup:  true,
-	})
+	var networkExitReader, networkExitWriter *os.File
+	if network != nil {
+		networkExitReader, networkExitWriter, err = os.Pipe()
+		if err != nil {
+			return "", 0, "", fmt.Errorf("create network lifecycle pipe: %w", err)
+		}
+		defer networkExitReader.Close()
+		defer networkExitWriter.Close()
+	}
+
+	cmd := nativeNamespaceCommand(cpakBinary, cmds, containerNamespaceOptions(override))
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), containerEnv...)
 	cmd.Env = append(cmd.Env, "CPAK_CONTAINER_ID="+container.CpakId)
 	cmd.ExtraFiles = []*os.File{readyWriter}
+	if networkExitWriter != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, networkExitWriter)
+	}
 
 	if err = cmd.Start(); err != nil {
 		return "", 0, "", fmt.Errorf("start container namespace: %w", err)
 	}
 	_ = readyWriter.Close()
+	if networkExitWriter != nil {
+		_ = networkExitWriter.Close()
+	}
+
+	var networkReady <-chan error
+	var networkExited <-chan error
+	if network != nil {
+		helperReadyReader, helperReadyWriter, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			_ = cmd.Process.Kill()
+			return "", 0, "", fmt.Errorf("create network readiness pipe: %w", pipeErr)
+		}
+		helper := network.command(cmd.Process.Pid, helperReadyWriter, networkExitReader)
+		helper.Stdout = os.Stdout
+		helper.Stderr = os.Stderr
+		if err = helper.Start(); err != nil {
+			helperReadyReader.Close()
+			helperReadyWriter.Close()
+			_ = cmd.Process.Kill()
+			return "", 0, "", fmt.Errorf("start network helper: %w", err)
+		}
+		_ = helperReadyWriter.Close()
+		_ = networkExitReader.Close()
+
+		readyResult := make(chan error, 1)
+		go func() {
+			defer helperReadyReader.Close()
+			buffer := []byte{0}
+			_, readErr := io.ReadFull(helperReadyReader, buffer)
+			if readErr == nil && buffer[0] != 1 {
+				readErr = fmt.Errorf("invalid network readiness response")
+			}
+			readyResult <- readErr
+		}()
+		exitResult := make(chan error, 1)
+		go func() {
+			waitErr := helper.Wait()
+			exitResult <- waitErr
+			if syscall.Kill(cmd.Process.Pid, 0) == nil {
+				_ = cmd.Process.Kill()
+			}
+		}()
+		networkReady = readyResult
+		networkExited = exitResult
+	}
 
 	ready := make(chan error, 1)
 	go func() {
@@ -591,20 +653,40 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 
-	select {
-	case err = <-ready:
-		if err != nil {
+	containerReady := false
+	networkIsReady := network == nil
+	timeout := time.NewTimer(20 * time.Second)
+	defer timeout.Stop()
+	for !containerReady || !networkIsReady {
+		select {
+		case err = <-ready:
+			if err != nil {
+				_ = cmd.Process.Kill()
+				return "", 0, "", fmt.Errorf("container failed before readiness: %w", err)
+			}
+			containerReady = true
+			ready = nil
+		case err = <-networkReady:
+			if err != nil {
+				_ = cmd.Process.Kill()
+				return "", 0, "", fmt.Errorf("network helper failed before readiness: %w", err)
+			}
+			networkIsReady = true
+			networkReady = nil
+		case err = <-networkExited:
+			if err == nil {
+				err = fmt.Errorf("network helper exited before readiness")
+			}
+			return "", 0, "", err
+		case err = <-exited:
+			if err == nil {
+				err = fmt.Errorf("container init exited before readiness")
+			}
+			return "", 0, "", err
+		case <-timeout.C:
 			_ = cmd.Process.Kill()
-			return "", 0, "", fmt.Errorf("container failed before readiness: %w", err)
+			return "", 0, "", fmt.Errorf("container readiness timed out")
 		}
-	case err = <-exited:
-		if err == nil {
-			err = fmt.Errorf("container init exited before readiness")
-		}
-		return "", 0, "", err
-	case <-time.After(20 * time.Second):
-		_ = cmd.Process.Kill()
-		return "", 0, "", fmt.Errorf("container readiness timed out")
 	}
 
 	pid = cmd.Process.Pid
@@ -617,6 +699,14 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		return "", 0, "", fmt.Errorf("container init is not running: %w", err)
 	}
 	return
+}
+
+func containerNamespaceOptions(override types.Override) namespaceOptions {
+	return namespaceOptions{
+		IsolateNetwork: true,
+		ShareProcesses: override.Process,
+		IsolateCgroup:  true,
+	}
 }
 
 func applicationPtraceAllowed(override types.Override) bool {
@@ -1139,7 +1229,7 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	return
 }
 
-func startDesktopBusProxy(container types.Container, allowSessionBus bool) (int, error) {
+func startDesktopBusProxy(container types.Container, override types.Override) (int, error) {
 	cpakBinary, err := getCpakBinary()
 	if err != nil {
 		return 0, err
@@ -1152,11 +1242,20 @@ func startDesktopBusProxy(container types.Container, allowSessionBus bool) (int,
 		"desktop-bus-proxy",
 		"--socket-path", container.DesktopBusSocketPath,
 		"--upstream-address", upstream,
-		"--broker-socket-path", container.SystemBrokerSocketPath,
-		"--token-file", container.SystemBrokerTokenPath,
 	}
-	if allowSessionBus {
-		arguments = append(arguments, "--allow-session-bus")
+	if override.SessionBus.Enabled() {
+		policy, encodeErr := json.Marshal(override.SessionBus)
+		if encodeErr != nil {
+			return 0, fmt.Errorf("encode desktop bus policy: %w", encodeErr)
+		}
+		arguments = append(arguments, "--policy", base64.RawURLEncoding.EncodeToString(policy))
+	}
+	if override.FilePicker.Enabled() {
+		arguments = append(arguments,
+			"--file-picker",
+			"--broker-socket-path", container.SystemBrokerSocketPath,
+			"--token-file", container.SystemBrokerTokenPath,
+		)
 	}
 	command := exec.Command(cpakBinary, arguments...)
 	logFile, err := os.OpenFile(container.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)

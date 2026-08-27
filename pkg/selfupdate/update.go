@@ -22,11 +22,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mirkobrombin/cpak/pkg/signature"
 )
 
 const (
-	defaultAPI = "https://api.github.com/repos/Containerpak/cpak/releases/latest"
-	maxBinary  = 128 << 20
+	defaultAPI   = "https://api.github.com/repos/Containerpak/cpak/releases/latest"
+	updateOrigin = "github.com/containerpak/cpak"
+	maxBinary    = 128 << 20
+	maxBundle    = 4 << 20
 )
 
 // ErrManagedInstall indicates that the package manager owns the cpak binary.
@@ -40,17 +44,19 @@ type Release struct {
 	BinaryURL    string    `json:"binary_url"`
 	StorageURL   string    `json:"storage_url"`
 	ChecksumsURL string    `json:"checksums_url"`
+	SignatureURL string    `json:"signature_url"`
 }
 
 // Checker resolves and installs cpak releases.
 type Checker struct {
-	CurrentVersion string
-	Mode           string
-	APIURL         string
-	CachePath      string
-	Executable     string
-	HTTP           *http.Client
-	Migrate        func(context.Context, string) error
+	CurrentVersion  string
+	Mode            string
+	APIURL          string
+	CachePath       string
+	Executable      string
+	HTTP            *http.Client
+	Migrate         func(context.Context, string) error
+	VerifyChecksums func([]byte, []byte) error
 }
 
 type cache struct {
@@ -102,7 +108,7 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	if c.Mode == "managed" {
 		return ErrManagedInstall
 	}
-	if release.BinaryURL == "" || release.StorageURL == "" || release.ChecksumsURL == "" {
+	if release.BinaryURL == "" || release.StorageURL == "" || release.ChecksumsURL == "" || release.SignatureURL == "" {
 		return fmt.Errorf("selfupdate: release has no compatible binary")
 	}
 	executable := c.Executable
@@ -120,6 +126,13 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	checksums, err := c.download(ctx, release.ChecksumsURL, 1<<20)
 	if err != nil {
 		return fmt.Errorf("selfupdate: download checksums: %w", err)
+	}
+	bundle, err := c.download(ctx, release.SignatureURL, maxBundle)
+	if err != nil {
+		return fmt.Errorf("selfupdate: download checksum signature: %w", err)
+	}
+	if err = c.verifyChecksums(checksums, bundle); err != nil {
+		return fmt.Errorf("selfupdate: verify checksums: %w", err)
 	}
 	asset := "cpak-linux-" + runtime.GOARCH
 	expected, err := checksumFor(checksums, asset)
@@ -156,6 +169,20 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	}
 	if err = c.migrate(ctx, executable); err != nil {
 		return fmt.Errorf("selfupdate: migrate storage: %w", err)
+	}
+	return nil
+}
+
+func (c Checker) verifyChecksums(checksums, bundle []byte) error {
+	if c.VerifyChecksums != nil {
+		return c.VerifyChecksums(checksums, bundle)
+	}
+	identity, err := signature.VerifyArtifact(bundle, checksums)
+	if err != nil {
+		return err
+	}
+	if !identity.MatchesOrigin(updateOrigin) {
+		return errors.New("checksum signature was not made by the cpak repository")
 	}
 	return nil
 }
@@ -250,6 +277,8 @@ func (c Checker) fetch(ctx context.Context) (Release, error) {
 			release.StorageURL = asset.URL
 		case "SHA256SUMS":
 			release.ChecksumsURL = asset.URL
+		case "SHA256SUMS.sigstore.json":
+			release.SignatureURL = asset.URL
 		}
 	}
 	if _, valid := parseVersion(release.Version); !valid {
