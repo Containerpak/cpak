@@ -612,6 +612,7 @@ func slicesContain(entries []string, want string) bool {
 func TestContainerEnvironmentAppliesTheHostLocaleOverTheManifest(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LANG", "pt_BR.UTF-8")
+	t.Setenv("LC_ALL", "pt_BR.UTF-8")
 	app := types.Application{
 		Origin:         "github.com/containerpak/bottles",
 		Version:        "66.1",
