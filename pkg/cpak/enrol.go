@@ -479,6 +479,13 @@ func (c *Cpak) verifiedPackageSignature(app types.Application, published Publish
 		state.Generation = candidate.generation
 		verified, verifyErr := verifySignature(candidate.bundle, state)
 		if verifyErr != nil {
+			if identity, mismatched := publisherMismatch(verifyErr); mismatched {
+				if !madeByAnother {
+					madeByAnother = true
+					foreign = identity.Repo
+				}
+				continue
+			}
 			if refusal == nil {
 				refusal = verifyErr
 			}
@@ -604,6 +611,9 @@ func describeSignature(origin string, signed *systemauthority.SignedState) Enrol
 	}
 	verified, err := verifySignature(signed.Bundle, signed.State)
 	if err != nil {
+		if identity, mismatched := publisherMismatch(err); mismatched {
+			return EnrolmentSignature{Reason: fmt.Errorf("%w: %s", ErrSignatureForeign, whoseSignature(identity.Repo))}
+		}
 		return EnrolmentSignature{Reason: fmt.Errorf("%w: %w", ErrSignatureUnverified, err)}
 	}
 	if !verified.Identity.MatchesOrigin(origin) {

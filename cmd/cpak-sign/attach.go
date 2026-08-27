@@ -41,7 +41,7 @@ const (
 // for the origin, is a bundle every user would reject, and it is better
 // rejected here than in front of them. It is a variable so that a test can hold
 // one that fails; nothing in cpak-sign replaces it.
-var verifyState = signature.Verify
+var verifyState = signature.VerifyPublisher
 
 // referrer is the artifact manifest a signature is published as. The subject is
 // the image manifest the state was signed over, which is what makes the

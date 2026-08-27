@@ -1675,34 +1675,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	args = append(args, landlockArguments(grants)...)
 	args = append(args, "--")
 	args = append(args, request.Args...)
-	command := exec.Command(cpakInContainerPath, args...)
-	command.Env = append(append([]string{}, baseEnv...), request.Env...)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Whether a nested command may run as root is a property of the container,
-	// decided when it was created. Taking it from the request would let anyone
-	// who can reach the socket ask for it.
-	// The application always gets a user namespace of its own, and asRoot only
-	// decides which identity it holds inside it.
-	//
-	// It used to decide whether there was one at all, and that was the whole of
-	// what separated the application from the container's init. The file grant
-	// worker runs on a thread that unshared its mount namespace before the
-	// pivot, so it keeps a root that is still the host's for the life of the
-	// container, reachable as /proc/1/task/<tid>/root. Sharing a user namespace
-	// and credentials with init made that path readable: measured, an ordinary
-	// application gets EPERM there and an asRoot one enumerated the host's root
-	// directory. A nested namespace has no capability in its parent, so the
-	// traversal is refused whichever identity the application was given.
-	command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
-	command.SysProcAttr.GidMappingsEnableSetgroups = false
-	if c.AllowRoot {
-		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
-		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
-	} else {
-		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
-		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
-		command.SysProcAttr.Credential = &syscall.Credential{Uid: 1000, Gid: 1000}
-	}
+	command := c.applicationCommand(args, append(append([]string{}, baseEnv...), request.Env...))
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
@@ -1755,6 +1728,38 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	default:
 	}
 	_, _ = io.Copy(io.Discard, connection)
+}
+
+func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {
+	command := exec.Command(cpakInContainerPath, args...)
+	command.Env = env
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Whether a nested command may run as root is a property of the container,
+	// decided when it was created. Taking it from the request would let anyone
+	// who can reach the socket ask for it.
+	// The application always gets a user namespace of its own, and asRoot only
+	// decides which identity it holds inside it.
+	//
+	// It used to decide whether there was one at all, and that was the whole of
+	// what separated the application from the container's init. The file grant
+	// worker runs on a thread that unshared its mount namespace before the
+	// pivot, so it keeps a root that is still the host's for the life of the
+	// container, reachable as /proc/1/task/<tid>/root. Sharing a user namespace
+	// and credentials with init made that path readable: measured, an ordinary
+	// application gets EPERM there and an asRoot one enumerated the host's root
+	// directory. A nested namespace has no capability in its parent, so the
+	// traversal is refused whichever identity the application was given.
+	command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
+	command.SysProcAttr.GidMappingsEnableSetgroups = false
+	if c.AllowRoot {
+		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
+		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
+	} else {
+		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
+		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
+		command.SysProcAttr.Credential = &syscall.Credential{Uid: 1000, Gid: 1000}
+	}
+	return command
 }
 
 func landlockArguments(grants []sandbox.PathGrant) []string {

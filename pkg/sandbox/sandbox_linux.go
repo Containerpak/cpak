@@ -329,6 +329,13 @@ func seccompProfiles() ([]seccompProfile, bool) {
 		uint32(unix.SYS_PTRACE),
 		uint32(unix.SYS_SETNS),
 		uint32(unix.SYS_BPF),
+		uint32(unix.SYS_IO_URING_SETUP),
+		uint32(unix.SYS_IO_URING_ENTER),
+		uint32(unix.SYS_IO_URING_REGISTER),
+		uint32(unix.SYS_USERFAULTFD),
+		uint32(unix.SYS_ADD_KEY),
+		uint32(unix.SYS_REQUEST_KEY),
+		uint32(unix.SYS_KEYCTL),
 		uint32(unix.SYS_PERF_EVENT_OPEN),
 		uint32(unix.SYS_KEXEC_LOAD),
 		uint32(unix.SYS_REBOOT),
@@ -378,7 +385,7 @@ func linuxI386SeccompProfile() seccompProfile {
 	return seccompProfile{
 		architecture: unix.AUDIT_ARCH_I386,
 		blocked: []uint32{
-			26, 346, 357, 336, 283, 88, 128, 350, 129, 87, 115,
+			26, 346, 357, 425, 426, 427, 374, 286, 287, 288, 336, 283, 88, 128, 350, 129, 87, 115,
 		},
 		namespaceMount: []uint32{21, 52, 217, 428, 429, 430, 431, 432, 433, 442},
 		unshare:        310,

@@ -220,6 +220,20 @@ func TestVerifyAcceptsABundleOverTheStateItIsCheckedAgainst(t *testing.T) {
 	}
 }
 
+func TestVerifyPublisherRefusesAValidForeignIdentity(t *testing.T) {
+	sigstore := newTestSigstore(t)
+	state := validState()
+
+	_, err := verifyPublisherWith(sigstore, testVerificationOptions(), signedBundle(t, sigstore, state), state)
+	if !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("foreign signer: got %v, want %v", err, ErrIdentityMismatch)
+	}
+	var mismatch *IdentityMismatchError
+	if !errors.As(err, &mismatch) || mismatch.Identity.Subject != testSubject || mismatch.Origin != state.Origin {
+		t.Fatalf("foreign signer details were lost: %#v", mismatch)
+	}
+}
+
 func TestVerifyArtifactCoversTheExactBytes(t *testing.T) {
 	sigstore := newTestSigstore(t)
 	artifact := []byte("signed checksums\n")
@@ -336,7 +350,7 @@ func TestVerifyConsultsTheBundledTrustRoot(t *testing.T) {
 	sigstore := newTestSigstore(t)
 	state := validState()
 
-	if _, err := Verify(signedBundle(t, sigstore, state), state); err == nil {
+	if _, err := VerifyPublisher(signedBundle(t, sigstore, state), state); err == nil {
 		t.Fatalf("Verify accepted a bundle from a private certificate authority, so it is not checking the shipped trust root")
 	} else if !errors.Is(err, ErrUntrusted) {
 		t.Fatalf("a bundle no shipped authority issued must be reported as untrusted, got: %v", err)

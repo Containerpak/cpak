@@ -179,7 +179,7 @@ func (c *Cpak) approvalsOf(ref oci.Reference, origin string, state signature.Sta
 			refusal = firstReason(refusal, nameErr)
 			continue
 		}
-		verified, verifyErr := verifySignature(candidate.bundle, covered)
+		verified, verifyErr := verifyApprovalSignature(candidate.bundle, covered)
 		if verifyErr != nil {
 			refusal = firstReason(refusal, verifyErr)
 			continue

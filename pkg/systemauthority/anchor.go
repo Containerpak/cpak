@@ -117,7 +117,7 @@ var ErrSignatureLost = errors.New("the enrolment drops the publisher signature a
 // verifyBundle is the offline check a signature is put through. It is a
 // variable so that a test can drive the answer the authority acts on; nothing
 // in cpak replaces it, and the default is pinned by a test that compares the
-// check it ends at with signature.Verify itself.
+// check it ends at with signature.VerifyPublisher itself.
 //
 // It goes through separatedVerify because the walk over a published bundle
 // does not belong in the process that owns the ledger.

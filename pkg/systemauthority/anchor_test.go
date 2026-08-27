@@ -914,7 +914,7 @@ func TestTheAuthorityChecksBundlesWithTheRealVerifier(t *testing.T) {
 	if reflect.ValueOf(verifyBundle).Pointer() != reflect.ValueOf(separatedVerify).Pointer() {
 		t.Fatal("the authority does not put bundles through the separated verifier")
 	}
-	if reflect.ValueOf(verifyDirect).Pointer() != reflect.ValueOf(signature.Verify).Pointer() {
+	if reflect.ValueOf(verifyDirect).Pointer() != reflect.ValueOf(signature.VerifyPublisher).Pointer() {
 		t.Fatal("the separated verifier ends at something other than pkg/signature")
 	}
 	ledger := testAnchorLedger(t)

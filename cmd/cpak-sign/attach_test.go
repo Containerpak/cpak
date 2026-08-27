@@ -74,7 +74,7 @@ func signedState(imageDigest string) signature.State {
 // they drive the gate through a stub, and this is what says the gate they are
 // standing in for is the real one.
 func TestAttachVerifiesThroughTheSignaturePackage(t *testing.T) {
-	if reflect.ValueOf(verifyState).Pointer() != reflect.ValueOf(signature.Verify).Pointer() {
+	if reflect.ValueOf(verifyState).Pointer() != reflect.ValueOf(signature.VerifyPublisher).Pointer() {
 		t.Fatalf("attach does not verify through pkg/signature, so nothing proves a published bundle was ever checked")
 	}
 }

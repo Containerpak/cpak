@@ -55,7 +55,7 @@ func (c *VerifySignatureCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	verified, err := signature.Verify(bundleJSON, state)
+	verified, err := signature.VerifyPublisher(bundleJSON, state)
 	if err != nil {
 		return err
 	}

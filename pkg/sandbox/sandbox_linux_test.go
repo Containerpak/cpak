@@ -132,7 +132,7 @@ func TestLinuxI386SeccompProfileBlocksPrivilegedSyscalls(t *testing.T) {
 	if profile.architecture != unix.AUDIT_ARCH_I386 || profile.clone != 120 || profile.unshare != 310 || profile.clone3 != 435 {
 		t.Fatalf("i386 profile: %+v", profile)
 	}
-	for _, syscallNumber := range []uint32{26, 88, 128, 283, 336, 346, 357} {
+	for _, syscallNumber := range []uint32{26, 88, 128, 283, 286, 287, 288, 336, 346, 357, 374, 425, 426, 427} {
 		if !slices.Contains(profile.blocked, syscallNumber) {
 			t.Fatalf("i386 privileged syscall %d is not blocked", syscallNumber)
 		}
@@ -140,6 +140,26 @@ func TestLinuxI386SeccompProfileBlocksPrivilegedSyscalls(t *testing.T) {
 	for _, syscallNumber := range []uint32{21, 52, 217, 428, 442} {
 		if !slices.Contains(profile.namespaceMount, syscallNumber) {
 			t.Fatalf("i386 namespace mount syscall %d is not blocked", syscallNumber)
+		}
+	}
+}
+
+func TestSeccompBlocksKernelAttackSurface(t *testing.T) {
+	profiles, supported := seccompProfiles()
+	if !supported {
+		t.Skip("unsupported audit architecture")
+	}
+	for _, syscallNumber := range []uint32{
+		uint32(unix.SYS_IO_URING_SETUP),
+		uint32(unix.SYS_IO_URING_ENTER),
+		uint32(unix.SYS_IO_URING_REGISTER),
+		uint32(unix.SYS_USERFAULTFD),
+		uint32(unix.SYS_ADD_KEY),
+		uint32(unix.SYS_REQUEST_KEY),
+		uint32(unix.SYS_KEYCTL),
+	} {
+		if !slices.Contains(profiles[0].blocked, syscallNumber) {
+			t.Fatalf("native syscall %d is not blocked", syscallNumber)
 		}
 	}
 }
@@ -240,6 +260,19 @@ func TestSandboxHelper(t *testing.T) {
 		}
 		if _, _, errno := unix.Syscall(unix.SYS_UNSHARE, uintptr(syscall.CLONE_NEWUSER), 0, 0); errno != unix.EPERM {
 			failSandboxHelper("unshare error: %v", errno)
+		}
+		for _, number := range []uintptr{
+			unix.SYS_IO_URING_SETUP,
+			unix.SYS_IO_URING_ENTER,
+			unix.SYS_IO_URING_REGISTER,
+			unix.SYS_USERFAULTFD,
+			unix.SYS_ADD_KEY,
+			unix.SYS_REQUEST_KEY,
+			unix.SYS_KEYCTL,
+		} {
+			if _, _, errno := unix.Syscall(number, 0, 0, 0); errno != unix.EPERM {
+				failSandboxHelper("kernel attack surface syscall %d error: %v", number, errno)
+			}
 		}
 		if err := exec.Command("/bin/true").Run(); err != nil {
 			failSandboxHelper("exec true: %v", err)

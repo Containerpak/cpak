@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
@@ -355,6 +356,18 @@ func TestBuildLayerAppliesSeccompBeforeRunningAnInstaller(t *testing.T) {
 	err := (&SpawnCmd{}).installRuntimePackagesInSandbox([]string{"package.deb"}, []string{"dpkg"}, nil)
 	if !called || !errors.Is(err, want) {
 		t.Fatalf("build layer seccomp: called=%v, err=%v", called, err)
+	}
+}
+
+func TestApplicationCommandsAlwaysUseANestedUserNamespace(t *testing.T) {
+	for _, allowRoot := range []bool{false, true} {
+		command := (&SpawnCmd{AllowRoot: allowRoot}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+		if command.SysProcAttr.Cloneflags&syscall.CLONE_NEWUSER == 0 {
+			t.Fatalf("allow root %t: application shares the container init user namespace", allowRoot)
+		}
+		if len(command.SysProcAttr.UidMappings) != 1 || len(command.SysProcAttr.GidMappings) != 1 {
+			t.Fatalf("allow root %t: incomplete identity mapping: %+v", allowRoot, command.SysProcAttr)
+		}
 	}
 }
 

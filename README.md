@@ -251,11 +251,37 @@ loopback services. A per-container PID 1 owns the lifecycle and
 accepts bounded local execution requests over a private Unix socket. OverlayFS
 combines immutable OCI layers with disposable runtime state.
 
-The runtime applies `no_new_privs`, seccomp and Landlock where the host kernel
-supports it. Filesystem paths, devices, sockets, networking, process sharing and
-host actions are controlled by the manifest and user overrides. Nested user
-namespaces remain blocked unless an application declares `userNamespaces`,
-which lets browser sandboxes create their inner boundary.
+The runtime applies `no_new_privs`, seccomp and Landlock. An application does
+not start if either kernel filter cannot be installed. Filesystem paths,
+devices, sockets, networking, process sharing and host actions are controlled
+by the manifest and user overrides. Nested user namespaces remain blocked
+unless an application declares `userNamespaces`, which lets browser sandboxes
+create their inner boundary.
+
+### Managed host lockdown
+
+`cpak system set-enforcement refuse` is an integrity control. On its own it is
+not an application allowlist: a local user can install and enrol new software.
+A managed host must also restrict package origins or publishers and require
+publisher signatures.
+
+For example, save this as `cpak-trust.json`:
+
+```json
+{"abi":1,"approved_origins":["github.com/example/app"]}
+```
+
+Apply the controls in this order:
+
+```sh
+cpak system set-trust cpak-trust.json
+cpak system set-signatures required
+cpak system set-enforcement refuse
+cpak doctor
+```
+
+`cpak doctor` reports the active enforcement, signature and trust settings and
+the number of installed applications that are not enrolled.
 
 Filtered session bus access and the file chooser use a native proxy exposed on
 a private Unix socket. cpak does not require a D-Bus daemon or an external D-Bus
@@ -267,8 +293,10 @@ matching shim. The application never receives the host D-Bus socket or command.
 ### File selection
 
 Applications keep a private persistent home unless the manifest explicitly
-mounts the host home. Packages can let users select host files without granting
-a directory in advance:
+mounts the host home. A read-write grant for `home`, `host` or `/` lets the
+application change startup files that later run outside cpak as the user.
+Packages can let users select host files without granting a directory in
+advance:
 
 ```json
 "filePicker": {

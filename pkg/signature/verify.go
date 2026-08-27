@@ -38,31 +38,70 @@ var (
 	// Keyless is the whole design: a bare key carries no identity, so there
 	// would be nothing in it to put next to an origin.
 	ErrNotKeyless = errors.New("signature: bundle is not signed by a certificate")
+
+	// ErrIdentityMismatch reports a valid signature made by an identity that
+	// cannot publish the origin in the signed state.
+	ErrIdentityMismatch = errors.New("signature: signer cannot publish this origin")
 )
 
+type IdentityMismatchError struct {
+	Identity Identity
+	Origin   string
+}
+
+func (e *IdentityMismatchError) Error() string {
+	return fmt.Sprintf("%s: %q cannot publish %q", ErrIdentityMismatch, e.Identity.Repo, e.Origin)
+}
+
+func (e *IdentityMismatchError) Unwrap() error {
+	return ErrIdentityMismatch
+}
+
 // Verified is a bundle that checked out: the state it covers, and the identity
-// the certificate names. It deliberately does not say whether that identity may
-// speak for the origin, which is a different question and MatchesOrigin is
-// where it is answered.
+// the certificate names.
 type Verified struct {
 	State    State    `json:"state"`
 	Identity Identity `json:"identity"`
 }
 
-// Verify checks a bundle offline against the bundled trust root, confirms it
-// covers exactly the state given, and returns who signed it.
+// VerifyPublisher checks a bundle offline against the bundled trust root,
+// confirms it covers exactly the state given and refuses a signer that cannot
+// publish the state's origin.
 //
 // Offline is a requirement and not an optimisation. A sigstore bundle already
 // carries the certificate and the log proofs, so nothing here reaches the
 // network: an outage at sigstore must not stop an installation, the bundle
 // travels beside an image that is being downloaded anyway, and the same check
 // has to work afterwards on a machine that has no internet at all.
-//
-// What it does not do is decide whether the signer may speak for the origin.
-// The identity is returned for the caller to put to MatchesOrigin. A caller
-// that reads only the error has learned that somebody signed this state, not
-// that the publisher did.
+func VerifyPublisher(bundleJSON []byte, state State) (Verified, error) {
+	material, err := bundledTrustRoot()
+	if err != nil {
+		return Verified{}, err
+	}
+	return verifyPublisherWith(material, verificationOptions(), bundleJSON, state)
+}
+
+// Verify checks a publisher signature. It is kept as the compatible name for
+// callers built against earlier releases.
 func Verify(bundleJSON []byte, state State) (Verified, error) {
+	return VerifyPublisher(bundleJSON, state)
+}
+
+func verifyPublisherWith(material root.TrustedMaterial, options []verify.VerifierOption, bundleJSON []byte, state State) (Verified, error) {
+	verified, err := verifyWith(material, options, bundleJSON, state)
+	if err != nil {
+		return Verified{}, err
+	}
+	if !verified.Identity.MatchesOrigin(state.Origin) {
+		return Verified{}, &IdentityMismatchError{Identity: verified.Identity, Origin: state.Origin}
+	}
+	return verified, nil
+}
+
+// VerifyApproval checks a bundle over a state and returns the identity for the
+// host approval policy to decide. Approval identities are independent of the
+// package origin by design.
+func VerifyApproval(bundleJSON []byte, state State) (Verified, error) {
 	material, err := bundledTrustRoot()
 	if err != nil {
 		return Verified{}, err
@@ -94,7 +133,7 @@ func verificationOptions() []verify.VerifierOption {
 }
 
 // verifyWith is the whole check, with the trust root and the posture handed in
-// so that a test can hold both. Verify is the only caller that decides them.
+// so that a test can hold both. The exported entry points decide them.
 func verifyWith(material root.TrustedMaterial, options []verify.VerifierOption, bundleJSON []byte, state State) (Verified, error) {
 	// The state is hashed first, so a bundle is never opened on behalf of a
 	// state that could not have meant anything in the first place.

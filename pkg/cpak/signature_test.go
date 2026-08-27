@@ -172,8 +172,13 @@ func useSignatureVerifier(t *testing.T, verify func([]byte, signature.State) (si
 	t.Helper()
 
 	previous := verifySignature
+	previousApproval := verifyApprovalSignature
 	verifySignature = verify
-	t.Cleanup(func() { verifySignature = previous })
+	verifyApprovalSignature = verify
+	t.Cleanup(func() {
+		verifySignature = previous
+		verifyApprovalSignature = previousApproval
+	})
 }
 
 // validatedTestManifest is the manifest as an installation sees it, which is

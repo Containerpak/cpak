@@ -71,7 +71,8 @@ var (
 // verifySignature is the offline check a fetched bundle is put through. It is
 // a variable so that a test can drive the answers a caller has to tell apart;
 // nothing in cpak replaces it.
-var verifySignature = signature.Verify
+var verifySignature = signature.VerifyPublisher
+var verifyApprovalSignature = signature.VerifyApproval
 
 // PackageState names the part of an installation a publisher could determine
 // before it ever reached this machine, which is exactly what a signature
@@ -94,7 +95,7 @@ var verifySignature = signature.Verify
 // so the requirement is on the caller and this only catches the obvious half.
 //
 // Generation is left at zero, and a state with a zero generation is one
-// signature.Verify refuses before it opens a bundle. That is deliberate and it
+// signature.VerifyPublisher refuses before it opens a bundle. That is deliberate and it
 // is a gap, not a design: the generation is the publisher's counter, it lives
 // inside the signature, and nothing an installing machine holds can supply it.
 // Guessing one would put a number cpak invented into the payload cpak then
@@ -194,6 +195,12 @@ func (c *Cpak) verifyPackageState(ref oci.Reference, origin string, state signat
 	for _, bundle := range bundles {
 		verified, verifyErr := verifySignature(bundle, state)
 		if verifyErr != nil {
+			if identity, mismatched := publisherMismatch(verifyErr); mismatched {
+				if foreign == "" {
+					foreign = identity.Repo
+				}
+				continue
+			}
 			if unverified == nil {
 				unverified = verifyErr
 			}
@@ -213,6 +220,14 @@ func (c *Cpak) verifyPackageState(ref oci.Reference, origin string, state signat
 		return signature.Verified{}, fmt.Errorf("verify the signature of %s: %w: %w", origin, ErrSignatureUnverified, unverified)
 	}
 	return signature.Verified{}, fmt.Errorf("verify the signature of %s: %w", origin, ErrSignatureUnverified)
+}
+
+func publisherMismatch(err error) (signature.Identity, bool) {
+	var mismatch *signature.IdentityMismatchError
+	if !errors.As(err, &mismatch) {
+		return signature.Identity{}, false
+	}
+	return mismatch.Identity, true
 }
 
 // packageSignatures reads every bundle attached to the resolved image.

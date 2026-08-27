@@ -5,6 +5,7 @@
 package cpak
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
+	"github.com/mirkobrombin/cpak/pkg/trustpolicy"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,6 +47,7 @@ func Doctor() DoctorReport {
 		checkDisplay(),
 		checkAudio(),
 		{Name: "host command bridge", Available: true, Required: true, Detail: "built into cpak and restricted by each application policy"},
+		checkSecurityPosture(),
 	}
 	ready := true
 	for _, check := range checks {
@@ -121,7 +125,7 @@ func checkSeccomp() DoctorCheck {
 	if !available {
 		detail = errno.Error()
 	}
-	return DoctorCheck{Name: "seccomp", Available: available, Required: false, Detail: detail}
+	return DoctorCheck{Name: "seccomp", Available: available, Required: true, Detail: detail}
 }
 
 func checkLandlock() DoctorCheck {
@@ -133,7 +137,51 @@ func checkLandlock() DoctorCheck {
 	} else if errno != 0 {
 		detail = errno.Error()
 	}
-	return DoctorCheck{Name: "Landlock", Available: available, Required: false, Detail: detail}
+	return DoctorCheck{Name: "Landlock", Available: available, Required: true, Detail: detail}
+}
+
+func checkSecurityPosture() DoctorCheck {
+	level, err := systemauthority.DefaultEnforcementStore().Level()
+	if err != nil {
+		return DoctorCheck{Name: "managed host lockdown", Detail: "read enforcement: " + err.Error()}
+	}
+	signatures, err := systemauthority.DefaultEnforcementStore().SignaturePolicy()
+	if err != nil {
+		return DoctorCheck{Name: "managed host lockdown", Detail: "read signature policy: " + err.Error()}
+	}
+	policy, err := systemauthority.TrustPolicy()
+	if err != nil {
+		return DoctorCheck{Name: "managed host lockdown", Detail: "read trust policy: " + err.Error()}
+	}
+	options, err := getCpakOptions()
+	if err != nil {
+		return DoctorCheck{Name: "managed host lockdown", Detail: "read installed applications: " + err.Error()}
+	}
+	cp := Cpak{Options: options, Ctx: context.Background()}
+	states, err := cp.AnchorStates()
+	if err != nil {
+		return DoctorCheck{Name: "managed host lockdown", Detail: "read enrolment state: " + err.Error()}
+	}
+	return securityPostureCheck(level, signatures, policy, states)
+}
+
+func securityPostureCheck(level systemauthority.EnforcementLevel, signatures systemauthority.SignaturePolicy, policy trustpolicy.Policy, states []AnchorState) DoctorCheck {
+	unenrolled := 0
+	for _, state := range states {
+		if !state.Enrolled {
+			unenrolled++
+		}
+	}
+	restrictedTrust := len(policy.ApprovedOrigins) > 0 || len(policy.ApprovedSigners) > 0 || policy.RequireApproval
+	trust := "restricted"
+	if !restrictedTrust {
+		trust = "unrestricted"
+	}
+	return DoctorCheck{
+		Name:      "managed host lockdown",
+		Available: level == systemauthority.EnforcementRefuse && signatures == systemauthority.SignaturesRequired && restrictedTrust,
+		Detail:    fmt.Sprintf("enforcement=%s; signatures=%s; trust=%s; unenrolled=%d", level, signatures, trust, unenrolled),
+	}
 }
 
 func checkCgroup() DoctorCheck {

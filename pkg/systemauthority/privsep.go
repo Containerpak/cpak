@@ -65,7 +65,7 @@ var ErrVerifierUnavailable = errors.New("the signature verifier could not be sta
 
 // verifyDirect is the real check. The child calls it, and so does an authority
 // that has no privileges to separate in the first place.
-var verifyDirect = signature.Verify
+var verifyDirect = signature.VerifyPublisher
 
 type verifierRequest struct {
 	Bundle []byte          `json:"bundle"`
