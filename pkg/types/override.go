@@ -315,7 +315,8 @@ func filePickerHasAdditions(current, next FilePickerGrant) bool {
 // actions, are absent by design and are not reported.
 func UngrantedPermissions(raw []byte) ([]string, error) {
 	var manifest struct {
-		Override map[string]json.RawMessage `json:"override"`
+		ManifestVersion string                     `json:"manifest_version"`
+		Override        map[string]json.RawMessage `json:"override"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return nil, err
@@ -332,9 +333,21 @@ func UngrantedPermissions(raw []byte) ([]string, error) {
 		if key == "" || strings.Contains(options, "omitempty") {
 			continue
 		}
+		if manifest.ManifestVersion == "3.0" && manifestV3RemovedPermission(key) {
+			continue
+		}
 		if _, written := manifest.Override[key]; !written {
 			missing = append(missing, key)
 		}
 	}
 	return missing, nil
+}
+
+func manifestV3RemovedPermission(key string) bool {
+	switch key {
+	case "socketX11", "socketSessionBus", "socketSystemBus", "socketAtSpiBus", "socketBluetooth":
+		return true
+	default:
+		return false
+	}
 }

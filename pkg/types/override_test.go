@@ -106,6 +106,25 @@ func TestUngrantedPermissionsTellsFalseApartFromAbsent(t *testing.T) {
 	}
 }
 
+func TestUngrantedPermissionsSkipsManifestV3RemovedPermissions(t *testing.T) {
+	missing, err := UngrantedPermissions([]byte(`{"manifest_version":"3.0","override":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := map[string]bool{}
+	for _, key := range missing {
+		named[key] = true
+	}
+	for _, removed := range []string{"socketX11", "socketSessionBus", "socketSystemBus", "socketAtSpiBus", "socketBluetooth"} {
+		if named[removed] {
+			t.Fatalf("manifest v3 was told it omits removed permission %s", removed)
+		}
+	}
+	if !named["network"] {
+		t.Fatalf("a supported permission the manifest never mentions was not reported: %v", missing)
+	}
+}
+
 func TestAManifestThatNamesEveryPermissionHasNothingMissing(t *testing.T) {
 	complete, err := json.Marshal(map[string]any{"override": NewOverride()})
 	if err != nil {
