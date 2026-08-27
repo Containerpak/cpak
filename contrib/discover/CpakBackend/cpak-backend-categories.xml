@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Menu>
+  <Menu>
+    <Name>cpak</Name>
+    <Icon>system-software-install</Icon>
+    <Include>
+      <Category>cpak</Category>
+    </Include>
+  </Menu>
+</Menu>

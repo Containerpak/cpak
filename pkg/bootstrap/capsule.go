@@ -41,6 +41,7 @@ type Metadata struct {
 	Origin          string       `json:"origin"`
 	Name            string       `json:"name"`
 	Description     string       `json:"description"`
+	Version         string       `json:"version,omitempty"`
 	IconSVG         string       `json:"icon_svg,omitempty"`
 	IconPNG         string       `json:"icon_png,omitempty"`
 	Permissions     []Permission `json:"permissions,omitempty"`
@@ -100,6 +101,9 @@ func (m Metadata) Validate() error {
 	}
 	if m.Name == "" || m.Description == "" {
 		return errors.New("package name and description are required")
+	}
+	if m.Version != "" && !validMetadataText(m.Version, 80) {
+		return errors.New("package version is invalid")
 	}
 	if len(m.Permissions) > 32 {
 		return errors.New("package permission list is too long")

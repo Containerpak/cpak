@@ -63,6 +63,7 @@ type CLI struct {
 	SelfUpdate         cmd.SelfUpdateCmd         `cmd:"self-update" help:"Update the cpak binary"`
 	Storage            cmd.StorageCmd            `cmd:"storage" help:"Manage application storage"`
 	Grant              cmd.GrantCmd              `cmd:"grant" help:"Manage persistent file grants"`
+	Discover           cmd.DiscoverCmd           `cmd:"discover" help:"Integrate cpak with software centers"`
 
 	cli.Base
 }
@@ -144,7 +145,7 @@ func skipUpdateCheck(args []string) bool {
 		return true
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" {
 			return true
 		}
 	}
