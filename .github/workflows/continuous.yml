@@ -267,6 +267,7 @@ jobs:
             dist/cpak-linux-*
             dist/cpak-storaged-linux-*
             dist/cpak-installer-linux-*
+            dist/cpak-sign-linux-*
 
       - name: Attest SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
@@ -275,6 +276,7 @@ jobs:
             dist/cpak-linux-*
             dist/cpak-storaged-linux-*
             dist/cpak-installer-linux-*
+            dist/cpak-sign-linux-*
           sbom-path: dist/cpak.spdx.json
 
       - name: Move channel tag
