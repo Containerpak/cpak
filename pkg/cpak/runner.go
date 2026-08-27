@@ -81,6 +81,31 @@ func serviceSocketArguments() ([]string, error) {
 	return []string{"--service-socket", path, "--env", "CPAK_SERVICE_SOCKET=" + ContainerServiceSocketPath}, nil
 }
 
+func applicationHasNestedDependencies(app types.Application) bool {
+	for _, dependency := range app.ParsedDependencies {
+		if dependency.IsNested() {
+			return true
+		}
+	}
+	return false
+}
+
+// nestedServiceArguments exposes the host service only when the application
+// has a declared operation it can authorize through it.
+func nestedServiceArguments(app types.Application, token string) ([]string, error) {
+	if !applicationHasNestedDependencies(app) {
+		return nil, nil
+	}
+	if !validNestedToken(token) {
+		return nil, errors.New("nested dependencies require a container capability")
+	}
+	arguments, err := serviceSocketArguments()
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{"--nested-token", token}, arguments...), nil
+}
+
 // nestedServiceSocketPath answers the address a run inside a container dials.
 // There the socket is a bind mount the host placed and the variable names the
 // mount target, so it is read as given: the owner of the inode is the host user

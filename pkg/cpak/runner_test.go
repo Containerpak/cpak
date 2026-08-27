@@ -158,6 +158,38 @@ func TestSpawnArgumentsPairTheHostSocketWithTheContainerAddress(t *testing.T) {
 	}
 }
 
+func TestNestedServiceArgumentsAreLimitedToDeclaredDependencies(t *testing.T) {
+	runtimeDirectory, err := os.MkdirTemp("", "cpak")
+	if err != nil {
+		t.Fatalf("temporary directory: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDirectory) })
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CPAK_SERVICE_SOCKET", "")
+
+	plain := types.Application{}
+	arguments, err := nestedServiceArguments(plain, "")
+	if err != nil || len(arguments) != 0 {
+		t.Fatalf("plain application arguments: %v, %v", arguments, err)
+	}
+
+	nested := types.Application{ParsedDependencies: []types.Dependency{{Origin: "github.com/example/tool", Mode: "nested"}}}
+	if _, err = nestedServiceArguments(nested, ""); err == nil {
+		t.Fatal("nested dependencies were accepted without a capability")
+	}
+	token, err := newNestedToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err = nestedServiceArguments(nested, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arguments) != 6 || arguments[0] != "--nested-token" || arguments[1] != token || arguments[2] != "--service-socket" || arguments[4] != "--env" {
+		t.Fatalf("nested service arguments: %v", arguments)
+	}
+}
+
 // Inside a container the variable is the address of a mount the host made, and
 // the default is the target the spawn command binds the host socket onto.
 func TestNestedServiceSocketPathIsTheMountTarget(t *testing.T) {

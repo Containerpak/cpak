@@ -202,6 +202,17 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			_ = c.releaseFVSMount(container.FVSLayerMountId, container.FVSManagerSocketPath)
 		}
 	}()
+	if applicationHasNestedDependencies(app) {
+		// This capability is useful only to an application that can ask cpak to
+		// run one of its declared dependencies. Containers without one get
+		// neither a token nor the host service socket.
+		container.NestedToken, err = newNestedToken()
+		if err != nil {
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
+	}
 	if len(systemBrokerShims(override)) > 0 {
 		container.SystemBrokerSocketPath, container.SystemBrokerTokenPath, err = createSystemBrokerRuntime(container.StatePath)
 		if err != nil {
@@ -210,17 +221,6 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			return types.Container{}, err
 		}
 		if err = writeSystemBrokerToken(container.SystemBrokerTokenPath); err != nil {
-			cleanupSystemBrokerRuntime(container)
-			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
-			os.RemoveAll(container.StatePath)
-			return types.Container{}, err
-		}
-		// The capability this container presents when it asks to run one of its
-		// declared dependencies. It is minted here, beside the container it
-		// belongs to, so the service can resolve it back to this application
-		// instead of believing whatever a caller claims to be.
-		container.NestedToken, err = newNestedToken()
-		if err != nil {
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
 			os.RemoveAll(container.StatePath)
@@ -427,7 +427,6 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	cmds = append(cmds, "--user-uid", strconv.Itoa(os.Getuid()))
 	cmds = append(cmds, "--app-id", app.CpakId)
-	cmds = append(cmds, "--nested-token", container.NestedToken)
 	machineID, err := c.applicationMachineID(app.CpakId)
 	if err != nil {
 		return "", 0, "", err
@@ -542,7 +541,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	// After the environment the package asked for, so that the address of the
 	// service is cpak's to decide and not something a publisher can name.
-	serviceSocketArgs, err := serviceSocketArguments()
+	serviceSocketArgs, err := nestedServiceArguments(app, container.NestedToken)
 	if err != nil {
 		return "", 0, "", err
 	}

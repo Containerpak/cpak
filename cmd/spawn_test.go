@@ -20,6 +20,16 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+func TestCreateCpakFileSkipsContainersWithoutNestedDependencies(t *testing.T) {
+	root := t.TempDir()
+	if err := (&SpawnCmd{}).createCpakFile("", root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "tmp", ".cpak")); !os.IsNotExist(err) {
+		t.Fatalf("empty capability left a nested marker: %v", err)
+	}
+}
+
 func TestWriteNvidiaLoaderConfigurationUsesSoname(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source.json")

@@ -303,6 +303,9 @@ func setEnvironmentVariables(containerId, rootFs string, envVars []string, state
 // run one of its declared dependencies. It used to hold the application
 // identifier, which is public metadata and therefore proved nothing.
 func (c *SpawnCmd) createCpakFile(token string, rootFs string) error {
+	if token == "" {
+		return nil
+	}
 	c.spawnVerbose("Creating cpak file")
 
 	_, err := prepareRootfsDirectory(rootFs, "/tmp")
