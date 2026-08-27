@@ -56,6 +56,8 @@ type catalog struct {
 	Packages map[string]map[string]signedEntry `json:"packages"`
 }
 
+var errUnsupportedSignedInstaller = errors.New("signed installers do not support dependencies or login sessions")
+
 func main() {
 	outputPath := flag.String("output", "", "output path")
 	release := flag.String("release", "", "cpak release")
@@ -120,9 +122,12 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 			if err != nil {
 				return catalog{}, fmt.Errorf("load %s package manifest: %w", origin, err)
 			}
-			manifestDigest, err := signedManifestDigest(packageManifest)
+			manifestDigest, err := signedCatalogManifestDigest(packageManifest)
 			if err != nil {
 				return catalog{}, fmt.Errorf("bind %s package manifest: %w", origin, err)
+			}
+			if manifestDigest == "" {
+				continue
 			}
 			iconBase := strings.TrimSuffix(entry.Manifest, path.Base(entry.Manifest))
 			icon, rasterIcon, err := loadIcon(ctx, client, iconBase)
@@ -173,7 +178,7 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 
 func signedManifestDigest(manifest *types.CpakManifest) (string, error) {
 	if len(manifest.Dependencies) > 0 || len(manifest.Sessions) > 0 {
-		return "", errors.New("signed installers do not support dependencies or login sessions")
+		return "", errUnsupportedSignedInstaller
 	}
 	if manifest.ImageRef != "" {
 		return "", errors.New("signed installers do not accept image_ref")
@@ -186,6 +191,14 @@ func signedManifestDigest(manifest *types.CpakManifest) (string, error) {
 		return "", errors.New("signed installers require a digest-pinned image")
 	}
 	return cpak.ManifestIdentityDigest(manifest)
+}
+
+func signedCatalogManifestDigest(manifest *types.CpakManifest) (string, error) {
+	digest, err := signedManifestDigest(manifest)
+	if errors.Is(err, errUnsupportedSignedInstaller) {
+		return "", nil
+	}
+	return digest, err
 }
 
 func loadPackageManifest(ctx context.Context, client *http.Client, githubAPI, origin, commit string) (*types.CpakManifest, error) {
