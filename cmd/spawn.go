@@ -73,6 +73,8 @@ type SpawnCmd struct {
 	Env                []string `cli:"env,e" help:"set environment variables"`
 	Layers             string   `cli:"layers" help:"set the layers"`
 	StateDir           string   `cli:"state-dir" help:"set the state directory"`
+	UpperDir           string   `cli:"upper-dir" help:"set the writable layer directory"`
+	WorkDir            string   `cli:"work-dir" help:"set the overlay work directory"`
 	MaskState          []string `cli:"mask-state" help:"a directory holding cpak's own state, to hide inside any grant that contains it"`
 	ImageDir           string   `cli:"image-dir" help:"set the image directory"`
 	LayersDir          string   `cli:"layers-dir" help:"set the layers directory"`
@@ -125,7 +127,15 @@ func (c *SpawnCmd) Run() error {
 		return fmt.Errorf("mount: an error occurred while spawning the namespace: %s", err)
 	}
 
-	err = mountLayers(c.Rootfs, c.LowerDir, c.StateDir)
+	upperDir := c.UpperDir
+	workDir := c.WorkDir
+	if upperDir == "" {
+		upperDir = filepath.Join(c.StateDir, "up")
+	}
+	if workDir == "" {
+		workDir = filepath.Join(c.StateDir, "work")
+	}
+	err = mountLayers(c.Rootfs, c.LowerDir, upperDir, workDir)
 	if err != nil {
 		return err
 	}
@@ -339,11 +349,14 @@ func (c *SpawnCmd) createCpakFile(token string, rootFs string) error {
 // mountLayers refuses to compose a root out of anything but the directories it
 // was handed. Rebuilding them here from a caller supplied directory would mount
 // whatever that argument points at.
-func mountLayers(rootFs, lowerDir, stateDir string) error {
+func mountLayers(rootFs, lowerDir, upperDir, workDir string) error {
 	if lowerDir == "" {
 		return fmt.Errorf("mount:layers: no prepared layer directories")
 	}
-	err := tools.MountOverlay(rootFs, lowerDir, filepath.Join(stateDir, "up"), filepath.Join(stateDir, "work"))
+	if upperDir == "" || workDir == "" {
+		return fmt.Errorf("mount:layers: no writable layer directories")
+	}
+	err := tools.MountOverlay(rootFs, lowerDir, upperDir, workDir)
 	if err != nil {
 		return fmt.Errorf("mount:layers %s: an error occurred while spawning the namespace: %s", lowerDir, err)
 	}

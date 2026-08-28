@@ -36,6 +36,15 @@ type Container struct {
 	// actual workdir for the layer mounts.
 	StatePath string `json:"state_path"`
 
+	// WritableLayerPath and WritableWorkPath may outlive the container when it
+	// belongs to a persistent environment. Empty values use StatePath.
+	WritableLayerPath string `json:"writable_layer_path,omitempty"`
+	WritableWorkPath  string `json:"writable_work_path,omitempty"`
+
+	// DataID selects the private home and machine identity for this container.
+	// Empty values keep application-scoped storage for older records.
+	DataID string `json:"data_id,omitempty"`
+
 	// SystemBrokerSocketPath is the broker socket mounted into the container.
 	SystemBrokerSocketPath string `json:"system_broker_socket_path"`
 

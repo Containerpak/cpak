@@ -64,6 +64,7 @@ type CLI struct {
 	Storage            cmd.StorageCmd            `cmd:"storage" help:"Manage application storage"`
 	Grant              cmd.GrantCmd              `cmd:"grant" help:"Manage persistent file grants"`
 	Discover           cmd.DiscoverCmd           `cmd:"discover" help:"Integrate cpak with software centers"`
+	Environment        cmd.EnvironmentCmd        `cmd:"environment" help:"Manage persistent package environments"`
 
 	cli.Base
 }

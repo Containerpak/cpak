@@ -47,12 +47,12 @@ import (
 // use the user's home directory for that or expose other system directories
 // where data can be stored.
 func (c *Cpak) PrepareContainer(app types.Application, override types.Override) (container types.Container, err error) {
-	return c.prepareContainer(app, asLaunched(override), app.CpakId, "", nil)
+	return c.prepareContainer(app, asLaunched(override), app.CpakId, "", nil, nil)
 }
 
 func (c *Cpak) PrepareContainerInstance(app types.Application, override types.Override, instance string) (types.Container, error) {
 	scope := ApplicationScope(app.CpakId, instance)
-	return c.prepareContainer(app, asLaunched(override), scope, instance, nil)
+	return c.prepareContainer(app, asLaunched(override), scope, instance, nil, nil)
 }
 
 func ApplicationScope(applicationCpakId, instance string) string {
@@ -72,19 +72,33 @@ func (c *Cpak) PrepareNestedContainer(app types.Application, override types.Over
 
 func (c *Cpak) prepareNestedContainer(app types.Application, policy launchPolicy) (types.Container, error) {
 	scope := app.CpakId + ":nested:" + uuid.NewString()
-	return c.prepareContainer(app, policy, scope, "", nil)
+	return c.prepareContainer(app, policy, scope, "", nil, nil)
+}
+
+type persistentContainerState struct {
+	scope         string
+	upperDir      string
+	workDir       string
+	dataID        string
+	refreshPolicy func(launchPolicy) (launchPolicy, error)
 }
 
 // prepareContainer answers to the gate with the policy the application was
 // enrolled with and builds the container from the policy it actually runs
 // under, which is the same one unless something narrowed this launch.
-func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scope, instance string, store *Store) (container types.Container, err error) {
-	override := policy.effective
+func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scope, instance string, store *Store, persistent *persistentContainerState) (container types.Container, err error) {
 	unlock, err := c.lockContainerScope(scope)
 	if err != nil {
 		return types.Container{}, err
 	}
 	defer unlock()
+	if persistent != nil && persistent.refreshPolicy != nil {
+		policy, err = persistent.refreshPolicy(policy)
+		if err != nil {
+			return types.Container{}, err
+		}
+	}
+	override := policy.effective
 
 	if store == nil {
 		store, err = NewStore(c.Options.StorePath)
@@ -183,6 +197,11 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		LogPath:           filepath.Join(statePath, "application.log"),
 		PolicyHash:        policyHash,
 		CreateTimestamp:   time.Now(),
+	}
+	if persistent != nil {
+		container.WritableLayerPath = persistent.upperDir
+		container.WritableWorkPath = persistent.workDir
+		container.DataID = persistent.dataID
 	}
 
 	container.ExecSocketPath = filepath.Join(container.StatePath, "exec.sock")
@@ -491,7 +510,11 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	cmds = append(cmds, "--user-uid", strconv.Itoa(os.Getuid()))
 	cmds = append(cmds, "--app-id", app.CpakId)
-	machineID, err := c.applicationMachineID(app.CpakId)
+	dataID := container.DataID
+	if dataID == "" {
+		dataID = app.CpakId
+	}
+	machineID, err := c.applicationMachineID(dataID)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -499,6 +522,12 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	cmds = append(cmds, "--container-id", container.CpakId)
 	cmds = append(cmds, "--rootfs", rootfs)
 	cmds = append(cmds, "--state-dir", container.StatePath)
+	if container.WritableLayerPath != "" {
+		cmds = append(cmds, "--upper-dir", container.WritableLayerPath)
+	}
+	if container.WritableWorkPath != "" {
+		cmds = append(cmds, "--work-dir", container.WritableWorkPath)
+	}
 	// The mask has to be told where this installation keeps its state, because
 	// spawn runs as its own process and resolves nothing: the paths come from
 	// the options cpak loaded, which the environment can move one by one.
@@ -519,7 +548,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	cmds = append(cmds, "--grant-socket", grantSocketPath)
 	if !filesystemIncludesHostHome(override) {
-		privateHome, homeErr := c.privateApplicationHome(app.CpakId)
+		privateHome, homeErr := c.privateApplicationHome(dataID)
 		if homeErr != nil {
 			return "", 0, "", homeErr
 		}
@@ -1337,7 +1366,15 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 	if releaseErr := c.cleanupFVSMount(container.FVSLayerMountId, container.FVSLayerMountPath, container.FVSManagerSocketPath); releaseErr != nil {
 		logger.Printf("Cannot release FVS mount %s: %v", container.FVSLayerMountId, releaseErr)
 	}
-	_ = os.Chmod(filepath.Join(container.StatePath, "work", "work"), 0o700)
+	workPath := container.WritableWorkPath
+	if workPath == "" {
+		workPath = filepath.Join(container.StatePath, "work")
+	}
+	_ = os.Chmod(filepath.Join(workPath, "work"), 0o700)
+	if container.WritableWorkPath != "" {
+		_ = os.RemoveAll(container.WritableWorkPath)
+		_ = securePrivateDirectory(container.WritableWorkPath)
+	}
 
 	// we don't care about the error here, we just want to make sure that
 	// the container filesystem is getting deleted

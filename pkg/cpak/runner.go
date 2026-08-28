@@ -203,13 +203,21 @@ func (c *Cpak) runApplicationInstance(app types.Application, policy launchPolicy
 }
 
 func (c *Cpak) runApplicationInstanceWithStore(app types.Application, policy launchPolicy, instance, binary string, verbose, nested bool, store *Store, extraArgs ...string) error {
+	return c.runApplicationInstanceWithStoreAndState(app, policy, instance, binary, verbose, nested, store, nil, extraArgs...)
+}
+
+func (c *Cpak) runApplicationInstanceWithStoreAndState(app types.Application, policy launchPolicy, instance, binary string, verbose, nested bool, store *Store, persistent *persistentContainerState, extraArgs ...string) error {
 	startTime := time.Now()
 	var container types.Container
 	var err error
 	if nested {
 		container, err = c.prepareNestedContainer(app, policy)
 	} else {
-		container, err = c.prepareContainer(app, policy, ApplicationScope(app.CpakId, instance), instance, store)
+		scope := ApplicationScope(app.CpakId, instance)
+		if persistent != nil && persistent.scope != "" {
+			scope = persistent.scope
+		}
+		container, err = c.prepareContainer(app, policy, scope, instance, store, persistent)
 	}
 	if err != nil {
 		return err
