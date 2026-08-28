@@ -257,15 +257,15 @@ func manifestDigest(manifest *types.CpakManifest) (string, error) {
 
 func resolveDependencyOrigin(parentOrigin, dependencyOrigin string) (string, error) {
 	if isURL(dependencyOrigin) {
-		return strings.ToLower(dependencyOrigin), nil
+		return normalizeRepositoryOrigin(dependencyOrigin)
 	}
 	separator := strings.LastIndex(parentOrigin, "/")
 	if separator < 0 {
 		return "", fmt.Errorf("relative dependency %s requires a root origin", dependencyOrigin)
 	}
-	return strings.ToLower(parentOrigin[:separator] + "/" + dependencyOrigin), nil
+	return normalizeRepositoryOrigin(parentOrigin[:separator] + "/" + dependencyOrigin)
 }
 
 func lockedPackageKey(origin, branch, release, commit string) string {
-	return strings.Join([]string{strings.ToLower(origin), branch, release, commit}, "\x00")
+	return strings.Join([]string{origin, branch, release, commit}, "\x00")
 }

@@ -52,6 +52,9 @@ func dispatch(message socketRequest) error {
 		return err
 	}
 	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
+		if errors.Is(err, errRootRequired) {
+			return ErrNoAuthority
+		}
 		return err
 	}
 	return ErrNoAuthority

@@ -29,7 +29,10 @@ type ExtractCmd struct {
 }
 
 func (c *ExtractCmd) Run() error {
-	origin := strings.ToLower(c.Remote)
+	origin, err := cpak.NormalizeRepositoryOrigin(c.Remote)
+	if err != nil {
+		return err
+	}
 	output := c.Output
 
 	if output == "" {

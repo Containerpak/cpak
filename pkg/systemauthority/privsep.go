@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -104,6 +105,10 @@ func askVerifier(request verifierRequest) (verifierResponse, error) {
 		return verifierResponse{}, fmt.Errorf("%w: %v", ErrVerifierUnavailable, err)
 	}
 	self, err := os.Executable()
+	if err != nil {
+		return verifierResponse{}, fmt.Errorf("%w: %v", ErrVerifierUnavailable, err)
+	}
+	self, err = filepath.EvalSymlinks(self)
 	if err != nil {
 		return verifierResponse{}, fmt.Errorf("%w: %v", ErrVerifierUnavailable, err)
 	}

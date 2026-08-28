@@ -7,7 +7,6 @@ package cmd
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -94,12 +93,10 @@ func runNestedServiceSocketTest(t *testing.T) {
 	t.Setenv("CPAK_SERVICE_SOCKET", "")
 
 	// The service re-executes cpak for every nested run it accepts, so it is
-	// pointed at a stand in that records what it was asked to do.
+	// run in helper mode so the real executable identity remains unchanged.
 	recorded := "/run/argv"
-	writeFakeCpak(t, "/run/cpak", recorded, 7)
-	original := os.Args[0]
-	os.Args[0] = "/run/cpak"
-	t.Cleanup(func() { os.Args[0] = original })
+	t.Setenv("CPAK_NESTED_TEST_ARGS_FILE", recorded)
+	t.Setenv("CPAK_NESTED_TEST_STATUS", "7")
 
 	hostSocket, err := cpak.HostServiceSocketPath()
 	if err != nil {
@@ -208,14 +205,6 @@ func TestSpawnRefusesAServiceSocketThatIsNotASocket(t *testing.T) {
 
 	if _, _, err := (&SpawnCmd{ServiceSocket: source}).mountServiceSocket(t.TempDir()); err == nil {
 		t.Fatal("a path that is not a socket was bound as the service")
-	}
-}
-
-func writeFakeCpak(t *testing.T, path, argsFile string, status int) {
-	t.Helper()
-	script := fmt.Sprintf("#!/bin/sh\n: > %[1]s\nfor arg in \"$@\"; do printf '%%s\\n' \"$arg\" >> %[1]s; done\necho nested-output\nexit %[2]d\n", argsFile, status)
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatalf("write the fake cpak: %v", err)
 	}
 }
 

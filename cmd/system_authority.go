@@ -15,6 +15,7 @@ import (
 type SystemAuthorityCmd struct {
 	Socket       string `cli:"socket" help:"path of the authority socket"`
 	VerifyBundle bool   `cli:"verify-bundle" help:"read one signature verification request from standard input and answer it"`
+	EnrolRequest bool   `cli:"enrol-request" help:"apply one privileged enrolment request from standard input"`
 
 	cli.Base
 }
@@ -28,6 +29,9 @@ func (c *SystemAuthorityCmd) Run() error {
 	}
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("system authority must run as root")
+	}
+	if c.EnrolRequest {
+		return systemauthority.RunEnrolmentRequest(os.Stdin)
 	}
 	ctx, stop := signalContext()
 	defer stop()

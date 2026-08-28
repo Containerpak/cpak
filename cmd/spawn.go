@@ -218,6 +218,11 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	defer grantMounts.Close()
+	if refreshDynamicLinker {
+		if err = refreshDynamicLinkerCache(c.Rootfs); err != nil {
+			return err
+		}
+	}
 
 	err = c.pivotRoot(c.Rootfs)
 	if err != nil {
@@ -229,7 +234,7 @@ func (c *SpawnCmd) Run() error {
 		layersPath = c.LowerDir
 	}
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, layersPath, c.Layers)
-	err = c.serveInit(listener, grantListener, grantMounts, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute, refreshDynamicLinker)
+	err = c.serveInit(listener, grantListener, grantMounts, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute)
 	if err != nil {
 		return err
 	}
@@ -1454,15 +1459,30 @@ func (c *SpawnCmd) setupGrantRoot(rootFs string) (sandbox.PathGrant, error) {
 	return sandbox.PathGrant{Path: filegrant.GuestRoot}, nil
 }
 
-func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Listener, grantMounts *grantMountWorker, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration, refreshDynamicLinker bool) error {
-	if refreshDynamicLinker {
-		c.spawnVerbose("Reconfiguring dynamic linker run-time bindings")
+func refreshDynamicLinkerCache(rootFs string) error {
+	if _, err := os.Stat("/sbin/ldconfig"); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect host ldconfig: %w", err)
 	}
-	if _, err := os.Stat("/sbin/ldconfig"); refreshDynamicLinker && err == nil {
-		l := exec.Command("/sbin/ldconfig")
-		if err = l.Run(); err != nil {
-			return fmt.Errorf("ldconfig: an error occurred while spawning the namespace: %s", err)
-		}
+	command := exec.Command("/sbin/ldconfig", "-r", rootFs)
+	command.Env = []string{"LANG=C", "LC_ALL=C", "PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("refresh dynamic linker cache: %w", err)
+	}
+	return nil
+}
+
+func setContainerHostname() error {
+	if err := syscall.Sethostname([]byte("cpak")); err != nil {
+		return fmt.Errorf("set container hostname: %w", err)
+	}
+	return nil
+}
+
+func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Listener, grantMounts *grantMountWorker, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
+	if err := setContainerHostname(); err != nil {
+		return err
 	}
 	for _, env := range envVars {
 		if strings.HasPrefix(env, "CPAK_") {

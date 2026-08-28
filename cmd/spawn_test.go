@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -145,6 +146,62 @@ func TestSetEnvironmentVariablesIdentifiesContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Fatalf("environment: got %v, want %v", env, want)
+	}
+}
+
+func TestRefreshDynamicLinkerCacheDoesNotExecuteTheImageHelper(t *testing.T) {
+	if _, err := os.Stat("/sbin/ldconfig"); os.IsNotExist(err) {
+		t.Skip("host ldconfig is unavailable")
+	}
+	root := t.TempDir()
+	for _, directory := range []string{"etc", "sbin", "var/cache"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/ld.so.conf"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "image-helper-ran")
+	payload := []byte("#!/bin/sh\ntouch " + marker + "\n")
+	if err := os.WriteFile(filepath.Join(root, "sbin/ldconfig"), payload, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := refreshDynamicLinkerCache(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the image helper ran: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc/ld.so.cache")); err != nil {
+		t.Fatalf("the trusted helper did not refresh the cache: %v", err)
+	}
+}
+
+func TestContainerHostnameIsStableAndPrivate(t *testing.T) {
+	if os.Getenv("CPAK_HOSTNAME_TEST") == "1" {
+		if err := setContainerHostname(); err != nil {
+			t.Fatal(err)
+		}
+		if hostname, err := os.Hostname(); err != nil || hostname != "cpak" {
+			t.Fatalf("container hostname: got %q, error %v", hostname, err)
+		}
+		return
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("unshare", "--user", "--map-root-user", "--uts", os.Args[0], "-test.run=^TestContainerHostnameIsStableAndPrivate$")
+	command.Env = append(os.Environ(), "CPAK_HOSTNAME_TEST=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		if bytes.Contains(output, []byte("Operation not permitted")) {
+			t.Skip("user namespaces are unavailable")
+		}
+		t.Fatalf("hostname subprocess: %v\n%s", err, output)
+	}
+	if current, err := os.Hostname(); err != nil || current != hostname {
+		t.Fatalf("host hostname changed: got %q, want %q, error %v", current, hostname, err)
 	}
 }
 

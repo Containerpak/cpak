@@ -34,7 +34,13 @@ func (c *AuthCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	origin := strings.ToLower(c.Origin)
+	origin := c.Origin
+	if origin != "" {
+		origin, err = cpak.NormalizeRepositoryOrigin(origin)
+		if err != nil {
+			return err
+		}
+	}
 	switch strings.ToLower(c.Action) {
 	case "login":
 		if origin == "" {

@@ -5,6 +5,8 @@
 package systemauthority
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,12 +31,16 @@ const (
 	DefaultSocketPath = "/run/cpak/authority.sock"
 	socketDeadline    = 10 * time.Second
 
-	// An enrolment carries the policy its policy root was taken over, so a
-	// request is the size of one anchor plus one policy.
-	requestLimit = 48 << 10
+	// A signed enrolment carries the same bounded record the ledger writes.
+	// Keeping the wire under that ceiling lets the socket carry the evidence
+	// without giving a local caller an unbounded allocation in the authority.
+	requestLimit = anchorSizeLimit
 )
 
 var errTransportUnavailable = errors.New("system authority transport is unavailable")
+var errRootRequired = errors.New("system authority request requires root")
+
+const socketCodeRootRequired = "root-required"
 
 type socketRequest struct {
 	Action      string            `json:"action"`
@@ -46,11 +52,13 @@ type socketRequest struct {
 	UID         uint32            `json:"uid,omitempty"`
 	Anchor      *integrity.Anchor `json:"anchor,omitempty"`
 	Policy      *types.Override   `json:"policy,omitempty"`
+	Signature   *SignedState      `json:"signature,omitempty"`
 	Level       string            `json:"level,omitempty"`
 }
 
 type socketResponse struct {
 	Error string `json:"error,omitempty"`
+	Code  string `json:"code,omitempty"`
 }
 
 type socketService struct {
@@ -58,6 +66,7 @@ type socketService struct {
 	Anchors     AnchorLedger
 	Enforcement EnforcementStore
 	Authorize   func(*unix.Ucred) error
+	mutations   *sync.Mutex
 }
 
 func ServeSocket(ctx context.Context, path string) error {
@@ -65,12 +74,14 @@ func ServeSocket(ctx context.Context, path string) error {
 		Registry:    DefaultRegistry(),
 		Anchors:     DefaultAnchorLedger(),
 		Enforcement: DefaultEnforcementStore(),
-		Authorize:   authorizePeerCredentials,
 	}
 	return service.serve(ctx, path)
 }
 
 func (s socketService) serve(ctx context.Context, path string) error {
+	if s.mutations == nil {
+		s.mutations = &sync.Mutex{}
+	}
 	if path == "" {
 		path = DefaultSocketPath
 	}
@@ -123,8 +134,8 @@ func (s socketService) serve(ctx context.Context, path string) error {
 
 func (s socketService) answer(connection *net.UnixConn) {
 	_ = connection.SetDeadline(time.Now().Add(socketDeadline))
-	var message socketRequest
-	if err := json.NewDecoder(io.LimitReader(connection, requestLimit)).Decode(&message); err != nil {
+	message, err := decodeSocketRequest(connection)
+	if err != nil {
 		writeResponse(connection, errors.New("invalid system authority request"))
 		return
 	}
@@ -137,10 +148,24 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 		return errors.New("system authority could not identify the caller")
 	}
 	authorize := s.Authorize
-	if authorize == nil {
-		authorize = authorizePeerCredentials
+	authorizeRequest := func() error {
+		if authorize != nil {
+			return authorize(credentials)
+		}
+		return authorizeSocketRequest(credentials, message, s.Anchors)
 	}
-	if err := authorize(credentials); err != nil {
+	if message.Action == anchorEnrolAction || message.Action == anchorForgetAction || message.Action == anchorClearAction {
+		if s.mutations == nil {
+			s.mutations = &sync.Mutex{}
+		}
+		s.mutations.Lock()
+		defer s.mutations.Unlock()
+		if err := authorizeRequest(); err != nil {
+			return err
+		}
+		return applyAnchor(s.Anchors, message)
+	}
+	if err := authorizeRequest(); err != nil {
 		return err
 	}
 	switch message.Action {
@@ -164,8 +189,6 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 			return err
 		}
 		return s.Registry.Remove(message.ID, message.Origin)
-	case anchorEnrolAction, anchorForgetAction, anchorClearAction:
-		return applyAnchor(s.Anchors, message)
 	case enforcementSetAction:
 		return applyEnforcement(s.Enforcement, message)
 	default:
@@ -173,17 +196,42 @@ func (s socketService) apply(connection *net.UnixConn, message socketRequest) er
 	}
 }
 
-// authorizePeerCredentials keeps the socket at the guarantee the bus gives
-// through polkit: an unprivileged caller is only ever authorized interactively,
-// which needs the bus, so on this transport the request must come from root.
-func authorizePeerCredentials(credentials *unix.Ucred) error {
+// authorizeSocketRequest gives a caller only the two operations that affect
+// its own ledger without widening access: recording a first, unchanged or
+// narrower enrolment, and forgetting its own anchor. Everything else still
+// re-enters cpak as root when no bus can ask Polkit.
+func authorizeSocketRequest(credentials *unix.Ucred, message socketRequest, anchors AnchorLedger) error {
 	if credentials == nil {
 		return errors.New("system authority could not identify the caller")
 	}
-	if credentials.Uid != 0 {
-		return errors.New("changing what the system authority records over its socket requires root")
+	if credentials.Uid == 0 {
+		return nil
 	}
-	return nil
+	switch message.Action {
+	case anchorEnrolAction:
+		if message.Anchor == nil || message.Anchor.UID != credentials.Uid {
+			return errRootRequired
+		}
+		enrolment, err := enrolmentFromSocket(message)
+		if err != nil {
+			return err
+		}
+		if _, err = enrolment.Signer(); err != nil && !errors.Is(err, ErrUnsigned) {
+			return err
+		}
+		action, err := anchors.authorizationFor(enrolment)
+		if err != nil {
+			return err
+		}
+		if action == ActionEnrolAnchor {
+			return nil
+		}
+	case anchorForgetAction:
+		if message.UID == credentials.Uid {
+			return nil
+		}
+	}
+	return errRootRequired
 }
 
 func peerCredentials(connection *net.UnixConn) (*unix.Ucred, error) {
@@ -205,8 +253,31 @@ func writeResponse(connection *net.UnixConn, err error) {
 	reply := socketResponse{}
 	if err != nil {
 		reply.Error = err.Error()
+		if errors.Is(err, errRootRequired) {
+			reply.Code = socketCodeRootRequired
+		}
 	}
 	_ = json.NewEncoder(connection).Encode(reply)
+}
+
+func decodeSocketRequest(input io.Reader) (socketRequest, error) {
+	frame, err := bufio.NewReader(io.LimitReader(input, requestLimit+1)).ReadBytes('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return socketRequest{}, err
+	}
+	if len(frame) > requestLimit {
+		return socketRequest{}, errors.New("system authority request is too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(frame))
+	decoder.DisallowUnknownFields()
+	message := socketRequest{}
+	if err = decoder.Decode(&message); err != nil {
+		return socketRequest{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return socketRequest{}, errors.New("system authority request contains multiple JSON values")
+	}
+	return message, nil
 }
 
 func requestOverSocket(path string, message socketRequest) error {
@@ -220,8 +291,13 @@ func requestOverSocket(path string, message socketRequest) error {
 		return fmt.Errorf("send system authority request: %w", err)
 	}
 	var reply socketResponse
-	if err := json.NewDecoder(io.LimitReader(connection, requestLimit)).Decode(&reply); err != nil {
+	decoder := json.NewDecoder(io.LimitReader(connection, requestLimit))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&reply); err != nil {
 		return fmt.Errorf("read system authority reply: %w", err)
+	}
+	if reply.Code == socketCodeRootRequired {
+		return errRootRequired
 	}
 	if reply.Error != "" {
 		return errors.New(reply.Error)

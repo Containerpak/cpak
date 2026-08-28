@@ -8,9 +8,9 @@ import "testing"
 
 func TestNormalizeRepositoryOrigin(t *testing.T) {
 	tests := map[string]string{
-		"https://github.com/Containerpak/cpak.git": "github.com/containerpak/cpak",
-		"git@github.com:Containerpak/cpak.git":     "github.com/containerpak/cpak",
-		"github.com/Containerpak/cpak":             "github.com/containerpak/cpak",
+		"https://GITHUB.COM/containerpak/cpak.git": "github.com/containerpak/cpak",
+		"git@GITHUB.COM:containerpak/cpak.git":     "github.com/containerpak/cpak",
+		"GITHUB.COM/containerpak/cpak":             "github.com/containerpak/cpak",
 	}
 	for input, expected := range tests {
 		actual, err := normalizeRepositoryOrigin(input)
@@ -24,7 +24,7 @@ func TestNormalizeRepositoryOrigin(t *testing.T) {
 }
 
 func TestNormalizeRepositoryOriginRejectsIncompleteValues(t *testing.T) {
-	for _, input := range []string{"", "github.com/owner", "git@github.com:owner"} {
+	for _, input := range []string{"", "github.com/owner", "git@github.com:owner", "github.com/Containerpak/cpak"} {
 		if _, err := normalizeRepositoryOrigin(input); err == nil {
 			t.Fatalf("accepted invalid origin %q", input)
 		}

@@ -182,21 +182,13 @@ func (s *Store) RemoveContainerByCpakId(cpakId string) (err error) {
 	return s.Containers.Delete(context.Background(), cpakId)
 }
 
-func (s *Store) SetContainerPid(cpakId string, pid int) (err error) {
+func (s *Store) SetContainerRuntime(cpakId string, pid int, processStartTime uint64, cgroupPath string) error {
 	container, err := s.Containers.Get(context.Background(), cpakId)
 	if err != nil {
 		return err
 	}
 	container.Pid = pid
-	return s.Containers.Put(context.Background(), cpakId, container, 0)
-}
-
-func (s *Store) SetContainerRuntime(cpakId string, pid int, cgroupPath string) error {
-	container, err := s.Containers.Get(context.Background(), cpakId)
-	if err != nil {
-		return err
-	}
-	container.Pid = pid
+	container.ProcessStartTime = processStartTime
 	container.CgroupPath = cgroupPath
 	return s.Containers.Put(context.Background(), cpakId, container, 0)
 }

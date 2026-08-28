@@ -4,12 +4,7 @@
 /cpak-storaged
 /vendor/
 podman-launcher
-/tools/rootlesskit
-/tools/rootlesskit.tar.gz
 go.work
 go.work.sum
-/pkg/tools/host-spawn
-/pkg/tools/nsenter
-/pkg/tools/rootlesskit.tar.gz
 /pkg/desktopui/adapter_embedded_*_generated.go
 /.build/

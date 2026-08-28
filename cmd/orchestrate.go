@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -144,12 +145,13 @@ func checkHealth(binary, remote, instance, health string, retries int) error {
 }
 
 func findCpakBinary() (string, error) {
-	if filepath := os.Args[0]; strings.Contains(filepath, "/") {
-		return filepath, nil
-	}
-	binary, err := exec.LookPath("cpak")
+	binary, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("cpak binary not found: %w", err)
+	}
+	binary, err = filepath.EvalSymlinks(binary)
+	if err != nil {
+		return "", fmt.Errorf("resolve cpak binary: %w", err)
 	}
 	return binary, nil
 }

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -325,6 +327,15 @@ func TestEnsureOpenURIMimeAppsWritesDesktopSpecificDefaults(t *testing.T) {
 }
 
 func TestGetCpakBinaryUsesTheRunningExecutable(t *testing.T) {
+	originalArg := os.Args[0]
+	spoofed := filepath.Join(t.TempDir(), "cpak")
+	if err := os.WriteFile(spoofed, []byte("not the running executable"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.Args[0] = spoofed
+	t.Cleanup(func() { os.Args[0] = originalArg })
+	t.Setenv("PATH", filepath.Dir(spoofed))
+
 	got, err := getCpakBinary()
 	if err != nil {
 		t.Fatal(err)
@@ -333,9 +344,50 @@ func TestGetCpakBinaryUsesTheRunningExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ = filepath.EvalSymlinks(want)
+	want, err = filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != want {
 		t.Fatalf("cpak binary: got %q, want %q", got, want)
+	}
+}
+
+func TestTerminateContainerProcessRejectsAnUnrelatedPersistedPID(t *testing.T) {
+	command := exec.Command("sleep", "30")
+	command.Env = append(os.Environ(), "CPAK_CONTAINER_ID=other-container")
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = command.Process.Kill()
+		_, _ = command.Process.Wait()
+	})
+
+	started, err := processStartTime(command.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminateContainerProcess(types.Container{
+		CpakId:           "expected-container",
+		Pid:              command.Process.Pid,
+		ProcessStartTime: started,
+	})
+	if err = syscall.Kill(command.Process.Pid, 0); err != nil {
+		t.Fatalf("an unrelated process was signalled: %v", err)
+	}
+}
+
+func TestRecordedProcessRequiresTheSameStartTime(t *testing.T) {
+	started, err := processStartTime(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameRecordedProcess(os.Getpid(), started) {
+		t.Fatal("the current process did not match its recorded start time")
+	}
+	if sameRecordedProcess(os.Getpid(), started+1) {
+		t.Fatal("a stale process start time was accepted")
 	}
 }
 

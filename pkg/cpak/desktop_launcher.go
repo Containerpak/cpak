@@ -25,7 +25,7 @@ func desktopLauncherPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve cpak executable: %w", err)
 	}
-	path, err = filepath.Abs(path)
+	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve cpak executable path: %w", err)
 	}

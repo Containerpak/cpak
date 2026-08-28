@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"golang.org/x/sys/unix"
 )
 
@@ -121,14 +122,49 @@ func TestMissingAuthoritySocketIsAnUnavailableTransport(t *testing.T) {
 	}
 }
 
-func TestOnlyRootIsAuthorizedOnTheSocketByDefault(t *testing.T) {
-	if err := authorizePeerCredentials(&unix.Ucred{Uid: 0}); err != nil {
+func TestSocketAuthorizesOnlyOrdinaryChangesForTheCaller(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	anchor := testAnchor()
+	caller := &unix.Ucred{Uid: anchor.UID}
+	if err := authorizeSocketRequest(caller, socketRequest{Action: anchorEnrolAction, Anchor: &anchor}, ledger); err != nil {
+		t.Fatalf("the caller's first enrolment was refused: %v", err)
+	}
+	if err := ledger.Record(Enrolment{Anchor: anchor}); err != nil {
+		t.Fatal(err)
+	}
+	wider := anchor
+	wider.Generation++
+	wider.PolicyRoot = strings.Repeat("d4", 32)
+	wider.LaunchRoot = integrity.LaunchRoot(wider.PackageRoot, wider.PolicyRoot)
+	if err := authorizeSocketRequest(caller, socketRequest{Action: anchorEnrolAction, Anchor: &wider}, ledger); !errors.Is(err, errRootRequired) {
+		t.Fatalf("a widening over the socket returned %v, want root", err)
+	}
+	if err := authorizeSocketRequest(caller, socketRequest{Action: anchorForgetAction, UID: anchor.UID, Origin: anchor.Origin}, ledger); err != nil {
+		t.Fatalf("the caller could not forget its own anchor: %v", err)
+	}
+	if err := authorizeSocketRequest(caller, socketRequest{Action: anchorClearAction, UID: anchor.UID, Origin: anchor.Origin}, ledger); !errors.Is(err, errRootRequired) {
+		t.Fatalf("clearing a removal returned %v, want root", err)
+	}
+	other := anchor
+	other.UID++
+	if err := authorizeSocketRequest(caller, socketRequest{Action: anchorEnrolAction, Anchor: &other}, ledger); !errors.Is(err, errRootRequired) {
+		t.Fatalf("an enrolment for another account returned %v, want root", err)
+	}
+	if err := authorizeSocketRequest(&unix.Ucred{Uid: 0}, socketRequest{Action: anchorClearAction}, ledger); err != nil {
 		t.Fatalf("root was refused: %v", err)
 	}
-	if err := authorizePeerCredentials(&unix.Ucred{Uid: 1000}); err == nil {
-		t.Fatal("an unprivileged caller was authorized without polkit")
-	}
-	if err := authorizePeerCredentials(nil); err == nil {
+	if err := authorizeSocketRequest(nil, socketRequest{}, ledger); err == nil {
 		t.Fatal("a caller without credentials was authorized")
+	}
+}
+
+func TestSocketReturnsRootRequirementAsAStableResult(t *testing.T) {
+	path := startAuthoritySocket(t, socketService{
+		Registry:  testRegistry(t),
+		Authorize: func(*unix.Ucred) error { return errRootRequired },
+	})
+	err := requestOverSocket(path, socketRequest{Action: "register"})
+	if !errors.Is(err, errRootRequired) {
+		t.Fatalf("got %v, want a root requirement the caller can act on", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -61,5 +62,5 @@ func normalizeRepositoryOrigin(value string) (string, error) {
 			return "", fmt.Errorf("invalid repository origin: %s", value)
 		}
 	}
-	return strings.ToLower(value), nil
+	return cpak.NormalizeRepositoryOrigin(value)
 }

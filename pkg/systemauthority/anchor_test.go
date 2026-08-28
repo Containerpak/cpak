@@ -348,6 +348,99 @@ func TestAuthoritySocketEnrolsAnAnchorWithoutABus(t *testing.T) {
 	}
 }
 
+func TestAuthoritySocketCarriesASignedEnrolmentWithoutABus(t *testing.T) {
+	ledger := testAnchorLedger(t)
+	path := startAuthoritySocket(t, socketService{Anchors: ledger})
+	anchor := testAnchor()
+	signed := testSignedState(2)
+	acceptSignaturesOf(t, anchor.Origin)
+	request := socketRequest{Action: anchorEnrolAction, Anchor: &anchor, Signature: signed}
+	if err := requestOverSocket(path, request); err != nil {
+		t.Fatal(err)
+	}
+	recorded, found, err := ledger.Recorded(anchor.UID, anchor.Origin)
+	if err != nil || !found {
+		t.Fatalf("the socket did not record the signed enrolment: %v, %v", found, err)
+	}
+	if recorded.Signature == nil || !bytes.Equal(recorded.Signature.Bundle, signed.Bundle) {
+		t.Fatalf("the socket downgraded the signed enrolment to %+v", recorded.Signature)
+	}
+}
+
+func TestSignedEnrolmentFallsBackPastAnUnavailableBus(t *testing.T) {
+	savedBus := enrolSignedOverBus
+	savedSocket := authorityRequestOverSocket
+	savedPrivileged := enrolPrivileged
+	t.Cleanup(func() {
+		enrolSignedOverBus = savedBus
+		authorityRequestOverSocket = savedSocket
+		enrolPrivileged = savedPrivileged
+	})
+	enrolSignedOverBus = func(Enrolment) error { return errTransportUnavailable }
+	var carried *SignedState
+	authorityRequestOverSocket = func(_ string, message socketRequest) error {
+		carried = message.Signature
+		return nil
+	}
+	enrolPrivileged = func(socketRequest) error {
+		t.Fatal("a successful socket request escalated to root")
+		return nil
+	}
+	enrolment := Enrolment{Anchor: testAnchor(), Signature: testSignedState(2)}
+	if err := dispatchSignedEnrolmentAsUser(enrolment); err != nil {
+		t.Fatal(err)
+	}
+	if carried == nil || !bytes.Equal(carried.Bundle, enrolment.Signature.Bundle) {
+		t.Fatalf("the socket received %+v, want the signed evidence", carried)
+	}
+}
+
+func TestSignedEnrolmentEscalatesOnlyAfterBothTransports(t *testing.T) {
+	savedBus := enrolSignedOverBus
+	savedSocket := authorityRequestOverSocket
+	savedPrivileged := enrolPrivileged
+	t.Cleanup(func() {
+		enrolSignedOverBus = savedBus
+		authorityRequestOverSocket = savedSocket
+		enrolPrivileged = savedPrivileged
+	})
+	enrolSignedOverBus = func(Enrolment) error { return errTransportUnavailable }
+	authorityRequestOverSocket = func(string, socketRequest) error { return errRootRequired }
+	var carried *SignedState
+	enrolPrivileged = func(message socketRequest) error {
+		carried = message.Signature
+		return nil
+	}
+	enrolment := Enrolment{Anchor: testAnchor(), Signature: testSignedState(2)}
+	if err := dispatchSignedEnrolmentAsUser(enrolment); err != nil {
+		t.Fatal(err)
+	}
+	if carried == nil || !bytes.Equal(carried.Bundle, enrolment.Signature.Bundle) {
+		t.Fatalf("the privileged step received %+v, want the signed evidence", carried)
+	}
+}
+
+func TestSignedEnrolmentDoesNotPromptBeforeTheAuthorityIsSetUp(t *testing.T) {
+	savedBus := enrolSignedOverBus
+	savedSocket := authorityRequestOverSocket
+	savedPrivileged := enrolPrivileged
+	t.Cleanup(func() {
+		enrolSignedOverBus = savedBus
+		authorityRequestOverSocket = savedSocket
+		enrolPrivileged = savedPrivileged
+	})
+	enrolSignedOverBus = func(Enrolment) error { return errTransportUnavailable }
+	authorityRequestOverSocket = func(string, socketRequest) error { return errTransportUnavailable }
+	enrolPrivileged = func(socketRequest) error {
+		t.Fatal("an absent authority asked for administrator rights")
+		return nil
+	}
+	err := dispatchSignedEnrolmentAsUser(Enrolment{Anchor: testAnchor(), Signature: testSignedState(2)})
+	if !errors.Is(err, ErrNoAuthority) {
+		t.Fatalf("got %v, want the setup advice for an absent authority", err)
+	}
+}
+
 func TestAuthoritySocketRefusesAnAnchorFromAnUnauthorizedPeer(t *testing.T) {
 	ledger := testAnchorLedger(t)
 	path := startAuthoritySocket(t, socketService{

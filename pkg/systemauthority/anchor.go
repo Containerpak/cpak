@@ -913,25 +913,36 @@ func EnrolAnchorWithSignature(anchor integrity.Anchor, policy *types.Override, s
 	return dispatchSignedEnrolment(enrolment)
 }
 
-// dispatchSignedEnrolment walks the transports a signature can travel. There
-// are two: root writes the ledger it owns, and everybody else goes through the
-// bus, which is what carries an interactive authorization.
-//
-// It does not fall back to the socket. That request carries no signature, and
-// sending the enrolment over it without one would record a signed installation
-// as unsigned, which is the one downgrade this whole design exists to make
-// impossible. A host with no system bus is a host where this is recorded by
-// root, and the caller is told so.
+// dispatchSignedEnrolment walks the transports without changing the evidence.
+// The bus is tried first because it can carry an interactive authorization.
+// The socket carries the same signed request when no bus exists and asks for a
+// root re-entry only when the ledger says the change widens existing access.
 func dispatchSignedEnrolment(enrolment Enrolment) error {
 	if os.Geteuid() == 0 {
 		return asRefusal(DefaultAnchorLedger().Record(enrolment))
 	}
-	err := signedEnrolmentOverBus(enrolment)
+	return dispatchSignedEnrolmentAsUser(enrolment)
+}
+
+func dispatchSignedEnrolmentAsUser(enrolment Enrolment) error {
+	err := enrolSignedOverBus(enrolment)
+	if !errors.Is(err, errTransportUnavailable) {
+		return asRefusal(err)
+	}
+	message := socketRequest{Action: anchorEnrolAction, Anchor: &enrolment.Anchor, Policy: enrolment.Policy, Signature: enrolment.Signature}
+	err = authorityRequestOverSocket(DefaultSocketPath, message)
+	if err == nil || !errors.Is(err, errTransportUnavailable) && !errors.Is(err, errRootRequired) {
+		return asRefusal(err)
+	}
 	if errors.Is(err, errTransportUnavailable) {
 		return ErrNoAuthority
 	}
-	return asRefusal(err)
+	return asRefusal(enrolPrivileged(message))
 }
+
+var enrolSignedOverBus = signedEnrolmentOverBus
+var authorityRequestOverSocket = requestOverSocket
+var enrolPrivileged = runPrivilegedEnrolment
 
 func signedEnrolmentOverBus(enrolment Enrolment) error {
 	connection, err := dbus.ConnectSystemBus()
@@ -1127,8 +1138,18 @@ func dispatchIntegrity(message socketRequest) error {
 	if err := retryPastStale(func() error { return integrityOverBus(message) }); !errors.Is(err, errTransportUnavailable) {
 		return asRefusal(err)
 	}
-	if err := requestOverSocket(DefaultSocketPath, message); !errors.Is(err, errTransportUnavailable) {
+	err := authorityRequestOverSocket(DefaultSocketPath, message)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, errTransportUnavailable) && !errors.Is(err, errRootRequired) {
 		return asRefusal(err)
+	}
+	if message.Action == anchorEnrolAction {
+		if errors.Is(err, errTransportUnavailable) {
+			return ErrNoAuthority
+		}
+		return asRefusal(enrolPrivileged(message))
 	}
 	return ErrNoAuthority
 }
@@ -1226,11 +1247,8 @@ func decodePolicy(encoded string) (*types.Override, error) {
 func applyAnchor(ledger AnchorLedger, message socketRequest) error {
 	switch message.Action {
 	case anchorEnrolAction:
-		if message.Anchor == nil {
-			return errors.New("invalid integrity anchor")
-		}
-		enrolment := Enrolment{Anchor: *message.Anchor, Policy: message.Policy}
-		if err := validateEnrolment(enrolment); err != nil {
+		enrolment, err := enrolmentFromSocket(message)
+		if err != nil {
 			return err
 		}
 		return ledger.Record(enrolment)
@@ -1247,6 +1265,17 @@ func applyAnchor(ledger AnchorLedger, message socketRequest) error {
 	default:
 		return errors.New("unsupported system authority action")
 	}
+}
+
+func enrolmentFromSocket(message socketRequest) (Enrolment, error) {
+	if message.Anchor == nil {
+		return Enrolment{}, errors.New("invalid integrity anchor")
+	}
+	enrolment := Enrolment{Anchor: *message.Anchor, Policy: message.Policy, Signature: message.Signature}
+	if err := validateEnrolment(enrolment); err != nil {
+		return Enrolment{}, err
+	}
+	return enrolment, nil
 }
 
 // asRefusal recognises the refusals a caller has to act on differently after

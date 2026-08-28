@@ -7,6 +7,7 @@ package cpak
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -20,6 +21,25 @@ type fvsViewEntry struct {
 	file       fvsrepo.FileEntry
 	repository string
 	state      string
+}
+
+const (
+	desktopEntrySizeLimit = 256 << 10
+	iconSizeLimit         = 8 << 20
+)
+
+var errFVSExportLimit = errors.New("FVS export limit exceeded")
+
+type boundedExportBuffer struct {
+	bytes.Buffer
+	limit int64
+}
+
+func (b *boundedExportBuffer) Write(data []byte) (int, error) {
+	if int64(b.Len())+int64(len(data)) > b.limit {
+		return 0, errFVSExportLimit
+	}
+	return b.Buffer.Write(data)
 }
 
 func (c *Cpak) fvsMergedEntries(layers []string) (map[string]fvsViewEntry, error) {
@@ -83,7 +103,7 @@ func (c *Cpak) fvsMergedEntries(layers []string) (map[string]fvsViewEntry, error
 	return result, nil
 }
 
-func fvsViewFileData(ctx context.Context, entries map[string]fvsViewEntry, name string) ([]byte, error) {
+func fvsViewFileData(ctx context.Context, entries map[string]fvsViewEntry, name string, limit int64) ([]byte, error) {
 	for attempts := 0; attempts < 16; attempts++ {
 		entry, ok := entries[name]
 		if !ok {
@@ -91,8 +111,14 @@ func fvsViewFileData(ctx context.Context, entries map[string]fvsViewEntry, name 
 		}
 		switch entry.file.Kind {
 		case "", string(fvsrepo.EntryFile):
-			var output bytes.Buffer
+			if entry.file.Size < 0 || entry.file.Size > limit {
+				return nil, fmt.Errorf("FVS entry %s exceeds the %d byte export limit", name, limit)
+			}
+			output := boundedExportBuffer{limit: limit}
 			if err := fvsrepo.WriteFile(ctx, entry.repository, entry.state, name, &output); err != nil {
+				if errors.Is(err, errFVSExportLimit) {
+					return nil, fmt.Errorf("FVS entry %s exceeds the %d byte export limit", name, limit)
+				}
 				return nil, err
 			}
 			return output.Bytes(), nil

@@ -135,6 +135,16 @@ func startX11Bridge(container types.Container) (types.Container, error) {
 		return container, fmt.Errorf("start isolated X11 display: %w", err)
 	}
 	container.X11BridgePid = command.Process.Pid
+	container.X11BridgeStartTime, err = processStartTime(command.Process.Pid)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		_ = os.Remove(authorityPath)
+		if server.privateSocket {
+			_ = os.Remove(socketPath)
+		}
+		return container, fmt.Errorf("identify isolated X11 display: %w", err)
+	}
 	container.X11Display = ":" + display
 	container.X11SocketPath = socketPath
 	container.X11SocketTarget = socketTarget
@@ -230,7 +240,7 @@ func writeX11AuthorityRecord(writer io.Writer, family uint16, address, display s
 }
 
 func cleanupX11Bridge(container types.Container) {
-	if container.X11BridgePid > 0 {
+	if sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) {
 		_ = syscall.Kill(container.X11BridgePid, syscall.SIGTERM)
 	}
 	if container.X11AuthorityPath != "" {
@@ -245,5 +255,5 @@ func containerX11BridgeAlive(container types.Container) bool {
 	if container.X11SocketPath == "" {
 		return true
 	}
-	return container.X11BridgePid > 0 && syscall.Kill(container.X11BridgePid, 0) == nil && socketIsLive(container.X11SocketPath)
+	return sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) && socketIsLive(container.X11SocketPath)
 }

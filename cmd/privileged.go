@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -53,6 +54,10 @@ func refuseSudoedStore() error {
 // belongs to them.
 func runPrivileged(arguments ...string) error {
 	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve cpak executable: %w", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
 	if err != nil {
 		return fmt.Errorf("resolve cpak executable: %w", err)
 	}

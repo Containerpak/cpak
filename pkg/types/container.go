@@ -25,21 +25,16 @@ type Container struct {
 	// Pid is the pid of the main spawned container process inside the namespace.
 	Pid int `json:"pid"`
 
+	// ProcessStartTime is the kernel start time of Pid. It prevents a stale
+	// container record from signalling a process that later reused the PID.
+	ProcessStartTime uint64 `json:"process_start_time"`
+
 	// CreateTimestamp is the time the container was created in the store.
 	CreateTimestamp time.Time `json:"create_timestamp"`
 
 	// StatePath is the path to the state directory of the container, the
 	// actual workdir for the layer mounts.
 	StatePath string `json:"state_path"`
-
-	// HostExecPid is retained to stop hostexec processes created by older cpak versions.
-	HostExecPid int `json:"host_exec_pid"`
-
-	// HostExecSocketPath is retained for stored containers created by older cpak versions.
-	HostExecSocketPath string `json:"host_exec_socket_path"`
-
-	// SystemBrokerPid is the PID of the policy-gated system integration broker.
-	SystemBrokerPid int `json:"system_broker_pid"`
 
 	// SystemBrokerSocketPath is the broker socket mounted into the container.
 	SystemBrokerSocketPath string `json:"system_broker_socket_path"`
@@ -57,19 +52,22 @@ type Container struct {
 	SystemBrokerPolicyPath string `json:"system_broker_policy_path"`
 
 	// DesktopBusProxyPid is the PID of the policy-gated session bus proxy.
-	DesktopBusProxyPid int `json:"desktop_bus_proxy_pid"`
+	DesktopBusProxyPid       int    `json:"desktop_bus_proxy_pid"`
+	DesktopBusProxyStartTime uint64 `json:"desktop_bus_proxy_start_time"`
 
 	// DesktopBusSocketPath is the private session bus socket mounted into the container.
 	DesktopBusSocketPath string `json:"desktop_bus_socket_path"`
 
 	// BluetoothBusProxyPid is the PID of the BlueZ-only system bus proxy.
-	BluetoothBusProxyPid int `json:"bluetooth_bus_proxy_pid"`
+	BluetoothBusProxyPid       int    `json:"bluetooth_bus_proxy_pid"`
+	BluetoothBusProxyStartTime uint64 `json:"bluetooth_bus_proxy_start_time"`
 
 	// BluetoothBusSocketPath is the private BlueZ bus mounted into the container.
 	BluetoothBusSocketPath string `json:"bluetooth_bus_socket_path"`
 
 	// X11BridgePid is the PID of the per-container nested X server.
-	X11BridgePid int `json:"x11_bridge_pid"`
+	X11BridgePid       int    `json:"x11_bridge_pid"`
+	X11BridgeStartTime uint64 `json:"x11_bridge_start_time"`
 
 	// X11Display is the private display name used inside the container.
 	X11Display string `json:"x11_display"`

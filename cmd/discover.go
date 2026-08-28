@@ -123,7 +123,10 @@ func catalogVersion(item catalog.Package) string {
 }
 
 func (c *DiscoverCmd) install(packages []catalog.Package) error {
-	origin := strings.ToLower(c.Origin)
+	origin, err := cpak.NormalizeRepositoryOrigin(c.Origin)
+	if err != nil {
+		return err
+	}
 	if origin == "" {
 		return errors.New("package origin is required for install")
 	}
@@ -155,7 +158,10 @@ func (c *DiscoverCmd) install(packages []catalog.Package) error {
 }
 
 func (c *DiscoverCmd) remove() error {
-	origin := strings.ToLower(c.Origin)
+	origin, err := cpak.NormalizeRepositoryOrigin(c.Origin)
+	if err != nil {
+		return err
+	}
 	if origin == "" {
 		return errors.New("package origin is required for remove")
 	}

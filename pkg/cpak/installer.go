@@ -23,7 +23,6 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
 	"github.com/mirkobrombin/cpak/pkg/systemauthority"
-	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -63,11 +62,27 @@ type InstallOptions struct {
 	// does not make cpak fetch every one of them a second time. A lock still
 	// wins over them: it is the stronger statement about the same graph.
 	ResolvedDependencies []ResolvedDependency
+
+	dependencyState *dependencyInstallState
+	dependencyDepth int
+}
+
+const (
+	maxDependencyDepth = 32
+	maxDependencyCount = 256
+)
+
+type dependencyInstallState struct {
+	active map[string]bool
+	total  int
 }
 
 // InstallWithOptions installs a remote package with explicit options.
 func (c *Cpak) InstallWithOptions(origin, branch, release, commit string, options InstallOptions) (err error) {
-	origin = strings.ToLower(origin)
+	origin, err = normalizeRepositoryOrigin(origin)
+	if err != nil {
+		return err
+	}
 	options.ResolveImageRef = true
 
 	versionParams := []string{branch, release, commit}
@@ -177,6 +192,22 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		logger.Printf("%s is already installed from %s; run an audit if it is not working as expected", manifest.Name, origin)
 		return
 	}
+	if options.dependencyState == nil {
+		options.dependencyState = &dependencyInstallState{active: make(map[string]bool)}
+	}
+	if options.dependencyDepth >= maxDependencyDepth {
+		return fmt.Errorf("dependency graph exceeds the maximum depth of %d", maxDependencyDepth)
+	}
+	dependencyKey := lockedPackageKey(origin, branch, release, commit)
+	if options.dependencyState.active[dependencyKey] {
+		return fmt.Errorf("dependency cycle at %s", origin)
+	}
+	if options.dependencyState.total >= maxDependencyCount {
+		return fmt.Errorf("dependency graph exceeds the maximum of %d packages", maxDependencyCount)
+	}
+	options.dependencyState.active[dependencyKey] = true
+	options.dependencyState.total++
+	defer delete(options.dependencyState.active, dependencyKey)
 
 	image := manifest.Image
 	if options.ResolveImageRef {
@@ -343,6 +374,23 @@ func (c *Cpak) ResolveDependencies(origin string, manifest *types.CpakManifest) 
 }
 
 func (c *Cpak) resolveDependencies(origin string, manifest *types.CpakManifest, fetchManifest func(string, string, string, string) (*types.CpakManifest, error), seen map[string]bool) ([]ResolvedDependency, error) {
+	state := dependencyResolutionState{
+		active: map[string]bool{origin: true},
+		seen:   seen,
+	}
+	return c.resolveDependencyGraph(origin, manifest, fetchManifest, &state, 0)
+}
+
+type dependencyResolutionState struct {
+	active map[string]bool
+	seen   map[string]bool
+	total  int
+}
+
+func (c *Cpak) resolveDependencyGraph(origin string, manifest *types.CpakManifest, fetchManifest func(string, string, string, string) (*types.CpakManifest, error), state *dependencyResolutionState, depth int) ([]ResolvedDependency, error) {
+	if depth >= maxDependencyDepth {
+		return nil, fmt.Errorf("dependency graph exceeds the maximum depth of %d", maxDependencyDepth)
+	}
 	resolved := []ResolvedDependency{}
 	for _, declared := range manifest.Dependencies {
 		dependencyOrigin, err := resolveDependencyOrigin(origin, declared.Origin)
@@ -351,13 +399,19 @@ func (c *Cpak) resolveDependencies(origin string, manifest *types.CpakManifest, 
 		}
 		branch, release, commit := dependencySelectors(declared)
 
-		// A package already in the answer is not fetched again, which is also
-		// what keeps a dependency loop from being followed forever.
+		if state.active[dependencyOrigin] {
+			return nil, fmt.Errorf("dependency cycle at %s", dependencyOrigin)
+		}
 		key := lockedPackageKey(dependencyOrigin, branch, release, commit)
-		if seen[key] {
+		if state.seen[key] {
 			continue
 		}
-		seen[key] = true
+		if state.total >= maxDependencyCount {
+			return nil, fmt.Errorf("dependency graph exceeds the maximum of %d packages", maxDependencyCount)
+		}
+		state.seen[key] = true
+		state.total++
+		state.active[dependencyOrigin] = true
 
 		dependencyManifest, err := fetchManifest(dependencyOrigin, branch, release, commit)
 		if err != nil {
@@ -383,7 +437,8 @@ func (c *Cpak) resolveDependencies(origin string, manifest *types.CpakManifest, 
 			Manifest: dependencyManifest,
 		})
 
-		nested, err := c.resolveDependencies(dependencyOrigin, dependencyManifest, fetchManifest, seen)
+		nested, err := c.resolveDependencyGraph(dependencyOrigin, dependencyManifest, fetchManifest, state, depth+1)
+		delete(state.active, dependencyOrigin)
 		if err != nil {
 			return nil, err
 		}
@@ -435,6 +490,7 @@ func (c *Cpak) installDependenciesWithOptions(origin string, manifest *types.Cpa
 		// came here behind.
 		dependencyOptions.PulledIn = true
 		dependencyOptions.PulledInBy = origin
+		dependencyOptions.dependencyDepth = options.dependencyDepth + 1
 		if depManifest.IsLayer() {
 			dependencyOptions.CreateExports = false
 		}
@@ -585,7 +641,7 @@ func (c *Cpak) exportFVSDesktopEntry(entries map[string]fvsViewEntry, app types.
 		}
 		entryName = names[0]
 	}
-	data, err := fvsViewFileData(c.Ctx, entries, entryName)
+	data, err := fvsViewFileData(c.Ctx, entries, entryName, desktopEntrySizeLimit)
 	if err != nil {
 		return err
 	}
@@ -603,7 +659,7 @@ func (c *Cpak) writeDesktopExport(entries map[string]fvsViewEntry, app types.App
 	iconName := desktopEntryValue([]byte(content), "Icon")
 	if iconName != "" {
 		if iconEntry := findFVSIcon(entries, iconName); iconEntry != "" {
-			iconData, err := fvsViewFileData(c.Ctx, entries, iconEntry)
+			iconData, err := fvsViewFileData(c.Ctx, entries, iconEntry, iconSizeLimit)
 			if err != nil {
 				return err
 			}
@@ -684,107 +740,6 @@ func findFVSIcon(entries map[string]fvsViewEntry, iconName string) string {
 		}
 	}
 	return iconPath
-}
-
-// exportDesktopEntry exports a desktop entry to the user's home directory
-// it also exports the icon defined in the desktop entry. If the icon is not
-// an absolute path, it looks for it in the common directories, preferring the
-// one with the highest resolution.
-func (c *Cpak) exportDesktopEntry(rootFs string, app types.Application, desktopEntry string) error {
-	home := os.Getenv("HOME")
-
-	var originalPath string
-	entryBase := filepath.Base(desktopEntry)
-	direct := filepath.Join(rootFs, strings.TrimLeft(desktopEntry, "/"))
-	if _, err := os.Stat(direct); err == nil {
-		originalPath = direct
-	} else {
-		_ = filepath.Walk(rootFs, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return nil
-			}
-			if filepath.Base(path) == entryBase {
-				originalPath = path
-				return filepath.SkipDir
-			}
-			return nil
-		})
-	}
-	if originalPath == "" {
-		return fmt.Errorf("desktop entry %s not found under %s", entryBase, rootFs)
-	}
-
-	desktopDir := filepath.Join(home, ".local", "share", "applications")
-	if err := os.MkdirAll(desktopDir, 0755); err != nil {
-		return err
-	}
-	desktopDest := desktopEntryExportPath(app, entryBase)
-
-	data, err := os.ReadFile(originalPath)
-	if err != nil {
-		return err
-	}
-	content := string(data)
-
-	var iconName string
-	for _, line := range strings.Split(content, "\n") {
-		if key, value, ok := desktopEntryKey(line); ok && key == "Icon" {
-			iconName = value
-			break
-		}
-	}
-	var absIconPath string
-	if iconName != "" {
-		absIconPath = findIcon(rootFs, iconName)
-
-		if absIconPath == "" && filepath.IsAbs(iconName) {
-			if _, err := os.Stat(iconName); err == nil {
-				absIconPath = iconName
-			}
-		}
-	}
-
-	if absIconPath != "" {
-		ext := filepath.Ext(absIconPath)
-		iconDest := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", applicationExportID(app)+ext)
-		if err := os.MkdirAll(filepath.Dir(iconDest), 0755); err != nil {
-			return err
-		}
-		if err := tools.CopyFile(absIconPath, iconDest); err != nil {
-			return err
-		}
-		logger.Printf("Exported icon to %s", iconDest)
-		iconName = iconDest
-	} else {
-		logger.Printf("Warning: icon %s not found for app %s", iconName, app.Name)
-	}
-
-	lines := strings.Split(content, "\n")
-	launcher, err := desktopLauncherPath()
-	if err != nil {
-		return err
-	}
-	for i, line := range lines {
-		key, value, ok := desktopEntryKey(line)
-		if !ok {
-			continue
-		}
-		switch key {
-		case "Exec":
-			lines[i] = rewriteDesktopExec(launcher, app.Origin, value)
-		case "TryExec":
-			lines[i] = "TryExec=" + launcher
-		case "Icon":
-			if iconName != "" {
-				lines[i] = "Icon=" + iconName
-			}
-		}
-	}
-	newContent := strings.Join(lines, "\n")
-	if err := os.WriteFile(desktopDest, []byte(newContent), 0755); err != nil {
-		return err
-	}
-	return exportDesktopAlias(app, entryBase, newContent)
 }
 
 func exportDesktopAlias(app types.Application, name, content string) error {
@@ -988,61 +943,23 @@ func removeLegacyDesktopExports(app types.Application) error {
 	return nil
 }
 
-func findIcon(layerDir, iconName string) string {
-	if filepath.IsAbs(iconName) {
-		candidate := filepath.Join(layerDir, iconName)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-		return ""
-	}
-
-	var iconPath string
-	iconScore := -1
-	_ = filepath.Walk(layerDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-
-		name := info.Name()
-		extension := strings.ToLower(filepath.Ext(name))
-		if extension != ".png" && extension != ".svg" && extension != ".xpm" {
-			return nil
-		}
-		if name != iconName && strings.TrimSuffix(name, filepath.Ext(name)) != iconName {
-			return nil
-		}
-
-		score := 0
-		if extension == ".svg" {
-			score = 1000000
-		}
-		resolution := filepath.Base(filepath.Dir(filepath.Dir(path)))
-		var width, height int
-		if _, err := fmt.Sscanf(resolution, "%dx%d", &width, &height); err == nil {
-			score += min(width, height)
-		}
-		if score > iconScore {
-			iconPath = path
-			iconScore = score
-		}
-		return nil
-	})
-	return iconPath
-}
-
 // shellLiteral renders a value as a single word for /bin/sh.
 func shellLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func (c *Cpak) exportBinary(app types.Application, binary string) error {
-	destinationItems := []string{c.Options.ExportsPath}
-	destinationItems = append(destinationItems, strings.Split(app.Origin, "/")...)
-	destinationItems = append(destinationItems, filepath.Base(binary))
-	destinationPath := filepath.Join(destinationItems...)
+	origin, err := normalizeRepositoryOrigin(app.Origin)
+	if err != nil {
+		return err
+	}
+	relative := filepath.Join(filepath.FromSlash(origin), filepath.Base(binary))
+	destinationPath, err := containedPath(c.Options.ExportsPath, relative)
+	if err != nil {
+		return err
+	}
 
-	err := os.MkdirAll(filepath.Dir(destinationPath), 0755)
+	err = os.MkdirAll(filepath.Dir(destinationPath), 0755)
 	if err != nil {
 		return err
 	}

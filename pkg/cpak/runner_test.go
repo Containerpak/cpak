@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -22,6 +23,23 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
+
+func TestMain(m *testing.M) {
+	if argsFile := os.Getenv("CPAK_NESTED_TEST_ARGS_FILE"); argsFile != "" {
+		content := strings.Join(os.Args[1:], "\n") + "\n"
+		if err := os.WriteFile(argsFile, []byte(content), 0600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(125)
+		}
+		fmt.Println("nested-output")
+		status, err := strconv.Atoi(os.Getenv("CPAK_NESTED_TEST_STATUS"))
+		if err != nil {
+			os.Exit(125)
+		}
+		os.Exit(status)
+	}
+	os.Exit(m.Run())
+}
 
 // tempSocketPath returns a short socket path: a unix socket does not fit in the
 // directory names the testing package generates.
@@ -507,28 +525,15 @@ func TestServeSocketStopsWithItsContext(t *testing.T) {
 	}
 }
 
-// fakeCpak writes a stand in for the cpak binary that records the argv it was
-// given, prints a line and exits with the given status.
-func fakeCpak(t *testing.T, argsFile string, status int) string {
+func configureNestedTestProcess(t *testing.T, argsFile string, status int) {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cpak")
-	script := fmt.Sprintf("#!/bin/sh\n: > %[1]s\nfor arg in \"$@\"; do printf '%%s\\n' \"$arg\" >> %[1]s; done\necho nested-output\nexit %[2]d\n", argsFile, status)
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatalf("write the fake cpak: %v", err)
-	}
-	return path
+	t.Setenv("CPAK_NESTED_TEST_ARGS_FILE", argsFile)
+	t.Setenv("CPAK_NESTED_TEST_STATUS", strconv.Itoa(status))
 }
 
 func TestNestedRunPropagatesArgumentsAndExitStatus(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "argv")
-	fake := fakeCpak(t, argsFile, 7)
-
-	// getCpakBinary re-executes the binary of the process, point it at the
-	// stand in for the duration of the test
-	original := os.Args[0]
-	os.Args[0] = fake
-	t.Cleanup(func() { os.Args[0] = original })
+	configureNestedTestProcess(t, argsFile, 7)
 
 	path := tempSocketPath(t)
 	cpak := &Cpak{}
@@ -596,11 +601,7 @@ func TestNestedRunPropagatesArgumentsAndExitStatus(t *testing.T) {
 
 func TestNestedRunReportsSuccessWithoutAnError(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "argv")
-	fake := fakeCpak(t, argsFile, 0)
-
-	original := os.Args[0]
-	os.Args[0] = fake
-	t.Cleanup(func() { os.Args[0] = original })
+	configureNestedTestProcess(t, argsFile, 0)
 
 	path := tempSocketPath(t)
 	cpak := &Cpak{}
@@ -636,11 +637,7 @@ func TestNestedRunReportsSuccessWithoutAnError(t *testing.T) {
 // silently truncated into invalid JSON.
 func TestNestedRunAcceptsARequestLongerThanTheOldBuffer(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "argv")
-	fake := fakeCpak(t, argsFile, 0)
-
-	original := os.Args[0]
-	os.Args[0] = fake
-	t.Cleanup(func() { os.Args[0] = original })
+	configureNestedTestProcess(t, argsFile, 0)
 
 	path := tempSocketPath(t)
 	cpak := &Cpak{}

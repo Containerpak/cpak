@@ -6,7 +6,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
@@ -23,7 +22,11 @@ func (c *RollbackCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("open cpak store: %w", err)
 	}
-	result, err := cp.Rollback(strings.ToLower(c.Remote))
+	origin, err := cpak.NormalizeRepositoryOrigin(c.Remote)
+	if err != nil {
+		return err
+	}
+	result, err := cp.Rollback(origin)
 	if err != nil {
 		return fmt.Errorf("rollback %s: %w", c.Remote, err)
 	}

@@ -6,12 +6,9 @@ package tools
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
-	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -101,37 +98,4 @@ func readSubIDFile(filename, username string) (subIDSlice []string, err error) {
 	}
 
 	return
-}
-
-func GetPidFromEnv(envVar string) (int, error) {
-	// Scan /proc for numeric directories
-	dirs, err := os.ReadDir("/proc")
-	if err != nil {
-		return 0, fmt.Errorf("failed to read /proc: %w", err)
-	}
-
-	for _, d := range dirs {
-		if !d.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(d.Name())
-		if err != nil {
-			continue // not a PID dir
-		}
-
-		envPath := filepath.Join("/proc", d.Name(), "environ")
-		data, err := os.ReadFile(envPath)
-		if err != nil {
-			continue
-		}
-
-		// environ entries are '\x00'-separated
-		envEntries := strings.Split(string(data), "\x00")
-		for _, e := range envEntries {
-			if e == envVar {
-				return pid, nil
-			}
-		}
-	}
-	return 0, fmt.Errorf("no process with env var %s found", envVar)
 }

@@ -7,7 +7,6 @@ package cmd
 import (
 	"fmt"
 	"runtime"
-	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
 	"github.com/mirkobrombin/cpak/pkg/cpak"
@@ -28,7 +27,10 @@ type InstallCmd struct {
 }
 
 func (c *InstallCmd) Run() error {
-	remote := strings.ToLower(c.Remote)
+	remote, err := cpak.NormalizeRepositoryOrigin(c.Remote)
+	if err != nil {
+		return err
+	}
 
 	cp, err := cpak.NewCpak()
 	if err != nil {

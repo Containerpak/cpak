@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,6 +48,10 @@ type RepoProvider struct {
 // cloning the entire repository. Imagine a repository with a single file
 // that is 1GB in size, kek.
 func NewRepoProvider(origin, gitDir string) (repoProvider *RepoProvider, err error) {
+	origin, err = normalizeRepositoryOrigin(origin)
+	if err != nil {
+		return nil, err
+	}
 	GitDir, err := generateGitDir(origin, gitDir)
 	if err != nil {
 		return repoProvider, fmt.Errorf("failed to generate git path: %w", err)
@@ -182,11 +187,11 @@ func (r *RepoProvider) latestReleaseURL() (url string, err error) {
 //	<cache-dir>/<host>/<user>/<repo>/<branch|release|commit>
 func generateGitDir(gitURL string, gitDir string) (gitPath string, err error) {
 	gitDir = strings.TrimRight(gitDir, "/")
-	parts := strings.Split(gitURL, "/")
-
-	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid git url: %s", gitURL)
+	gitURL, err = normalizeRepositoryOrigin(gitURL)
+	if err != nil {
+		return "", err
 	}
+	parts := strings.Split(gitURL, "/")
 
 	localPath := filepath.Join(append([]string{gitDir}, parts...)...)
 	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
@@ -194,6 +199,80 @@ func generateGitDir(gitURL string, gitDir string) (gitPath string, err error) {
 	}
 
 	return localPath, nil
+}
+
+func normalizeRepositoryOrigin(origin string) (string, error) {
+	if origin != strings.TrimSpace(origin) {
+		return "", fmt.Errorf("invalid repository origin %q", origin)
+	}
+	parts := strings.Split(origin, "/")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid repository origin %q", origin)
+	}
+	host, err := normalizeRepositoryHost(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid repository origin %q", origin)
+	}
+	parts[0] = host
+	for index, part := range parts {
+		if index == 0 {
+			continue
+		}
+		if part == "" || len(part) > 100 || part == "." || part == ".." || strings.Contains(part, "..") {
+			return "", fmt.Errorf("invalid repository origin %q", origin)
+		}
+		if part != strings.ToLower(part) {
+			return "", fmt.Errorf("repository path in %q must be lowercase", origin)
+		}
+		for _, character := range part {
+			if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-' {
+				continue
+			}
+			return "", fmt.Errorf("invalid repository origin %q", origin)
+		}
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+// NormalizeRepositoryOrigin canonicalizes only the case-insensitive host and
+// validates the case-sensitive repository path without changing its target.
+func NormalizeRepositoryOrigin(origin string) (string, error) {
+	return normalizeRepositoryOrigin(origin)
+}
+
+func normalizeRepositoryHost(value string) (string, error) {
+	value = strings.ToLower(value)
+	host := value
+	port := ""
+	if strings.Contains(value, ":") {
+		var err error
+		host, port, err = net.SplitHostPort(value)
+		if err != nil {
+			return "", err
+		}
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return "", errors.New("invalid repository port")
+		}
+	}
+	if len(host) == 0 || len(host) > 253 || strings.Contains(host, "..") {
+		return "", errors.New("invalid repository host")
+	}
+	if net.ParseIP(host) == nil {
+		if !strings.Contains(host, ".") {
+			return "", errors.New("invalid repository host")
+		}
+		for _, character := range host {
+			if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '.' || character == '-' {
+				continue
+			}
+			return "", errors.New("invalid repository host")
+		}
+	}
+	if port != "" {
+		return net.JoinHostPort(host, port), nil
+	}
+	return host, nil
 }
 
 // fetchFileContent fetches the content of a file from a remote URL and
