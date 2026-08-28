@@ -173,6 +173,20 @@ func TestACeilingStillBeatsTheManifestOnWhatItNames(t *testing.T) {
 	}
 }
 
+func TestACeilingCanCloseIsolatedDesktopCapabilities(t *testing.T) {
+	useNamedHostCeiling(t, types.Override{}, "displayX11")
+	application := wideApplication()
+	application.ParsedOverride.DisplayX11 = true
+	application.ParsedOverride.Bluetooth = true
+	resolved := resolvedOverride(application)
+	if resolved.DisplayX11 {
+		t.Fatal("the ceiling named displayX11 and did not close it")
+	}
+	if !resolved.Bluetooth {
+		t.Fatal("the ceiling closed Bluetooth although it did not name it")
+	}
+}
+
 // Naming every device permission one at a time and leaving deviceAll unnamed
 // closed nothing: deviceAll mounts the whole of /dev, so it undoes the lot.
 func TestClosingTheDevicesAlsoClosesTheKeyThatGrantsThemAll(t *testing.T) {

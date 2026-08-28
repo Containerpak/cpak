@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -407,6 +408,51 @@ func TestContainerEnvironmentUsesThePrivateDesktopBusForFileSelection(t *testing
 	}
 	if !slicesContain(environment, "GTK_USE_PORTAL=1") {
 		t.Fatalf("GTK file chooser integration is missing from %v", environment)
+	}
+}
+
+func TestContainerEnvironmentUsesPrivateX11AndBluetoothEndpoints(t *testing.T) {
+	app := types.Application{Config: `{"config":{"Env":["DISPLAY=:0","XAUTHORITY=/home/user/.Xauthority","DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"]}}`}
+	container := types.Container{
+		CpakId:                 "container-id",
+		BluetoothBusSocketPath: "/tmp/cpak/bluetooth.sock",
+		X11SocketPath:          "/tmp/cpak/x11.sock",
+		X11Display:             ":42",
+	}
+	environment, err := containerEnvironment(app, resolvedOverride(app), container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"DBUS_SYSTEM_BUS_ADDRESS=unix:path=" + hostSystemBusPath(),
+		"DISPLAY=:42",
+		"XAUTHORITY=" + x11AuthorityTarget,
+	} {
+		if !slicesContain(environment, value) {
+			t.Fatalf("private desktop endpoint %q is missing from %v", value, environment)
+		}
+	}
+	for _, value := range []string{"DISPLAY=:0", "XAUTHORITY=/home/user/.Xauthority"} {
+		if slicesContain(environment, value) {
+			t.Fatalf("host desktop endpoint %q survived in %v", value, environment)
+		}
+	}
+}
+
+func TestPrivateDesktopLinksMountOnlyProxyEndpoints(t *testing.T) {
+	container := types.Container{
+		BluetoothBusSocketPath: "/var/lib/cpak/state/bluetooth.sock",
+		X11SocketPath:          "/var/lib/cpak/state/x11.sock",
+		X11SocketTarget:        "/tmp/.X11-unix/X42",
+		X11AuthorityPath:       "/var/lib/cpak/state/xauthority",
+	}
+	want := []string{
+		"/var/lib/cpak/state/bluetooth.sock:/run/dbus/system_bus_socket",
+		"/var/lib/cpak/state/x11.sock:/tmp/.X11-unix/X42",
+		"/var/lib/cpak/state/xauthority:/run/cpak/xauthority",
+	}
+	if got := privateDesktopLinks(container); !reflect.DeepEqual(got, want) {
+		t.Fatalf("private desktop links: got %v, want %v", got, want)
 	}
 }
 

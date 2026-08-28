@@ -138,10 +138,10 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !c.containerLayerMountAlive(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
 			container.Pid, err = getPidFromEnvContainerId(container.CpakId)
 		}
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !c.containerLayerMountAlive(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
 			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
 			if containerProcessRunning(container) {
 				terminateContainerProcess(container)
@@ -262,9 +262,35 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			return types.Container{}, err
 		}
 	}
+	if override.Bluetooth {
+		container.BluetoothBusSocketPath = filepath.Join(container.StatePath, "bluetooth-bus.sock")
+		container.BluetoothBusProxyPid, err = startBluetoothBusProxy(container)
+		if err != nil {
+			cleanupBluetoothBusProxy(container)
+			cleanupDesktopBusProxy(container)
+			cleanupSystemBrokerRuntime(container)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
+	}
+	if override.DisplayX11 {
+		container, err = startX11Bridge(container)
+		if err != nil {
+			cleanupX11Bridge(container)
+			cleanupBluetoothBusProxy(container)
+			cleanupDesktopBusProxy(container)
+			cleanupSystemBrokerRuntime(container)
+			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+			os.RemoveAll(container.StatePath)
+			return types.Container{}, err
+		}
+	}
 
 	err = store.NewContainer(container)
 	if err != nil {
+		cleanupX11Bridge(container)
+		cleanupBluetoothBusProxy(container)
 		cleanupDesktopBusProxy(container)
 		stopSystemBroker(container.SystemBrokerPid)
 		cleanupSystemBrokerRuntime(container)
@@ -274,6 +300,13 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 	}
 	logger.Println("Container created:", container.CpakId)
 	if err = store.Close(); err != nil {
+		cleanupX11Bridge(container)
+		cleanupBluetoothBusProxy(container)
+		cleanupDesktopBusProxy(container)
+		stopSystemBroker(container.SystemBrokerPid)
+		cleanupSystemBrokerRuntime(container)
+		os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+		os.RemoveAll(container.StatePath)
 		return types.Container{}, err
 	}
 	store = nil
@@ -416,6 +449,12 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if container.DesktopBusSocketPath != "" {
 		overrideMounts = withoutMount(overrideMounts, hostSessionBusPath())
 	}
+	if container.BluetoothBusSocketPath != "" {
+		overrideMounts = withoutMount(overrideMounts, hostSystemBusPath())
+	}
+	if container.X11SocketPath != "" {
+		overrideMounts = withoutMount(overrideMounts, "/tmp/.X11-unix")
+	}
 	filesystemArgs := []string{}
 	for _, permission := range override.Filesystem {
 		encoded, encodeErr := types.EncodeFilesystemPermission(permission)
@@ -519,6 +558,9 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		guestBusPath := hostSessionBusPath()
 		cmds = append(cmds, "--extra-links", container.DesktopBusSocketPath+":"+guestBusPath)
 	}
+	for _, link := range privateDesktopLinks(container) {
+		cmds = append(cmds, "--extra-links", link)
+	}
 	containerEnv := append([]string{}, config.Config.Env...)
 	containerEnv = append(containerEnv, override.Env...)
 	containerEnv = applyAddonEnvironment(containerEnv, addons)
@@ -542,6 +584,13 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	if container.DesktopBusSocketPath != "" {
 		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		containerEnv = setEnvironmentValue(containerEnv, "GTK_USE_PORTAL", "1")
+	}
+	if container.BluetoothBusSocketPath != "" {
+		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+hostSystemBusPath())
+	}
+	if container.X11SocketPath != "" {
+		containerEnv = setEnvironmentValue(containerEnv, "DISPLAY", container.X11Display)
+		containerEnv = setEnvironmentValue(containerEnv, "XAUTHORITY", x11AuthorityTarget)
 	}
 	containerEnv = setEnvironmentValue(containerEnv, "PATH", buildContainerPath(containerEnv))
 	for _, envVar := range containerEnv {
@@ -933,6 +982,13 @@ func containerEnvironment(app types.Application, override types.Override, contai
 		envVars = setEnvironmentValue(envVars, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		envVars = setEnvironmentValue(envVars, "GTK_USE_PORTAL", "1")
 	}
+	if container.BluetoothBusSocketPath != "" {
+		envVars = setEnvironmentValue(envVars, "DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+hostSystemBusPath())
+	}
+	if container.X11SocketPath != "" {
+		envVars = setEnvironmentValue(envVars, "DISPLAY", container.X11Display)
+		envVars = setEnvironmentValue(envVars, "XAUTHORITY", x11AuthorityTarget)
+	}
 	return envVars, nil
 }
 
@@ -1198,8 +1254,17 @@ func containerDesktopBusAlive(container types.Container) bool {
 	return container.DesktopBusProxyPid > 0 && syscall.Kill(container.DesktopBusProxyPid, 0) == nil && socketIsLive(container.DesktopBusSocketPath)
 }
 
+func containerBluetoothBusAlive(container types.Container) bool {
+	if container.BluetoothBusSocketPath == "" {
+		return true
+	}
+	return container.BluetoothBusProxyPid > 0 && syscall.Kill(container.BluetoothBusProxyPid, 0) == nil && socketIsLive(container.BluetoothBusSocketPath)
+}
+
 // CleanupContainer removes the container with the given id.
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
+	cleanupX11Bridge(container)
+	cleanupBluetoothBusProxy(container)
 	cleanupDesktopBusProxy(container)
 	stopLegacyHostExecServer(container.HostExecPid)
 	stopSystemBroker(container.SystemBrokerPid)
@@ -1230,10 +1295,6 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 }
 
 func startDesktopBusProxy(container types.Container, override types.Override) (int, error) {
-	cpakBinary, err := getCpakBinary()
-	if err != nil {
-		return 0, err
-	}
 	upstream := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 	if upstream == "" {
 		upstream = "unix:path=" + hostSessionBusPath()
@@ -1257,10 +1318,32 @@ func startDesktopBusProxy(container types.Container, override types.Override) (i
 			"--token-file", container.SystemBrokerTokenPath,
 		)
 	}
-	command := exec.Command(cpakBinary, arguments...)
-	logFile, err := os.OpenFile(container.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	return startBusProxy(container.LogPath, container.DesktopBusSocketPath, "desktop bus", arguments)
+}
+
+func startBluetoothBusProxy(container types.Container) (int, error) {
+	info, err := os.Stat(hostSystemBusPath())
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return 0, errors.New("Bluetooth requires a host system bus")
+	}
+	arguments := []string{
+		"desktop-bus-proxy",
+		"--bluetooth",
+		"--socket-path", container.BluetoothBusSocketPath,
+		"--upstream-address", "unix:path=" + hostSystemBusPath(),
+	}
+	return startBusProxy(container.LogPath, container.BluetoothBusSocketPath, "Bluetooth bus", arguments)
+}
+
+func startBusProxy(logPath, socketPath, name string, arguments []string) (int, error) {
+	cpakBinary, err := getCpakBinary()
 	if err != nil {
-		return 0, fmt.Errorf("open desktop bus log: %w", err)
+		return 0, err
+	}
+	command := exec.Command(cpakBinary, arguments...)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return 0, fmt.Errorf("open %s log: %w", name, err)
 	}
 	defer logFile.Close()
 	command.Stdin = nil
@@ -1268,13 +1351,13 @@ func startDesktopBusProxy(container types.Container, override types.Override) (i
 	command.Stderr = logFile
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err = command.Start(); err != nil {
-		return 0, fmt.Errorf("start desktop bus proxy: %w", err)
+		return 0, fmt.Errorf("start %s proxy: %w", name, err)
 	}
 	pid := command.Process.Pid
 	_ = command.Process.Release()
-	if err = waitForSocket(container.DesktopBusSocketPath, 3*time.Second); err != nil {
+	if err = waitForSocket(socketPath, 3*time.Second); err != nil {
 		_ = syscall.Kill(pid, syscall.SIGTERM)
-		return 0, fmt.Errorf("start desktop bus proxy: %w", err)
+		return 0, fmt.Errorf("start %s proxy: %w", name, err)
 	}
 	return pid, nil
 }
@@ -1288,8 +1371,35 @@ func cleanupDesktopBusProxy(container types.Container) {
 	}
 }
 
+func cleanupBluetoothBusProxy(container types.Container) {
+	if container.BluetoothBusProxyPid > 0 {
+		_ = syscall.Kill(container.BluetoothBusProxyPid, syscall.SIGTERM)
+	}
+	if container.BluetoothBusSocketPath != "" {
+		_ = os.Remove(container.BluetoothBusSocketPath)
+	}
+}
+
 func hostSessionBusPath() string {
 	return filepath.Join("/run/user", strconv.Itoa(os.Getuid()), "bus")
+}
+
+func hostSystemBusPath() string {
+	return "/run/dbus/system_bus_socket"
+}
+
+func privateDesktopLinks(container types.Container) []string {
+	links := []string{}
+	if container.BluetoothBusSocketPath != "" {
+		links = append(links, container.BluetoothBusSocketPath+":"+hostSystemBusPath())
+	}
+	if container.X11SocketPath != "" {
+		links = append(links,
+			container.X11SocketPath+":"+container.X11SocketTarget,
+			container.X11AuthorityPath+":"+x11AuthorityTarget,
+		)
+	}
+	return links
 }
 
 func withoutMount(mounts []string, excluded string) []string {

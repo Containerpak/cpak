@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -88,6 +89,212 @@ func TestSessionBusPolicyAllowsOnlyDeclaredCallsAndNames(t *testing.T) {
 	}
 }
 
+func TestBluetoothBusAllowsOnlyBluezAndRequiredBusCalls(t *testing.T) {
+	if !bluetoothBusCallAllowed(bluezDestination, "/org/bluez/hci0", "org.bluez.Adapter1", "StartDiscovery", nil, ":1.9") {
+		t.Fatal("a BlueZ call was refused")
+	}
+	if !bluetoothBusCallAllowed("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner", []any{bluezDestination}, ":1.9") {
+		t.Fatal("the BlueZ owner query was refused")
+	}
+	if bluetoothBusCallAllowed("org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "PowerOff", nil, ":1.9") {
+		t.Fatal("an unrelated system service call was allowed")
+	}
+	if bluetoothBusCallAllowed("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", nil, ":1.9") {
+		t.Fatal("system bus enumeration was allowed")
+	}
+}
+
+func TestBluetoothProxyRejectsSessionBusPermissions(t *testing.T) {
+	err := validateOptions(Options{
+		SocketPath:      "/tmp/bluetooth.sock",
+		UpstreamAddress: "unix:path=/run/dbus/system_bus_socket",
+		Bluetooth:       true,
+		Policy: types.DBusPolicy{Talk: []types.DBusCallGrant{{
+			Name: "org.example.Service", Path: "/org/example/Service", Interface: "org.example.Service", Members: []string{"Run"},
+		}}},
+	})
+	if err == nil {
+		t.Fatal("a Bluetooth proxy accepted a session bus policy")
+	}
+}
+
+func TestBluetoothSignalsRequireALiveBluezOwner(t *testing.T) {
+	proxy := &Proxy{options: Options{Bluetooth: true}}
+	message := &dbus.Message{
+		Type: dbus.TypeSignal,
+		Headers: map[dbus.HeaderField]dbus.Variant{
+			dbus.FieldInterface: dbus.MakeVariant("org.freedesktop.DBus.Properties"),
+		},
+	}
+	if !proxy.interceptBluetooth(nil, nil, message) {
+		t.Fatal("a Bluetooth signal became a system bus broadcast without a BlueZ owner")
+	}
+	proxy.bluezSender = ":1.9"
+	if proxy.interceptBluetooth(nil, nil, message) {
+		t.Fatal("a Bluetooth signal addressed to the live BlueZ owner was refused")
+	}
+	if destination, ok := headerValue[string](message, dbus.FieldDestination); !ok || destination != ":1.9" {
+		t.Fatalf("Bluetooth signal destination: %q", destination)
+	}
+}
+
+func TestBluetoothCallbackRepliesReturnToTheirCaller(t *testing.T) {
+	proxy := &Proxy{options: Options{Bluetooth: true}, bluezSender: ":1.9"}
+	wrong := &connectionState{bluetoothReplies: map[uint32]string{}}
+	wrong.allowBluetoothReply(7, ":1.9")
+	message := &dbus.Message{
+		Type: dbus.TypeMethodReply,
+		Headers: map[dbus.HeaderField]dbus.Variant{
+			dbus.FieldReplySerial: dbus.MakeVariant(uint32(7)),
+			dbus.FieldDestination: dbus.MakeVariant(":1.10"),
+		},
+	}
+	if !proxy.interceptBluetooth(nil, wrong, message) {
+		t.Fatal("a BlueZ callback reply was redirected to another system service")
+	}
+	right := &connectionState{bluetoothReplies: map[uint32]string{}}
+	right.allowBluetoothReply(7, ":1.9")
+	message.Headers[dbus.FieldDestination] = dbus.MakeVariant(":1.9")
+	if proxy.interceptBluetooth(nil, right, message) {
+		t.Fatal("a BlueZ callback reply to its caller was refused")
+	}
+}
+
+func TestBluetoothRepliesAcceptOnlyBluezAndTheBusDaemon(t *testing.T) {
+	proxy := &Proxy{options: Options{Bluetooth: true}, bluezSender: ":1.9"}
+	state := &connectionState{bluetoothReplies: map[uint32]string{}}
+	for sender, allowed := range map[string]bool{
+		":1.9":                 true,
+		"org.freedesktop.DBus": true,
+		":1.10":                false,
+	} {
+		message := &dbus.Message{
+			Type: dbus.TypeMethodReply,
+			Headers: map[dbus.HeaderField]dbus.Variant{
+				dbus.FieldSender: dbus.MakeVariant(sender),
+			},
+		}
+		if got := proxy.upstreamMessageAllowed(state, message); got != allowed {
+			t.Fatalf("reply from %s: got %v, want %v", sender, got, allowed)
+		}
+	}
+}
+
+func TestBluezOwnerWatcherTracksServiceRestarts(t *testing.T) {
+	directory := t.TempDir()
+	upstreamPath := filepath.Join(directory, "system.sock")
+	upstream := exec.Command("dbus-daemon", "--session", "--nofork", "--nopidfile", "--address=unix:path="+upstreamPath)
+	upstream.Stdout = os.Stderr
+	upstream.Stderr = os.Stderr
+	if err := upstream.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = upstream.Process.Kill()
+		_ = upstream.Wait()
+	})
+	waitForPath(t, upstreamPath)
+
+	watcher, signals, owner, err := watchBusNameOwner("unix:path="+upstreamPath, bluezDestination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+	if owner != "" {
+		t.Fatalf("an absent BlueZ service has owner %s", owner)
+	}
+	proxy := &Proxy{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go proxy.watchBluezOwner(ctx, signals)
+
+	service, err := dbus.Connect("unix:path=" + upstreamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if reply, requestErr := service.RequestName(bluezDestination, dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("request BlueZ name: %d, %v", reply, requestErr)
+	}
+	var firstOwner string
+	if err = service.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, bluezDestination).Store(&firstOwner); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for proxy.currentBluezSender() != firstOwner && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if proxy.currentBluezSender() != firstOwner {
+		t.Fatalf("BlueZ owner was not recorded: got %s, want %s", proxy.currentBluezSender(), firstOwner)
+	}
+	if releaseReply, releaseErr := service.ReleaseName(bluezDestination); releaseErr != nil || releaseReply != dbus.ReleaseNameReplyReleased {
+		t.Fatalf("release BlueZ name: %d, %v", releaseReply, releaseErr)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for proxy.currentBluezSender() != "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if proxy.currentBluezSender() != "" {
+		t.Fatalf("stopped BlueZ service still has owner %s", proxy.currentBluezSender())
+	}
+
+	replacement, err := dbus.Connect("unix:path=" + upstreamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if reply, requestErr := replacement.RequestName(bluezDestination, dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("replace BlueZ name: %d, %v", reply, requestErr)
+	}
+	var secondOwner string
+	if err = replacement.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, bluezDestination).Store(&secondOwner); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for proxy.currentBluezSender() != secondOwner && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if proxy.currentBluezSender() != secondOwner || secondOwner == firstOwner {
+		t.Fatalf("replacement BlueZ owner: got %s after %s", proxy.currentBluezSender(), firstOwner)
+	}
+}
+
+func TestBluezSenderRecoversBeforeTheOwnerWatcher(t *testing.T) {
+	directory := t.TempDir()
+	upstreamPath := filepath.Join(directory, "system.sock")
+	upstream := exec.Command("dbus-daemon", "--session", "--nofork", "--nopidfile", "--address=unix:path="+upstreamPath)
+	upstream.Stdout = os.Stderr
+	upstream.Stderr = os.Stderr
+	if err := upstream.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = upstream.Process.Kill()
+		_ = upstream.Wait()
+	})
+	waitForPath(t, upstreamPath)
+
+	service, err := dbus.Connect("unix:path=" + upstreamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if reply, requestErr := service.RequestName(bluezDestination, dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("request BlueZ name: %d, %v", reply, requestErr)
+	}
+	var owner string
+	if err = service.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, bluezDestination).Store(&owner); err != nil {
+		t.Fatal(err)
+	}
+	proxy := &Proxy{options: Options{UpstreamAddress: "unix:path=" + upstreamPath}}
+	if !proxy.isBluezSender(owner) {
+		t.Fatal("the live BlueZ owner was refused before the watcher caught up")
+	}
+	if proxy.currentBluezSender() != owner {
+		t.Fatalf("recovered owner: got %s, want %s", proxy.currentBluezSender(), owner)
+	}
+}
+
 type transientProperty struct {
 	Name  string
 	Value dbus.Variant
@@ -105,6 +312,198 @@ type transientService struct {
 func (s transientService) StartTransientUnit(_ string, _ string, _ []transientProperty, _ []transientAuxiliary) *dbus.Error {
 	s.called <- struct{}{}
 	return nil
+}
+
+type bluetoothService struct {
+	connection *dbus.Conn
+	discovered chan struct{}
+}
+
+func (s bluetoothService) StartDiscovery() *dbus.Error {
+	s.discovered <- struct{}{}
+	return nil
+}
+
+func (s bluetoothService) Confirm(sender dbus.Sender, agent dbus.ObjectPath) *dbus.Error {
+	call := s.connection.Object(string(sender), agent).Call("org.bluez.Agent1.RequestConfirmation", 0, dbus.ObjectPath("/org/bluez/hci0/dev_00_11_22_33_44_55"), uint32(123456))
+	if call.Err != nil {
+		return dbus.MakeFailedError(call.Err)
+	}
+	return nil
+}
+
+func (s bluetoothService) ConnectProfile(sender dbus.Sender, profile dbus.ObjectPath) *dbus.Error {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return dbus.MakeFailedError(err)
+	}
+	defer reader.Close()
+	call := s.connection.Object(string(sender), profile).Call(
+		"org.bluez.Profile1.NewConnection",
+		0,
+		dbus.ObjectPath("/org/bluez/hci0/dev_00_11_22_33_44_55"),
+		dbus.UnixFD(writer.Fd()),
+		map[string]dbus.Variant{},
+	)
+	writer.Close()
+	if call.Err != nil {
+		return dbus.MakeFailedError(call.Err)
+	}
+	content := make([]byte, 1)
+	if _, err = reader.Read(content); err != nil {
+		return dbus.MakeFailedError(err)
+	}
+	if content[0] != 0x42 {
+		return dbus.MakeFailedError(errors.New("profile sent an unexpected byte"))
+	}
+	return nil
+}
+
+type bluetoothAgent struct {
+	confirmed chan uint32
+}
+
+func (a bluetoothAgent) RequestConfirmation(_ dbus.ObjectPath, passkey uint32) *dbus.Error {
+	a.confirmed <- passkey
+	return nil
+}
+
+type bluetoothProfile struct {
+	connected chan struct{}
+}
+
+func (p bluetoothProfile) NewConnection(_ dbus.ObjectPath, descriptor dbus.UnixFD, _ map[string]dbus.Variant) *dbus.Error {
+	connection := os.NewFile(uintptr(descriptor), "BlueZ profile connection")
+	if connection == nil {
+		return dbus.MakeFailedError(errors.New("profile connection descriptor is invalid"))
+	}
+	defer connection.Close()
+	if _, err := connection.Write([]byte{0x42}); err != nil {
+		return dbus.MakeFailedError(err)
+	}
+	p.connected <- struct{}{}
+	return nil
+}
+
+func TestBluetoothProxyForwardsBluezOnly(t *testing.T) {
+	directory := t.TempDir()
+	upstreamPath := filepath.Join(directory, "system.sock")
+	upstream := exec.Command("dbus-daemon", "--session", "--nofork", "--nopidfile", "--address=unix:path="+upstreamPath)
+	upstream.Stdout = os.Stderr
+	upstream.Stderr = os.Stderr
+	if err := upstream.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = upstream.Process.Kill()
+		_ = upstream.Wait()
+	})
+	waitForPath(t, upstreamPath)
+
+	service, err := dbus.Connect("unix:path=" + upstreamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { service.Close() })
+	if reply, requestErr := service.RequestName(bluezDestination, dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("request BlueZ name: %d, %v", reply, requestErr)
+	}
+	discovered := make(chan struct{}, 1)
+	if err = service.Export(bluetoothService{connection: service, discovered: discovered}, "/org/bluez/hci0", "org.bluez.Adapter1"); err != nil {
+		t.Fatal(err)
+	}
+
+	proxyPath := filepath.Join(directory, "proxy.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	serveError := make(chan error, 1)
+	go func() {
+		serveError <- Serve(ctx, Options{
+			SocketPath:      proxyPath,
+			UpstreamAddress: "unix:path=" + upstreamPath,
+			Bluetooth:       true,
+		})
+	}()
+	waitForPath(t, proxyPath)
+
+	connection, err := dbus.Connect("unix:path=" + proxyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err = connection.Object(bluezDestination, "/org/bluez/hci0").Call("org.bluez.Adapter1.StartDiscovery", 0).Err; err != nil {
+		t.Fatalf("call BlueZ: %v", err)
+	}
+	select {
+	case <-discovered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the BlueZ method did not reach the service")
+	}
+	if err = connection.BusObject().Call("org.freedesktop.DBus.ListNames", 0).Err; err == nil || !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("system bus enumeration was not denied: %v", err)
+	}
+	if err = connection.Object("org.freedesktop.login1", "/org/freedesktop/login1").Call("org.freedesktop.login1.Manager.PowerOff", 0, false).Err; err == nil || !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("unrelated system service was not denied: %v", err)
+	}
+
+	signals := make(chan *dbus.Signal, 1)
+	connection.Signal(signals)
+	defer connection.RemoveSignal(signals)
+	if err = connection.AddMatchSignal(dbus.WithMatchInterface("org.freedesktop.DBus.Properties"), dbus.WithMatchMember("PropertiesChanged")); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Emit("/org/bluez/hci0", "org.freedesktop.DBus.Properties.PropertiesChanged", "org.bluez.Adapter1", map[string]dbus.Variant{"Discovering": dbus.MakeVariant(true)}, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case signal := <-signals:
+		if signal.Name != "org.freedesktop.DBus.Properties.PropertiesChanged" {
+			t.Fatalf("unexpected BlueZ signal: %s", signal.Name)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the BlueZ signal did not reach the client")
+	}
+
+	confirmed := make(chan uint32, 1)
+	agentPath := dbus.ObjectPath("/org/bluez/cpak_agent")
+	if err = connection.Export(bluetoothAgent{confirmed: confirmed}, agentPath, "org.bluez.Agent1"); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.Object(bluezDestination, "/org/bluez/hci0").Call("org.bluez.Adapter1.Confirm", 0, agentPath).Err; err != nil {
+		t.Fatalf("BlueZ callback: %v", err)
+	}
+	select {
+	case passkey := <-confirmed:
+		if passkey != 123456 {
+			t.Fatalf("unexpected passkey: %d", passkey)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the BlueZ callback did not reach the exported agent")
+	}
+
+	connected := make(chan struct{}, 1)
+	profilePath := dbus.ObjectPath("/org/bluez/cpak_profile")
+	if err = connection.Export(bluetoothProfile{connected: connected}, profilePath, "org.bluez.Profile1"); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.Object(bluezDestination, "/org/bluez/hci0").Call("org.bluez.Adapter1.ConnectProfile", 0, profilePath).Err; err != nil {
+		t.Fatalf("BlueZ profile callback: %v", err)
+	}
+	select {
+	case <-connected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the BlueZ profile descriptor did not reach the client")
+	}
+
+	cancel()
+	select {
+	case err = <-serveError:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Bluetooth proxy did not stop")
+	}
 }
 
 func TestProxyAcceptsExternalAuthenticationWithoutInitialResponse(t *testing.T) {

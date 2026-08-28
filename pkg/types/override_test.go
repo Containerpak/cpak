@@ -123,6 +123,11 @@ func TestUngrantedPermissionsSkipsManifestV3RemovedPermissions(t *testing.T) {
 	if !named["network"] {
 		t.Fatalf("a supported permission the manifest never mentions was not reported: %v", missing)
 	}
+	for _, supported := range []string{"displayX11", "bluetooth"} {
+		if !named[supported] {
+			t.Fatalf("manifest v3 was not told it omits supported permission %s: %v", supported, missing)
+		}
+	}
 }
 
 func TestAManifestThatNamesEveryPermissionHasNothingMissing(t *testing.T) {

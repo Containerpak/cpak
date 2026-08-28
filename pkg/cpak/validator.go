@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -63,9 +64,11 @@ func ManifestV2Schema() *jsonschema.Schema {
 		version.Const = "2.0"
 	}
 	if override, ok := schema.Definitions["Override"]; ok && override.Properties != nil {
-		for _, legacy := range manifestV2RemovedOverrideFields() {
-			override.Properties.Delete(legacy)
+		removed := manifestV2RemovedOverrideFields()
+		for _, field := range removed {
+			override.Properties.Delete(field)
 		}
+		override.Required = slices.DeleteFunc(override.Required, func(field string) bool { return slices.Contains(removed, field) })
 	}
 	return schema
 }
@@ -95,7 +98,7 @@ func ManifestV3Schema() *jsonschema.Schema {
 }
 
 func manifestV2RemovedOverrideFields() []string {
-	return []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus"}
+	return []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus", "displayX11", "bluetooth"}
 }
 
 func manifestV3RemovedOverrideFields() []string {

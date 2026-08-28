@@ -142,6 +142,45 @@ func TestFilteredSessionBusPolicyRequiresManifestVersionThree(t *testing.T) {
 	}
 }
 
+func TestIsolatedDesktopCapabilitiesRequireManifestVersionThree(t *testing.T) {
+	for _, enable := range []func(*types.Override){
+		func(override *types.Override) { override.DisplayX11 = true },
+		func(override *types.Override) { override.Bluetooth = true },
+	} {
+		manifest := validManifestForTest()
+		enable(&manifest.Override)
+		if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+			t.Fatalf("a v2 manifest used an isolated desktop capability: %+v", manifest.Override)
+		}
+		manifest.ManifestVersion = "3.0"
+		manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+		if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+			t.Fatalf("a v3 isolated desktop capability was refused: %v", err)
+		}
+	}
+}
+
+func TestSessionDesktopCapabilitiesRequireManifestVersionThree(t *testing.T) {
+	for _, enable := range []func(*types.Override){
+		func(override *types.Override) { override.DisplayX11 = true },
+		func(override *types.Override) { override.Bluetooth = true },
+	} {
+		manifest := validManifestForTest()
+		manifest.Sessions = []types.Session{{
+			ID: "desktop", Name: "Desktop", Kind: "desktop", Entrypoint: manifest.Binaries[0],
+		}}
+		enable(&manifest.Sessions[0].Override)
+		if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+			t.Fatalf("a v2 session used an isolated desktop capability: %+v", manifest.Sessions[0].Override)
+		}
+		manifest.ManifestVersion = "3.0"
+		manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+		if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+			t.Fatalf("a v3 session desktop capability was refused: %v", err)
+		}
+	}
+}
+
 func TestValidateManifestAcceptsAddonProvider(t *testing.T) {
 	manifest := validManifestForTest()
 	manifest.AddonProvider = &types.AddonProvider{

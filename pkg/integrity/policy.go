@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	PolicySchemaWithoutSerial     = 1
-	PolicySchemaWithoutSessionBus = 2
-	CurrentPolicySchema           = 3
+	PolicySchemaWithoutSerial              = 1
+	PolicySchemaWithoutSessionBus          = 2
+	PolicySchemaWithoutDesktopCapabilities = 3
+	CurrentPolicySchema                    = 4
 )
 
 // PolicyRoot hashes what an application is allowed to do. Lists whose order
@@ -52,7 +53,11 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if len(withoutSessionBus) == len(withoutSerial) {
 			return "", errors.New("session bus field is missing from the current policy schema")
 		}
-		return digestJSON("policy", withoutSessionBus), nil
+		withoutDesktopCapabilities, err := removeDesktopCapabilityFields(withoutSessionBus)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutDesktopCapabilities), nil
 	case PolicySchemaWithoutSessionBus:
 		if canonical.SessionBus.Enabled() {
 			return "", errors.New("session bus rules are not part of this policy schema")
@@ -65,12 +70,41 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if len(withoutSessionBus) == len(encoded) {
 			return "", errors.New("session bus field is missing from the current policy schema")
 		}
-		return digestJSON("policy", withoutSessionBus), nil
+		withoutDesktopCapabilities, err := removeDesktopCapabilityFields(withoutSessionBus)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutDesktopCapabilities), nil
+	case PolicySchemaWithoutDesktopCapabilities:
+		if canonical.DisplayX11 || canonical.Bluetooth {
+			return "", errors.New("desktop capabilities are not part of this policy schema")
+		}
+		encoded, err := json.Marshal(canonical)
+		if err != nil {
+			return "", err
+		}
+		withoutDesktopCapabilities, err := removeDesktopCapabilityFields(encoded)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutDesktopCapabilities), nil
 	case CurrentPolicySchema:
 		return digest("policy", canonical)
 	default:
 		return "", fmt.Errorf("unsupported policy schema %d", schema)
 	}
+}
+
+func removeDesktopCapabilityFields(encoded []byte) ([]byte, error) {
+	withoutDisplay := bytes.Replace(encoded, []byte(`,"displayX11":false`), nil, 1)
+	if len(withoutDisplay) == len(encoded) {
+		return nil, errors.New("X11 display field is missing from the current policy schema")
+	}
+	withoutBluetooth := bytes.Replace(withoutDisplay, []byte(`,"bluetooth":false`), nil, 1)
+	if len(withoutBluetooth) == len(withoutDisplay) {
+		return nil, errors.New("Bluetooth field is missing from the current policy schema")
+	}
+	return withoutBluetooth, nil
 }
 
 func canonicalPolicy(override types.Override) types.Override {
@@ -103,6 +137,7 @@ func Restricts(current, candidate types.Override) bool {
 	candidate = candidate.WithMigratedFilesystem()
 	for _, pair := range [][2]bool{
 		{candidate.SocketX11, current.SocketX11},
+		{candidate.DisplayX11, current.DisplayX11},
 		{candidate.SocketWayland, current.SocketWayland},
 		{candidate.SocketPulseAudio, current.SocketPulseAudio},
 		{candidate.SocketSessionBus, current.SocketSessionBus},
@@ -112,6 +147,7 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.SocketGpgAgent, current.SocketGpgAgent},
 		{candidate.SocketAtSpiBus, current.SocketAtSpiBus},
 		{candidate.SocketBluetooth, current.SocketBluetooth},
+		{candidate.Bluetooth, current.Bluetooth},
 		{candidate.DeviceDri, current.DeviceDri},
 		{candidate.DeviceKvm, current.DeviceKvm},
 		{candidate.DeviceShm, current.DeviceShm},

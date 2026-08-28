@@ -618,6 +618,21 @@ func TestEnrolmentReadsAndSupersedesAPolicyFromBeforeSerialDevices(t *testing.T)
 	}
 }
 
+func TestEnrolmentRecognizesAPolicyFromBeforeDesktopCapabilities(t *testing.T) {
+	policy := types.Override{SocketWayland: true, Network: true}
+	root, err := integrity.PolicyRootForSchema(policy, integrity.PolicySchemaWithoutDesktopCapabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := matchingPolicySchema(&policy, root, 0, "enrolment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if schema != integrity.PolicySchemaWithoutDesktopCapabilities {
+		t.Fatalf("legacy policy uses schema %d", schema)
+	}
+}
+
 func TestForgottenAnchorReadsAPolicyFromBeforeSerialDevices(t *testing.T) {
 	ledger := testAnchorLedger(t)
 	policy := types.Override{SocketWayland: true, Network: true}

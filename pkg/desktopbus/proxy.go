@@ -25,6 +25,7 @@ import (
 
 const (
 	portalDestination    = "org.freedesktop.portal.Desktop"
+	bluezDestination     = "org.bluez"
 	fileChooserInterface = "org.freedesktop.portal.FileChooser"
 	requestInterface     = "org.freedesktop.portal.Request"
 	portalObjectPath     = dbus.ObjectPath("/org/freedesktop/portal/desktop")
@@ -38,6 +39,7 @@ type Options struct {
 	BrokerSocketPath string
 	BrokerToken      string
 	FilePicker       bool
+	Bluetooth        bool
 	Policy           types.DBusPolicy
 	PickFile         func(context.Context, systembroker.FilePickerRequest) (systembroker.FilePickerResult, error)
 }
@@ -45,14 +47,16 @@ type Options struct {
 type Proxy struct {
 	options      Options
 	portalSender string
+	bluezSender  string
 	mu           sync.Mutex
 	requests     map[dbus.ObjectPath]context.CancelFunc
 }
 
 type connectionState struct {
-	mu          sync.RWMutex
-	uniqueName  string
-	helloSerial uint32
+	mu               sync.RWMutex
+	uniqueName       string
+	helloSerial      uint32
+	bluetoothReplies map[uint32]string
 }
 
 func Serve(ctx context.Context, options Options) error {
@@ -77,10 +81,22 @@ func Serve(ctx context.Context, options Options) error {
 		return fmt.Errorf("restrict desktop bus socket: %w", err)
 	}
 	portalSender := portalDestination
-	if owner, ownerErr := resolveBusNameOwner(options.UpstreamAddress, portalDestination); ownerErr == nil {
+	bluezSender := ""
+	var bluezWatcher *dbus.Conn
+	var bluezSignals chan *dbus.Signal
+	if options.Bluetooth {
+		bluezWatcher, bluezSignals, bluezSender, err = watchBusNameOwner(options.UpstreamAddress, bluezDestination)
+		if err != nil {
+			return fmt.Errorf("watch BlueZ owner: %w", err)
+		}
+		defer bluezWatcher.Close()
+	} else if owner, ownerErr := resolveBusNameOwner(options.UpstreamAddress, portalDestination); ownerErr == nil {
 		portalSender = owner
 	}
-	proxy := &Proxy{options: options, portalSender: portalSender, requests: map[dbus.ObjectPath]context.CancelFunc{}}
+	proxy := &Proxy{options: options, portalSender: portalSender, bluezSender: bluezSender, requests: map[dbus.ObjectPath]context.CancelFunc{}}
+	if bluezWatcher != nil {
+		go proxy.watchBluezOwner(ctx, bluezSignals)
+	}
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -115,6 +131,9 @@ func validateOptions(options Options) error {
 	if err := types.ValidateDBusPolicy(options.Policy); err != nil {
 		return err
 	}
+	if options.Bluetooth && (options.FilePicker || options.Policy.Enabled()) {
+		return errors.New("Bluetooth proxy cannot carry session bus permissions")
+	}
 	if options.FilePicker && options.PickFile == nil && (!filepath.IsAbs(options.BrokerSocketPath) || len(options.BrokerToken) < 32) {
 		return errors.New("desktop bus broker credentials are invalid")
 	}
@@ -138,7 +157,7 @@ func (p *Proxy) serveConnection(parent context.Context, raw *net.UnixConn) {
 	defer cancel()
 	client := &serializedConn{UnixConn: raw}
 	client.serial.Store(1 << 30)
-	state := &connectionState{}
+	state := &connectionState{bluetoothReplies: map[uint32]string{}}
 	errorsChannel := make(chan error, 2)
 	go func() {
 		for {
@@ -149,7 +168,7 @@ func (p *Proxy) serveConnection(parent context.Context, raw *net.UnixConn) {
 			}
 			message := packet.message
 			state.observeUpstream(message)
-			if !restrictedUpstreamMessage(message, p.options.Policy) {
+			if !p.upstreamMessageAllowed(state, message) {
 				packet.closeFDs()
 				continue
 			}
@@ -242,7 +261,39 @@ func resolveBusNameOwner(address, name string) (string, error) {
 	return owner, nil
 }
 
+func watchBusNameOwner(address, name string) (*dbus.Conn, chan *dbus.Signal, string, error) {
+	connection, err := dbus.Connect(address)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	signals := make(chan *dbus.Signal, 1)
+	connection.Signal(signals)
+	if err = connection.AddMatchSignal(
+		dbus.WithMatchSender("org.freedesktop.DBus"),
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchMember("NameOwnerChanged"),
+		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
+		dbus.WithMatchArg(0, name),
+	); err != nil {
+		connection.RemoveSignal(signals)
+		connection.Close()
+		return nil, nil, "", err
+	}
+	owner := ""
+	if callErr := connection.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, name).Store(&owner); callErr != nil {
+		if dbusErr, ok := callErr.(dbus.Error); !ok || dbusErr.Name != "org.freedesktop.DBus.Error.NameHasNoOwner" {
+			connection.RemoveSignal(signals)
+			connection.Close()
+			return nil, nil, "", callErr
+		}
+	}
+	return connection, signals, owner, nil
+}
+
 func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *connectionState, message *dbus.Message) bool {
+	if p.options.Bluetooth {
+		return p.interceptBluetooth(client, state, message)
+	}
 	if message.Type != dbus.TypeMethodCall {
 		// Default-deny used to cover method calls and nothing else, so a
 		// confined client's signals, replies and errors went to the real
@@ -288,6 +339,57 @@ func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *co
 	}
 	_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "session bus access is not permitted"))
 	return true
+}
+
+func (p *Proxy) interceptBluetooth(client *serializedConn, state *connectionState, message *dbus.Message) bool {
+	if message.Type == dbus.TypeMethodReply || message.Type == dbus.TypeError {
+		replySerial, _ := headerValue[uint32](message, dbus.FieldReplySerial)
+		destination, _ := headerValue[string](message, dbus.FieldDestination)
+		return !state.takeBluetoothReply(replySerial, destination)
+	}
+	if message.Type == dbus.TypeSignal {
+		interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
+		if interfaceName != "org.freedesktop.DBus.Properties" && interfaceName != "org.freedesktop.DBus.ObjectManager" && !strings.HasPrefix(interfaceName, "org.bluez.") {
+			return true
+		}
+		owner := p.currentBluezSender()
+		if owner == "" {
+			return true
+		}
+		message.Headers[dbus.FieldDestination] = dbus.MakeVariant(owner)
+		return false
+	}
+	if message.Type != dbus.TypeMethodCall {
+		return true
+	}
+	path, _ := headerValue[dbus.ObjectPath](message, dbus.FieldPath)
+	interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
+	member, _ := headerValue[string](message, dbus.FieldMember)
+	destination, _ := headerValue[string](message, dbus.FieldDestination)
+	if bluetoothBusCallAllowed(destination, path, interfaceName, member, message.Body, p.currentBluezSender()) {
+		return false
+	}
+	_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "Bluetooth bus access is not permitted"))
+	return true
+}
+
+func bluetoothBusCallAllowed(destination string, path dbus.ObjectPath, interfaceName, member string, body []any, bluezSender string) bool {
+	if destination == bluezDestination || bluezSender != "" && destination == bluezSender {
+		return true
+	}
+	if destination != "org.freedesktop.DBus" || path != dbus.ObjectPath("/org/freedesktop/DBus") || interfaceName != "org.freedesktop.DBus" {
+		return false
+	}
+	switch member {
+	case "Hello", "GetId", "AddMatch", "RemoveMatch":
+		return true
+	case "GetNameOwner", "NameHasOwner":
+		return len(body) == 1 && body[0] == bluezDestination
+	case "StartServiceByName":
+		return len(body) == 2 && body[0] == bluezDestination
+	default:
+		return false
+	}
 }
 
 func restrictedBusMatchCall(destination string, path dbus.ObjectPath, interfaceName, member string) bool {
@@ -351,6 +453,89 @@ func restrictedUpstreamMessage(message *dbus.Message, policy types.DBusPolicy) b
 	return ok && (strings.HasPrefix(name, ":") || policy.AllowsOwn(name))
 }
 
+func (p *Proxy) upstreamMessageAllowed(state *connectionState, message *dbus.Message) bool {
+	if !p.options.Bluetooth {
+		return restrictedUpstreamMessage(message, p.options.Policy)
+	}
+	sender, _ := headerValue[string](message, dbus.FieldSender)
+	if message.Type == dbus.TypeMethodReply || message.Type == dbus.TypeError {
+		return sender == "org.freedesktop.DBus" || p.isBluezSender(sender)
+	}
+	if !p.isBluezSender(sender) {
+		if message.Type != dbus.TypeSignal || sender != "org.freedesktop.DBus" {
+			return false
+		}
+		interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
+		member, _ := headerValue[string](message, dbus.FieldMember)
+		if interfaceName != "org.freedesktop.DBus" {
+			return false
+		}
+		if member == "NameAcquired" || member == "NameLost" {
+			return true
+		}
+		return member == "NameOwnerChanged" && len(message.Body) == 3 && message.Body[0] == bluezDestination
+	}
+	if message.Type == dbus.TypeSignal {
+		return true
+	}
+	if message.Type != dbus.TypeMethodCall {
+		return false
+	}
+	destination, _ := headerValue[string](message, dbus.FieldDestination)
+	if destination != state.clientName() {
+		return false
+	}
+	state.allowBluetoothReply(message.Serial(), sender)
+	return true
+}
+
+func (p *Proxy) watchBluezOwner(ctx context.Context, signals <-chan *dbus.Signal) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case signal, open := <-signals:
+			if !open {
+				return
+			}
+			if signal == nil || len(signal.Body) != 3 || signal.Body[0] != bluezDestination {
+				continue
+			}
+			owner, ok := signal.Body[2].(string)
+			if !ok {
+				continue
+			}
+			p.mu.Lock()
+			p.bluezSender = owner
+			p.mu.Unlock()
+		}
+	}
+}
+
+func (p *Proxy) currentBluezSender() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.bluezSender
+}
+
+func (p *Proxy) isBluezSender(sender string) bool {
+	owner := p.currentBluezSender()
+	if owner != "" && sender == owner {
+		return true
+	}
+	if !strings.HasPrefix(sender, ":") {
+		return false
+	}
+	owner, err := resolveBusNameOwner(p.options.UpstreamAddress, bluezDestination)
+	if err != nil || sender != owner {
+		return false
+	}
+	p.mu.Lock()
+	p.bluezSender = owner
+	p.mu.Unlock()
+	return true
+}
+
 func (s *connectionState) observeClient(message *dbus.Message) {
 	if message.Type != dbus.TypeMethodCall {
 		return
@@ -401,6 +586,20 @@ func (s *connectionState) clientName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.uniqueName
+}
+
+func (s *connectionState) allowBluetoothReply(serial uint32, sender string) {
+	s.mu.Lock()
+	s.bluetoothReplies[serial] = sender
+	s.mu.Unlock()
+}
+
+func (s *connectionState) takeBluetoothReply(serial uint32, destination string) bool {
+	s.mu.Lock()
+	expected := s.bluetoothReplies[serial]
+	delete(s.bluetoothReplies, serial)
+	s.mu.Unlock()
+	return expected != "" && destination == expected
 }
 
 func validHandlePart(value string) bool {

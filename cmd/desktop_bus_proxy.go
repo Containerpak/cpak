@@ -23,6 +23,7 @@ type DesktopBusProxyCmd struct {
 	BrokerSocketPath string `cli:"broker-socket-path" help:"Path for the cpak broker socket"`
 	TokenFile        string `cli:"token-file" help:"File containing the broker token"`
 	FilePicker       bool   `cli:"file-picker" help:"Enable the native file chooser broker"`
+	Bluetooth        bool   `cli:"bluetooth" help:"Expose only BlueZ on a private system bus socket"`
 	Policy           string `cli:"policy" help:"Encoded filtered session bus policy"`
 
 	cli.Base
@@ -42,7 +43,11 @@ func (c *DesktopBusProxyCmd) Run() error {
 	}
 	upstream := c.UpstreamAddress
 	if upstream == "" {
-		upstream = os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+		if c.Bluetooth {
+			upstream = "unix:path=/run/dbus/system_bus_socket"
+		} else {
+			upstream = os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+		}
 	}
 	if upstream == "" {
 		return errors.New("host session bus address is required")
@@ -55,6 +60,7 @@ func (c *DesktopBusProxyCmd) Run() error {
 		BrokerSocketPath: c.BrokerSocketPath,
 		BrokerToken:      token,
 		FilePicker:       c.FilePicker,
+		Bluetooth:        c.Bluetooth,
 		Policy:           policy,
 	})
 }

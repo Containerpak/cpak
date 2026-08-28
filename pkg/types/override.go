@@ -14,6 +14,7 @@ import (
 
 type Override struct {
 	SocketX11        bool `json:"socketX11" jsonschema:"description=Unsupported legacy raw X11 socket access,default=false" flag:"socketX11,bool"`
+	DisplayX11       bool `json:"displayX11" jsonschema:"description=Run an isolated X11 compatibility display,default=false" flag:"displayX11,bool"`
 	SocketWayland    bool `json:"socketWayland" jsonschema:"description=Mount Wayland socket,default=false" flag:"socketWayland,bool"`
 	SocketPulseAudio bool `json:"socketPulseAudio" jsonschema:"description=Mount PulseAudio socket,default=false" flag:"socketPulseAudio,bool"`
 	SocketSessionBus bool `json:"socketSessionBus" jsonschema:"description=Unsupported legacy raw session bus access,default=false" flag:"socketSessionBus,bool"`
@@ -23,6 +24,7 @@ type Override struct {
 	SocketGpgAgent   bool `json:"socketGpgAgent" jsonschema:"description=Mount GPG agent socket,default=false" flag:"socketGpgAgent,bool"`
 	SocketAtSpiBus   bool `json:"socketAtSpiBus" jsonschema:"description=Mount AT-SPI bus socket,default=false" flag:"socketAtSpiBus,bool"`
 	SocketBluetooth  bool `json:"socketBluetooth" jsonschema:"description=Mount Bluetooth socket,default=false" flag:"socketBluetooth,bool"`
+	Bluetooth        bool `json:"bluetooth" jsonschema:"description=Expose the general BlueZ API through a private proxy,default=false" flag:"bluetooth,bool"`
 
 	DeviceDri   bool `json:"deviceDri" jsonschema:"description=Expose /dev/dri,default=false" flag:"deviceDri,bool"`
 	DeviceKvm   bool `json:"deviceKvm" jsonschema:"description=Expose /dev/kvm,default=false" flag:"deviceKvm,bool"`
@@ -109,6 +111,7 @@ func ValidateFilePickerGrant(grant FilePickerGrant) error {
 func NewOverride() Override {
 	return Override{
 		SocketX11:           false,
+		DisplayX11:          false,
 		SocketWayland:       false,
 		SocketPulseAudio:    false,
 		SocketSessionBus:    false,
@@ -117,6 +120,7 @@ func NewOverride() Override {
 		SocketCups:          false,
 		SocketGpgAgent:      false,
 		SocketAtSpiBus:      false,
+		Bluetooth:           false,
 		DeviceDri:           false,
 		DeviceKvm:           false,
 		DeviceShm:           false,

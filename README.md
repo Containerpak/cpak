@@ -175,6 +175,18 @@ Graphical packages can declare any combination of `desktop`, `phone`, `tablet`,
 `tv` and `watch` in `form_factors`. Package stores may use the list for device
 filters. Leaving it out means that support was not declared.
 
+Set `displayX11` when an application needs X11 compatibility. cpak starts one
+nested display for the container and mounts only its socket and authority file.
+It uses Xwayland on a Wayland session or Xephyr on an X11 session. The host X11
+display is not exposed.
+
+Set `bluetooth` to expose the BlueZ service through a private system bus proxy.
+The permission covers general BlueZ use, including discovery, pairing, GATT,
+agents, profiles and file descriptor passing. Calls to other system services
+and raw HCI access remain blocked. This needs BlueZ and its existing system bus
+on hosts where the permission is used, but cpak does not invoke `dbus-daemon` or
+an external D-Bus proxy.
+
 `runtime_sources` adds checksum-pinned artifacts to a managed runtime layer.
 Use the `dpkg` or `rpm` installer for native packages. Use `deb-extract` when a
 Debian package must be unpacked without running maintainer scripts or checking
@@ -283,12 +295,13 @@ cpak doctor
 `cpak doctor` reports the active enforcement, signature and trust settings and
 the number of installed applications that are not enrolled.
 
-Filtered session bus access and the file chooser use a native proxy exposed on
-a private Unix socket. cpak does not require a D-Bus daemon or an external D-Bus
-proxy unless an application declares one of those desktop permissions. Desktop
-notifications and external URIs use the system broker instead. It is
-enabled with the `notification` and `openURI` permissions and exposes only the
-matching shim. The application never receives the host D-Bus socket or command.
+Filtered session bus access, Bluetooth and the file chooser use native proxies
+exposed on private Unix sockets. The Bluetooth proxy talks only to BlueZ and is
+started only for a package that declares `bluetooth`. cpak does not invoke a
+D-Bus daemon or an external D-Bus proxy. Desktop notifications and external
+URIs use the system broker instead. It is enabled with the `notification` and
+`openURI` permissions and exposes only the matching shim. The application never
+receives a raw host D-Bus socket or command.
 
 ### File selection
 

@@ -197,6 +197,19 @@ func TestRestrictsSessionBusRules(t *testing.T) {
 	}
 }
 
+func TestRestrictsIsolatedDesktopCapabilities(t *testing.T) {
+	wide := types.Override{DisplayX11: true, Bluetooth: true}
+	if !Restricts(wide, types.Override{DisplayX11: true}) {
+		t.Fatal("dropping Bluetooth was not recognized as a restriction")
+	}
+	if Restricts(types.Override{DisplayX11: true}, wide) {
+		t.Fatal("adding Bluetooth was accepted as a restriction")
+	}
+	if Restricts(types.Override{}, types.Override{DisplayX11: true}) {
+		t.Fatal("adding an isolated X11 display was accepted as a restriction")
+	}
+}
+
 func TestPolicyRootReadsTheSchemaBeforeSerialDevices(t *testing.T) {
 	policy := types.Override{SocketWayland: true, Network: true}
 	legacy, err := PolicyRootForSchema(policy, PolicySchemaWithoutSerial)
@@ -213,11 +226,18 @@ func TestPolicyRootReadsTheSchemaBeforeSerialDevices(t *testing.T) {
 	if withoutSessionBus != "d52cc55c1926145efb578cd47ca4e30aad5e4ee36769a6ffa82a799a3ca1813a" {
 		t.Fatalf("policy root without session bus changed to %s", withoutSessionBus)
 	}
+	withoutDesktopCapabilities, err := PolicyRootForSchema(policy, PolicySchemaWithoutDesktopCapabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutDesktopCapabilities != "384e94f695f06276a4c5b9f2ca519ab456be23e853c932beac05f2847271c60d" {
+		t.Fatalf("policy root without desktop capabilities changed to %s", withoutDesktopCapabilities)
+	}
 	current, err := PolicyRoot(policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != "384e94f695f06276a4c5b9f2ca519ab456be23e853c932beac05f2847271c60d" {
+	if current != "2d4b6c81b3d9b1dc76acc3ad274833c12917e33815fb26ac0f9aca2b61f3bc35" {
 		t.Fatalf("current policy root changed to %s", current)
 	}
 }

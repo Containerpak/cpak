@@ -262,6 +262,11 @@
     },
     "Override": {
       "properties": {
+        "displayX11": {
+          "type": "boolean",
+          "description": "Run an isolated X11 compatibility display",
+          "default": false
+        },
         "socketWayland": {
           "type": "boolean",
           "description": "Mount Wayland socket",
@@ -285,6 +290,11 @@
         "socketGpgAgent": {
           "type": "boolean",
           "description": "Mount GPG agent socket",
+          "default": false
+        },
+        "bluetooth": {
+          "type": "boolean",
+          "description": "Expose the general BlueZ API through a private proxy",
           "default": false
         },
         "deviceDri": {

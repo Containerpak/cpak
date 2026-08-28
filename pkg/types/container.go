@@ -62,6 +62,27 @@ type Container struct {
 	// DesktopBusSocketPath is the private session bus socket mounted into the container.
 	DesktopBusSocketPath string `json:"desktop_bus_socket_path"`
 
+	// BluetoothBusProxyPid is the PID of the BlueZ-only system bus proxy.
+	BluetoothBusProxyPid int `json:"bluetooth_bus_proxy_pid"`
+
+	// BluetoothBusSocketPath is the private BlueZ bus mounted into the container.
+	BluetoothBusSocketPath string `json:"bluetooth_bus_socket_path"`
+
+	// X11BridgePid is the PID of the per-container nested X server.
+	X11BridgePid int `json:"x11_bridge_pid"`
+
+	// X11Display is the private display name used inside the container.
+	X11Display string `json:"x11_display"`
+
+	// X11SocketPath is the nested server socket mounted into the container.
+	X11SocketPath string `json:"x11_socket_path"`
+
+	// X11SocketTarget is the conventional display socket path inside the container.
+	X11SocketTarget string `json:"x11_socket_target"`
+
+	// X11AuthorityPath authenticates the container to its nested server.
+	X11AuthorityPath string `json:"x11_authority_path"`
+
 	// ExecSocketPath is the host path used to submit commands to the container init.
 	ExecSocketPath string `json:"exec_socket_path"`
 

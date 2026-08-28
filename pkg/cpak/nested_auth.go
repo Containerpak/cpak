@@ -284,6 +284,7 @@ var hostCeiling = func() systemauthority.Ceiling { return systemauthority.HostCe
 func intersectOverrides(parent, child types.Override) types.Override {
 	return types.Override{
 		SocketX11:           parent.SocketX11 && child.SocketX11,
+		DisplayX11:          parent.DisplayX11 && child.DisplayX11,
 		SocketWayland:       parent.SocketWayland && child.SocketWayland,
 		SocketPulseAudio:    parent.SocketPulseAudio && child.SocketPulseAudio,
 		SocketSessionBus:    parent.SocketSessionBus && child.SocketSessionBus,
@@ -293,6 +294,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		SocketGpgAgent:      parent.SocketGpgAgent && child.SocketGpgAgent,
 		SocketAtSpiBus:      parent.SocketAtSpiBus && child.SocketAtSpiBus,
 		SocketBluetooth:     parent.SocketBluetooth && child.SocketBluetooth,
+		Bluetooth:           parent.Bluetooth && child.Bluetooth,
 		DeviceDri:           parent.DeviceDri && child.DeviceDri,
 		DeviceKvm:           parent.DeviceKvm && child.DeviceKvm,
 		DeviceShm:           parent.DeviceShm && child.DeviceShm,

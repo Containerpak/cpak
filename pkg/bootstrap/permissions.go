@@ -21,6 +21,9 @@ func SummarizePermissions(override types.Override) []Permission {
 	}
 
 	displays := []string{}
+	if override.DisplayX11 {
+		displays = append(displays, "isolated X11 compatibility display")
+	}
 	if override.SocketX11 {
 		displays = append(displays, "X11 (no input or screen isolation)")
 	}
@@ -38,6 +41,7 @@ func SummarizePermissions(override types.Override) []Permission {
 	add(override.SocketGpgAgent, "GPG agent", "host signing socket")
 	add(override.SocketAtSpiBus, "Accessibility", "AT-SPI")
 	add(override.SocketBluetooth, "Bluetooth", "Bluetooth socket")
+	add(override.Bluetooth, "Bluetooth", "general BlueZ service through a private proxy")
 
 	devices := []string{}
 	if override.DeviceAll {

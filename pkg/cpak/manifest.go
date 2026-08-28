@@ -105,9 +105,6 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if err = validateSessions(manifest); err != nil {
 		return err
 	}
-	if manifest.Override.SocketBluetooth && !manifest.Override.Network {
-		return errors.New("Bluetooth access requires network namespace sharing")
-	}
 	if manifest.ManifestVersion == "1.0" {
 		if len(manifest.Override.HostActions) > 0 {
 			return errors.New("host actions require manifest version 2.0")
@@ -136,6 +133,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 }
 
 func validateManifestBusPolicy(version, scope string, override types.Override) error {
+	if (override.DisplayX11 || override.Bluetooth) && version != "3.0" {
+		return fmt.Errorf("%s isolated desktop capabilities require manifest version 3.0", scope)
+	}
 	for _, permission := range []struct {
 		enabled bool
 		name    string

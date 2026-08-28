@@ -222,6 +222,18 @@ func TestAuthorizeNestedRunDropsParentAndChildOnlyPermissions(t *testing.T) {
 	}
 }
 
+func TestNestedDesktopCapabilitiesNeedBothApplications(t *testing.T) {
+	parent := types.Override{DisplayX11: true, Bluetooth: false}
+	child := types.Override{DisplayX11: true, Bluetooth: true}
+	intersection := intersectOverrides(parent, child)
+	if !intersection.DisplayX11 {
+		t.Fatal("an isolated X11 display granted by both applications was dropped")
+	}
+	if intersection.Bluetooth {
+		t.Fatal("a child gained Bluetooth that its parent did not grant")
+	}
+}
+
 func TestAuthorizeNestedRunRejectsUnexportedBinary(t *testing.T) {
 	cp, _, child, nestedToken := nestedAuthFixtureWithToken(t)
 	_, err := cp.authorizeNestedRun(types.RequestParams{
