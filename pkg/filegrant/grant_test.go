@@ -72,6 +72,34 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStoreClearRemovesPersistentGrants(t *testing.T) {
+	selected := filepath.Join(t.TempDir(), "document.pdf")
+	if err := os.WriteFile(selected, []byte("pdf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := Resolve("github.com/example/app", selected, AccessReadOnly, LifetimePersistent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Directory: filepath.Join(t.TempDir(), "grants")}
+	if err = store.Add(grant); err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.path(grant.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Clear(grant.Origin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("file grant store still exists: %v", err)
+	}
+	if err = store.Clear(grant.Origin); err != nil {
+		t.Fatalf("clear absent file grant store: %v", err)
+	}
+}
+
 func TestOpenSourceRejectsSymlinkSubstitution(t *testing.T) {
 	directory := t.TempDir()
 	selected := filepath.Join(directory, "document.pdf")

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mirkobrombin/cpak/pkg/filegrant"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -258,6 +259,150 @@ func TestRemoveDesktopAliasChecksPackageIdentity(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("owned alias was not removed: %v", err)
+	}
+}
+
+func TestRemoveResolvesTheInstalledBranch(t *testing.T) {
+	cp := newTestCpak(t)
+	useEnrolmentAuthority(t)
+	app := types.Application{
+		CpakId: "demo-master",
+		Name:   "demo",
+		Origin: testOrigin,
+		Branch: "master",
+	}
+	seedApplication(t, cp, app)
+	home, err := cp.privateApplicationHome(app.CpakId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(home, "state")
+	if err = os.WriteFile(state, []byte("kept"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = cp.Remove(app.Origin, "", "", ""); err != nil {
+		t.Fatalf("remove installed branch: %v", err)
+	}
+	if apps := storedApplications(t, cp); len(apps) != 0 {
+		t.Fatalf("installed applications: %+v", apps)
+	}
+	if _, err = os.Stat(state); err != nil {
+		t.Fatalf("persistent application data was removed: %v", err)
+	}
+}
+
+func TestRemoveRequiresASelectorForMultipleInstallations(t *testing.T) {
+	cp := newTestCpak(t)
+	for _, branch := range []string{"master", "stable"} {
+		seedApplication(t, cp, types.Application{
+			CpakId: "demo-" + branch,
+			Name:   "demo",
+			Origin: testOrigin,
+			Branch: branch,
+		})
+	}
+
+	err := cp.Remove(testOrigin, "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "multiple installations") {
+		t.Fatalf("remove error: %v", err)
+	}
+	if apps := storedApplications(t, cp); len(apps) != 2 {
+		t.Fatalf("installed applications after rejected removal: %+v", apps)
+	}
+}
+
+func TestPurgeRemovesPersistentApplicationData(t *testing.T) {
+	cp := newTestCpak(t)
+	useEnrolmentAuthority(t)
+	app := types.Application{
+		CpakId: "demo-master",
+		Name:   "demo",
+		Origin: testOrigin,
+		Branch: "master",
+	}
+	seedApplication(t, cp, app)
+	home, err := cp.privateApplicationHome(app.CpakId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(home, "state"), []byte("purge"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cp.applicationMachineID(app.CpakId); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := cp.applicationIdentityPath(app.CpakId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := filepath.Join(t.TempDir(), "document")
+	if err = os.WriteFile(selected, []byte("document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := filegrant.Resolve(app.Origin, selected, filegrant.AccessReadOnly, filegrant.LifetimePersistent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := filegrant.Store{Directory: filepath.Join(cp.Options.StorePath, "grants")}
+	if err = grants.Add(grant); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = cp.Purge(app.Origin, "", "", ""); err != nil {
+		t.Fatalf("purge installed application: %v", err)
+	}
+	dataPath, err := cp.applicationDataPath(app.CpakId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dataPath, identity} {
+		if _, err = os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("purged path still exists: %s", path)
+		}
+	}
+	storedGrants, err := grants.Load(app.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(storedGrants) != 0 {
+		t.Fatalf("persistent grants remain: %+v", storedGrants)
+	}
+}
+
+func TestPurgeKeepsOriginGrantsForAnotherInstallation(t *testing.T) {
+	cp := newTestCpak(t)
+	useEnrolmentAuthority(t)
+	for _, branch := range []string{"master", "stable"} {
+		seedApplication(t, cp, types.Application{
+			CpakId: "demo-" + branch,
+			Name:   "demo",
+			Origin: testOrigin,
+			Branch: branch,
+		})
+	}
+	selected := filepath.Join(t.TempDir(), "document")
+	if err := os.WriteFile(selected, []byte("document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := filegrant.Resolve(testOrigin, selected, filegrant.AccessReadOnly, filegrant.LifetimePersistent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := filegrant.Store{Directory: filepath.Join(cp.Options.StorePath, "grants")}
+	if err = grants.Add(grant); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = cp.Purge(testOrigin, "master", "", ""); err != nil {
+		t.Fatalf("purge one installed branch: %v", err)
+	}
+	storedGrants, err := grants.Load(testOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(storedGrants) != 1 || storedGrants[0] != grant {
+		t.Fatalf("persistent grants for remaining installation: %+v", storedGrants)
 	}
 }
 

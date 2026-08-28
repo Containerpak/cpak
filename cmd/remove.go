@@ -14,8 +14,9 @@ import (
 type RemoveCmd struct {
 	Remote  string `arg:"remote" help:"Remote Git repository"`
 	Branch  string `cli:"branch,b" help:"Specify a branch"`
-	Release string `cli:"release,r" help:"Install a specific release"`
+	Release string `cli:"release,r" help:"Specify a release"`
 	Commit  string `cli:"commit,c" help:"Specify a commit"`
+	Purge   bool   `cli:"purge" help:"Remove persistent application data"`
 
 	cli.Base
 }
@@ -41,13 +42,15 @@ func (c *RemoveCmd) Run() error {
 		return fmt.Errorf("more than one version parameter specified")
 	}
 
-	branch := c.Branch
 	if versionParamsCount == 0 {
-		c.Logger.Info("No version specified, using main branch if available")
-		branch = "main"
+		c.Logger.Info("No version specified, resolving the installed version")
 	}
 
-	err = cp.Remove(remote, branch, c.Commit, c.Release)
+	if c.Purge {
+		err = cp.Purge(remote, c.Branch, c.Commit, c.Release)
+	} else {
+		err = cp.Remove(remote, c.Branch, c.Commit, c.Release)
+	}
 	if err != nil {
 		return fmt.Errorf("an error occurred while removing cpak: %s", err)
 	}

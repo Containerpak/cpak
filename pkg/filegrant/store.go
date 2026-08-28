@@ -89,12 +89,21 @@ func (s Store) Remove(origin, id string) error {
 	return writeDocument(file, kept)
 }
 
-func (s Store) lock(origin string) (*os.File, error) {
-	if origin == "" {
-		return nil, errors.New("file grant origin is required")
+func (s Store) Clear(origin string) error {
+	path, err := s.path(origin)
+	if err != nil {
+		return err
 	}
-	if !filepath.IsAbs(s.Directory) {
-		return nil, errors.New("file grant store must be absolute")
+	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove file grant store: %w", err)
+	}
+	return nil
+}
+
+func (s Store) lock(origin string) (*os.File, error) {
+	path, err := s.path(origin)
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(s.Directory, 0700); err != nil {
 		return nil, fmt.Errorf("create file grant store: %w", err)
@@ -102,8 +111,6 @@ func (s Store) lock(origin string) (*os.File, error) {
 	if err := os.Chmod(s.Directory, 0700); err != nil {
 		return nil, fmt.Errorf("restrict file grant store: %w", err)
 	}
-	digest := sha256.Sum256([]byte(origin))
-	path := filepath.Join(s.Directory, hex.EncodeToString(digest[:])+".json")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("open file grant store: %w", err)
@@ -117,6 +124,17 @@ func (s Store) lock(origin string) (*os.File, error) {
 		return nil, fmt.Errorf("lock file grant store: %w", err)
 	}
 	return file, nil
+}
+
+func (s Store) path(origin string) (string, error) {
+	if origin == "" {
+		return "", errors.New("file grant origin is required")
+	}
+	if !filepath.IsAbs(s.Directory) {
+		return "", errors.New("file grant store must be absolute")
+	}
+	digest := sha256.Sum256([]byte(origin))
+	return filepath.Join(s.Directory, hex.EncodeToString(digest[:])+".json"), nil
 }
 
 func readDocument(file *os.File, origin string) ([]Grant, error) {

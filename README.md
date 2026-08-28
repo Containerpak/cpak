@@ -93,11 +93,25 @@ Other common operations:
 ```sh
 cpak list
 cpak update
+cpak remove github.com/bottlesdevs/bottles
 cpak self-update --check
 cpak stop github.com/bottlesdevs/bottles
 cpak audit
 cpak audit --repair
 ```
+
+`cpak remove` uses the source selector of the sole installed copy. When more
+than one branch, release or commit is installed, pass the matching `--branch`,
+`--release` or `--commit`. Package files are removed automatically. The private
+application home and persistent file grants are retained unless `--purge` is
+specified:
+
+```sh
+cpak remove --purge github.com/bottlesdevs/bottles
+```
+
+`cpak gc --apply` clears unused shared storage and download cache. It is not
+required to complete a removal and does not delete a retained application home.
 
 ## Aliases
 

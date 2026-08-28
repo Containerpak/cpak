@@ -1060,15 +1060,14 @@ func openURIEnvironment(environment []string) []string {
 }
 
 func (c *Cpak) applicationMachineID(applicationID string) (string, error) {
-	if strings.TrimSpace(applicationID) == "" {
-		return "", errors.New("create application machine ID: application ID is empty")
+	path, err := c.applicationIdentityPath(applicationID)
+	if err != nil {
+		return "", fmt.Errorf("create application machine ID: %w", err)
 	}
-	digest := sha256.Sum256([]byte(applicationID))
-	directory := c.GetInStoreDir("identities")
+	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return "", fmt.Errorf("create application identity directory: %w", err)
 	}
-	path := filepath.Join(directory, hex.EncodeToString(digest[:])+".machine-id")
 	read := func() (string, error) {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1124,6 +1123,14 @@ func (c *Cpak) applicationMachineID(applicationID string) (string, error) {
 		return "", fmt.Errorf("write application machine ID: %w", err)
 	}
 	return value, nil
+}
+
+func (c *Cpak) applicationIdentityPath(applicationID string) (string, error) {
+	if strings.TrimSpace(applicationID) == "" {
+		return "", errors.New("application ID is empty")
+	}
+	digest := sha256.Sum256([]byte(applicationID))
+	return c.GetInStoreDir("identities", hex.EncodeToString(digest[:])+".machine-id"), nil
 }
 
 func ensureOpenURIMimeApps(environment []string) error {
@@ -1413,14 +1420,22 @@ func withoutMount(mounts []string, excluded string) []string {
 }
 
 func (c *Cpak) privateApplicationHome(applicationID string) (string, error) {
-	if strings.TrimSpace(applicationID) == "" || strings.ContainsAny(applicationID, "/\\\x00") {
-		return "", errors.New("application ID is invalid")
+	dataPath, err := c.applicationDataPath(applicationID)
+	if err != nil {
+		return "", err
 	}
-	path := c.GetInStoreDir("application-data", applicationID, "home")
+	path := filepath.Join(dataPath, "home")
 	if err := securePrivateDirectory(path); err != nil {
 		return "", fmt.Errorf("prepare private application home: %w", err)
 	}
 	return path, nil
+}
+
+func (c *Cpak) applicationDataPath(applicationID string) (string, error) {
+	if strings.TrimSpace(applicationID) == "" || applicationID == "." || applicationID == ".." || strings.ContainsAny(applicationID, "/\\\x00") {
+		return "", errors.New("application ID is invalid")
+	}
+	return c.GetInStoreDir("application-data", applicationID), nil
 }
 
 // filesystemIncludesHostHome answers whether an application already holds the

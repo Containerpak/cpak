@@ -478,6 +478,13 @@ func TestPrivateApplicationHomeIsPersistentAndRestricted(t *testing.T) {
 	}
 }
 
+func TestApplicationDataPathRejectsParentDirectory(t *testing.T) {
+	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
+	if _, err := cp.applicationDataPath(".."); err == nil {
+		t.Fatal("parent directory accepted as an application ID")
+	}
+}
+
 // The fallback exists because an application told to use the accessibility bus
 // hangs looking for one that is not there. Whether this machine runs a bus is
 // not something the test can decide, so it asserts the implication in both

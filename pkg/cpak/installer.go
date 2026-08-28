@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/filegrant"
 	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/oci"
@@ -1064,13 +1065,45 @@ func (c *Cpak) exportBinary(app types.Application, binary string) error {
 	return nil
 }
 
-// Remove removes a package from the local store, including all the containers
-// and exports associated with it. It also removes the application and
-// container files from the cpak data directory.
-func (c *Cpak) Remove(origin string, branch string, commit string, release string) (err error) {
+// Remove removes a package from the local store, including all the containers,
+// exports and unshared layers associated with it. Persistent application data
+// is retained.
+func (c *Cpak) Remove(origin string, branch string, commit string, release string) error {
+	return c.remove(origin, branch, commit, release, false)
+}
+
+// Purge removes a package and its persistent application data.
+func (c *Cpak) Purge(origin string, branch string, commit string, release string) error {
+	return c.remove(origin, branch, commit, release, true)
+}
+
+func (c *Cpak) remove(origin string, branch string, commit string, release string, purge bool) (err error) {
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return
+	}
+
+	installedVersions, err := store.GetApplicationsByOrigin(origin, "", "", "", "")
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	if branch == "" && commit == "" && release == "" {
+		if len(installedVersions) == 0 {
+			_ = store.Close()
+			return fmt.Errorf("application %s not found for removal", origin)
+		}
+		if len(installedVersions) > 1 {
+			_ = store.Close()
+			return fmt.Errorf("multiple installations of %s found; specify a branch, commit or release", origin)
+		}
+		branch = installedVersions[0].Branch
+		commit = installedVersions[0].Commit
+		release = installedVersions[0].Release
+		if branch == "" && commit == "" && release == "" {
+			_ = store.Close()
+			return fmt.Errorf("installed application %s has no source selector", origin)
+		}
 	}
 
 	appToRemove, err := store.GetApplicationByOrigin(origin, "", branch, commit, release)
@@ -1078,12 +1111,7 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 		_ = store.Close()
 		return fmt.Errorf("application %s not found for specified criteria: %w", origin, err)
 	}
-	installedVersions, err := store.GetApplicationsByOrigin(origin, "", "", "", "")
-	if err != nil {
-		_ = store.Close()
-		return err
-	}
-	removedSessions, _ := sessionsRemovedByVersionSelection(installedVersions, branch, commit, release)
+	removedSessions, remainingVersions := sessionsRemovedByVersionSelection(installedVersions, branch, commit, release)
 	if err = store.Close(); err != nil {
 		return
 	}
@@ -1158,11 +1186,36 @@ func (c *Cpak) Remove(origin string, branch string, commit string, release strin
 	if err = c.removeApplicationLayers(appToRemove); err != nil {
 		return err
 	}
+	if purge {
+		if err = c.purgeApplicationData(appToRemove, remainingVersions == 0); err != nil {
+			return fmt.Errorf("purge application data for %s: %w", appToRemove.Name, err)
+		}
+	}
 
 	// The layers are gone, so nothing the anchor names is still on disk.
 	c.forgetEnrolment(appToRemove)
 
 	return nil
+}
+
+func (c *Cpak) purgeApplicationData(app types.Application, clearOriginState bool) error {
+	if path, err := c.applicationDataPath(app.CpakId); err == nil {
+		if err = os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	identity, err := c.applicationIdentityPath(app.CpakId)
+	if err != nil {
+		return err
+	}
+	if err = os.Remove(identity); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if !clearOriginState {
+		return nil
+	}
+	grants := filegrant.Store{Directory: filepath.Join(c.Options.StorePath, "grants")}
+	return grants.Clear(app.Origin)
 }
 
 func sessionsRemovedByVersionSelection(apps []types.Application, branch, commit, release string) ([]types.Session, int) {
