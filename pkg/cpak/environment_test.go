@@ -129,6 +129,30 @@ func TestEnvironmentPolicyCanOnlyNarrowInstalledPolicy(t *testing.T) {
 	}
 }
 
+func TestEnvironmentPermissionCeilingUsesInstalledPackagePolicy(t *testing.T) {
+	cp := newTestCpak(t)
+	app := environmentTestApplication()
+	seedApplication(t, cp, app)
+	environment, err := cp.CreateEnvironment("Permissions", app.Origin, app.Version, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	narrowed := environment.Policy
+	narrowed.Network = false
+	narrowed.Filesystem = nil
+	if _, err = cp.SetEnvironmentPolicy(environment.ID, narrowed); err != nil {
+		t.Fatal(err)
+	}
+	ceiling, err := cp.EnvironmentPermissionCeiling(environment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ceiling.Network || len(ceiling.Filesystem) != 1 || ceiling.Filesystem[0].Path != "home" {
+		t.Fatalf("permission ceiling did not retain the installed policy: %+v", ceiling)
+	}
+}
+
 func TestEnvironmentPolicyCanonicalizesEquivalentOrdering(t *testing.T) {
 	policy := types.Override{
 		Filesystem: []types.FilesystemPermission{

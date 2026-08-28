@@ -23,7 +23,7 @@ import (
 const environmentPolicySizeLimit = 1 << 20
 
 type EnvironmentCmd struct {
-	Action      string   `arg:"action" help:"Action: create, list, inspect, shell, stop, delete, policy, processes, signals or signal"`
+	Action      string   `arg:"action" help:"Action: create, list, inspect, shell, stop, delete, policy, permissions, processes, signals or signal"`
 	Extra       []string `arg:"extra" help:"Arguments passed to the environment shell"`
 	Environment string   `cli:"environment,e" help:"Environment ID or name"`
 	Name        string   `cli:"name,n" help:"Environment name"`
@@ -124,6 +124,16 @@ func (c *EnvironmentCmd) Run() error {
 			return err
 		}
 		return c.printEnvironment(environment)
+	case "permissions":
+		environment, err := c.environment(cp)
+		if err != nil {
+			return err
+		}
+		permissions, err := cp.EnvironmentPermissionCeiling(environment.ID)
+		if err != nil {
+			return err
+		}
+		return printEnvironmentJSON(permissions)
 	case "processes":
 		environment, err := c.environment(cp)
 		if err != nil {

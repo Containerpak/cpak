@@ -511,6 +511,27 @@ func (c *Cpak) SetEnvironmentPolicy(value string, candidate types.Override) (typ
 	return environment, nil
 }
 
+func (c *Cpak) EnvironmentPermissionCeiling(value string) (types.Override, error) {
+	environment, err := c.GetEnvironment(value)
+	if err != nil {
+		return types.Override{}, err
+	}
+	store, err := NewStore(c.Options.StorePath)
+	if err != nil {
+		return types.Override{}, err
+	}
+	defer store.Close()
+	app, _, err := c.environmentApplication(store, environment)
+	if err != nil {
+		return types.Override{}, err
+	}
+	policy, err := standaloneLaunchPolicy(store, app)
+	if err != nil {
+		return types.Override{}, err
+	}
+	return policy.effective.WithMigratedFilesystem(), nil
+}
+
 func (c *Cpak) environmentApplication(store *Store, environment types.Environment) (types.Application, bool, error) {
 	app, err := store.GetApplicationByCpakId(environment.ApplicationCpakId)
 	if err == nil && app.CpakId != "" {
