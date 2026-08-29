@@ -18,7 +18,13 @@ type userNetworkPlan struct {
 	path string
 }
 
-func resolveUserNetwork(enabled bool) (*userNetworkPlan, error) {
+func resolveUserNetwork(enabled, hostNetwork bool) (*userNetworkPlan, error) {
+	if hostNetwork {
+		if !enabled {
+			return nil, fmt.Errorf("host network requires network access")
+		}
+		return nil, nil
+	}
 	if !enabled {
 		return nil, nil
 	}

@@ -121,6 +121,7 @@ func SummarizePermissions(override types.Override) []Permission {
 		permissions = append(permissions, Permission{Name: "Files", Detail: filesystem + ", read and write"})
 	}
 	add(override.Network, "Network", "internet and local network")
+	add(override.HostNetwork, "Host network", "shared network namespace, including localhost services and host ports")
 	add(override.Process, "Host processes", "shared process namespace")
 	add(override.UserNamespaces, "Nested sandboxes", "user namespaces")
 	add(override.AsRoot, "Root", "runs as root inside the cpak")

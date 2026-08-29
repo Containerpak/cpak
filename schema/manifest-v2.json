@@ -416,7 +416,12 @@
         },
         "network": {
           "type": "boolean",
-          "description": "Enable network namespace",
+          "description": "Allow network access",
+          "default": false
+        },
+        "hostNetwork": {
+          "type": "boolean",
+          "description": "Share the host network namespace including localhost",
           "default": false
         },
         "process": {

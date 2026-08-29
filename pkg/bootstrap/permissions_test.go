@@ -22,3 +22,13 @@ func TestPermissionSummaryNamesPrivateDesktopCapabilities(t *testing.T) {
 		t.Fatalf("Bluetooth permission summary: %+v", permissions[1])
 	}
 }
+
+func TestPermissionSummaryDisclosesHostNetworkSharing(t *testing.T) {
+	permissions := SummarizePermissions(types.Override{Network: true, HostNetwork: true})
+	if len(permissions) != 2 {
+		t.Fatalf("network permissions: %+v", permissions)
+	}
+	if permissions[1].Name != "Host network" || permissions[1].Detail != "shared network namespace, including localhost services and host ports" {
+		t.Fatalf("host network permission summary: %+v", permissions[1])
+	}
+}

@@ -58,7 +58,8 @@ type Override struct {
 	FsExtra    []string `json:"fsExtra,omitempty" jsonschema:"description=Legacy v1 additional paths" flag:"fsExtra,strings"`
 
 	Env            []string `json:"env,omitempty" jsonschema:"description=Additional environment variables,minItems=0" flag:"env,strings"`
-	Network        bool     `json:"network" jsonschema:"description=Enable network namespace,default=false" flag:"network,bool"`
+	Network        bool     `json:"network" jsonschema:"description=Allow network access,default=false" flag:"network,bool"`
+	HostNetwork    bool     `json:"hostNetwork,omitempty" jsonschema:"description=Share the host network namespace including localhost,default=false" flag:"hostNetwork,bool"`
 	Process        bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
 	UserNamespaces bool     `json:"userNamespaces" jsonschema:"description=Allow nested user namespaces for application sandboxes,default=false" flag:"userNamespaces,bool"`
 
@@ -133,6 +134,7 @@ func NewOverride() Override {
 		FsExtra:             []string{},
 		Env:                 []string{},
 		Network:             false,
+		HostNetwork:         false,
 		Process:             false,
 		UserNamespaces:      false,
 		MemoryMaxMB:         0,
@@ -141,6 +143,13 @@ func NewOverride() Override {
 		AsRoot:              false,
 		AllowedHostCommands: nil,
 	}
+}
+
+func ValidateNetworkPermissions(override Override) error {
+	if override.HostNetwork && !override.Network {
+		return errors.New("hostNetwork requires network access")
+	}
+	return nil
 }
 
 type FilesystemPermission struct {

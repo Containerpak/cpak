@@ -210,6 +210,17 @@ func TestRestrictsIsolatedDesktopCapabilities(t *testing.T) {
 	}
 }
 
+func TestRestrictsHostNetworkAccess(t *testing.T) {
+	wide := types.Override{Network: true, HostNetwork: true}
+	narrow := types.Override{Network: true}
+	if !Restricts(wide, narrow) {
+		t.Fatal("dropping host network access was not recognized as a restriction")
+	}
+	if Restricts(narrow, wide) {
+		t.Fatal("adding host network access was accepted as a restriction")
+	}
+}
+
 func TestPolicyRootReadsTheSchemaBeforeSerialDevices(t *testing.T) {
 	policy := types.Override{SocketWayland: true, Network: true}
 	legacy, err := PolicyRootForSchema(policy, PolicySchemaWithoutSerial)

@@ -99,6 +99,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	if err = types.ValidateFilePickerGrant(manifest.Override.FilePicker); err != nil {
 		return err
 	}
+	if err = types.ValidateNetworkPermissions(manifest.Override); err != nil {
+		return err
+	}
 	if err = validateManifestBusPolicy(manifest.ManifestVersion, "application", manifest.Override); err != nil {
 		return err
 	}
@@ -257,6 +260,9 @@ func validateSessions(manifest *types.CpakManifest) error {
 			return fmt.Errorf("session %s: %w", session.ID, err)
 		}
 		if err := types.ValidateFilePickerGrant(session.Override.FilePicker); err != nil {
+			return fmt.Errorf("session %s: %w", session.ID, err)
+		}
+		if err := types.ValidateNetworkPermissions(session.Override); err != nil {
 			return fmt.Errorf("session %s: %w", session.ID, err)
 		}
 		if err := validateManifestBusPolicy(manifest.ManifestVersion, "session "+session.ID, session.Override); err != nil {

@@ -234,6 +234,18 @@ func TestNestedDesktopCapabilitiesNeedBothApplications(t *testing.T) {
 	}
 }
 
+func TestNestedHostNetworkNeedsBothApplications(t *testing.T) {
+	parent := types.Override{Network: true, HostNetwork: false}
+	child := types.Override{Network: true, HostNetwork: true}
+	if intersectOverrides(parent, child).HostNetwork {
+		t.Fatal("a child gained host network access from its own policy")
+	}
+	parent.HostNetwork = true
+	if !intersectOverrides(parent, child).HostNetwork {
+		t.Fatal("host network access granted by both applications was dropped")
+	}
+}
+
 func TestAuthorizeNestedRunRejectsUnexportedBinary(t *testing.T) {
 	cp, _, child, nestedToken := nestedAuthFixtureWithToken(t)
 	_, err := cp.authorizeNestedRun(types.RequestParams{

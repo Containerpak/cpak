@@ -319,6 +319,9 @@ func LoadOverride(origin, version string) (override types.Override, err error) {
 	if err = types.ValidateHostActions(override.HostActions); err != nil {
 		return types.Override{}, err
 	}
+	if err = types.ValidateNetworkPermissions(override); err != nil {
+		return types.Override{}, err
+	}
 	if err = types.ValidateDBusPolicy(override.SessionBus); err != nil {
 		return types.Override{}, err
 	}
@@ -335,6 +338,9 @@ func SaveOverride(override types.Override, name, version string) (err error) {
 		return err
 	}
 	if err = types.ValidateHostActions(override.HostActions); err != nil {
+		return err
+	}
+	if err = types.ValidateNetworkPermissions(override); err != nil {
 		return err
 	}
 	if err = types.ValidateDBusPolicy(override.SessionBus); err != nil {

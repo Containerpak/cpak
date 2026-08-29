@@ -15,15 +15,32 @@ import (
 
 func TestNetworkHelperIsOptional(t *testing.T) {
 	t.Setenv("PATH", "")
-	plan, err := resolveUserNetwork(false)
+	plan, err := resolveUserNetwork(false, false)
 	if err != nil {
 		t.Fatalf("resolve disabled network: %v", err)
 	}
 	if plan != nil {
 		t.Fatalf("got a helper for disabled network: %+v", plan)
 	}
-	if _, err = resolveUserNetwork(true); err == nil {
+	if _, err = resolveUserNetwork(true, false); err == nil {
 		t.Fatal("enabled network started without a userspace network helper")
+	}
+	if plan, err = resolveUserNetwork(true, true); err != nil || plan != nil {
+		t.Fatalf("host network resolved a userspace helper: plan=%+v err=%v", plan, err)
+	}
+	if _, err = resolveUserNetwork(false, true); err == nil {
+		t.Fatal("host network was accepted without network access")
+	}
+}
+
+func TestHostNetworkPermissionSharesOnlyWhenExplicit(t *testing.T) {
+	private := containerNamespaceOptions(types.Override{Network: true})
+	if !private.IsolateNetwork {
+		t.Fatal("ordinary network access shared the host network namespace")
+	}
+	host := containerNamespaceOptions(types.Override{Network: true, HostNetwork: true})
+	if host.IsolateNetwork {
+		t.Fatal("host network permission kept a private network namespace")
 	}
 }
 

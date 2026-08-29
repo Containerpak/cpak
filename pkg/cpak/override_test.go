@@ -162,6 +162,14 @@ func TestBluetoothRequiresSharedNetwork(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsHostNetworkWithoutNetworkAccess(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Override.HostNetwork = true
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("host network without network access was accepted")
+	}
+}
+
 func TestSystemBrokerShimsAreExplicit(t *testing.T) {
 	override := types.Override{
 		Notification: true,

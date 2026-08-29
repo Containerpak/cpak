@@ -461,7 +461,7 @@ func containerLaunchPolicyHash(runtimeVersion int, launchRoot string, override t
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
 func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
-	network, err := resolveUserNetwork(override.Network)
+	network, err := resolveUserNetwork(override.Network, override.HostNetwork)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -796,7 +796,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 
 func containerNamespaceOptions(override types.Override) namespaceOptions {
 	return namespaceOptions{
-		IsolateNetwork: true,
+		IsolateNetwork: !override.HostNetwork,
 		ShareProcesses: override.Process,
 		IsolateCgroup:  true,
 	}

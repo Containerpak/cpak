@@ -82,6 +82,9 @@ func validateEnvironmentPolicy(policy *types.Override) error {
 	if err := types.ValidateFilePickerGrant(policy.FilePicker); err != nil {
 		return err
 	}
+	if err := types.ValidateNetworkPermissions(*policy); err != nil {
+		return err
+	}
 	if err := types.ValidateDBusPolicy(policy.SessionBus); err != nil {
 		return err
 	}

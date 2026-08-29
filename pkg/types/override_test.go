@@ -30,6 +30,15 @@ func TestOverrideAdditionsReportsOnlyNewPermissions(t *testing.T) {
 	}
 }
 
+func TestHostNetworkRequiresNetworkAccess(t *testing.T) {
+	if err := ValidateNetworkPermissions(Override{HostNetwork: true}); err == nil {
+		t.Fatal("host network was accepted without network access")
+	}
+	if err := ValidateNetworkPermissions(Override{Network: true, HostNetwork: true}); err != nil {
+		t.Fatalf("host network with network access was refused: %v", err)
+	}
+}
+
 func TestOverrideAdditionsReportsFilePickerCapabilities(t *testing.T) {
 	before := Override{FilePicker: FilePickerGrant{OpenFile: true}}
 	after := before

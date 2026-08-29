@@ -164,6 +164,7 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.OpenURI, current.OpenURI},
 		{candidate.HostApplications, current.HostApplications},
 		{candidate.Network, current.Network},
+		{candidate.HostNetwork, current.HostNetwork},
 		{candidate.Process, current.Process},
 		{candidate.UserNamespaces, current.UserNamespaces},
 		{candidate.AsRoot, current.AsRoot},
