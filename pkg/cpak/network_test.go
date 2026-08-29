@@ -5,6 +5,7 @@
 package cpak
 
 import (
+	"bytes"
 	"os"
 	"slices"
 	"testing"
@@ -66,5 +67,16 @@ func TestSlirpNetworkDoesNotExposeTheHost(t *testing.T) {
 	}
 	if len(command.ExtraFiles) != 2 || command.ExtraFiles[0] != readyWriter || command.ExtraFiles[1] != exitReader {
 		t.Fatalf("unexpected helper descriptors: %v", command.ExtraFiles)
+	}
+}
+
+func TestSlirpReadinessUsesTheDocumentedASCIIByte(t *testing.T) {
+	if err := readNetworkReady(bytes.NewReader([]byte("1"))); err != nil {
+		t.Fatalf("read slirp readiness: %v", err)
+	}
+	for _, response := range [][]byte{{1}, {'0'}, {}} {
+		if err := readNetworkReady(bytes.NewReader(response)); err == nil {
+			t.Fatalf("accepted invalid slirp readiness response %v", response)
+		}
 	}
 }

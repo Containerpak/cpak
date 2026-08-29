@@ -6,6 +6,7 @@ package cpak
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -41,4 +42,15 @@ func (p *userNetworkPlan) command(pid int, ready, exit *os.File) *exec.Cmd {
 	)
 	command.ExtraFiles = []*os.File{ready, exit}
 	return command
+}
+
+func readNetworkReady(reader io.Reader) error {
+	buffer := []byte{0}
+	if _, err := io.ReadFull(reader, buffer); err != nil {
+		return err
+	}
+	if buffer[0] != '1' {
+		return fmt.Errorf("invalid network readiness response")
+	}
+	return nil
 }

@@ -720,12 +720,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		readyResult := make(chan error, 1)
 		go func() {
 			defer helperReadyReader.Close()
-			buffer := []byte{0}
-			_, readErr := io.ReadFull(helperReadyReader, buffer)
-			if readErr == nil && buffer[0] != 1 {
-				readErr = fmt.Errorf("invalid network readiness response")
-			}
-			readyResult <- readErr
+			readyResult <- readNetworkReady(helperReadyReader)
 		}()
 		exitResult := make(chan error, 1)
 		go func() {
