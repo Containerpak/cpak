@@ -116,6 +116,29 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  integration:
+    name: Integration
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cloud-image-utils qemu-system-x86 qemu-utils
+          if [ -e /dev/kvm ]; then
+            sudo chmod 0666 /dev/kvm
+          fi
+
+      - name: Run cpak in QEMU
+        run: integration/vm.sh
+
   assemble:
     needs: [prepare, build]
     outputs:
@@ -246,7 +269,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [assemble, compliance]
+    needs: [assemble, compliance, integration]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
