@@ -132,6 +132,42 @@ applications.
 Applications can be pinned to a branch, release or commit. If none is selected,
 cpak follows the `main` branch.
 
+## Persistent environments
+
+Distribution packages can back named, mutable environments. Install the package
+once, create an environment, then enter it by name:
+
+```sh
+cpak install github.com/containerpak/archlinux
+cpak environment create --name arch --origin github.com/containerpak/archlinux
+cpak environment shell --environment arch
+```
+
+Package-manager changes and the private home survive container stops and host
+reboots. `cpak environment stop` ends the running container without deleting
+that state. `cpak environment delete` removes the environment and its data.
+
+```sh
+cpak environment list
+cpak environment inspect --environment arch
+cpak environment processes --environment arch
+cpak environment signal --environment arch --pid 1234 --signal TERM
+cpak environment stop --environment arch
+cpak environment delete --environment arch
+```
+
+An environment starts with the installed package policy. Its own policy may
+remove permissions but cannot add permissions the package does not have. Inspect
+the ceiling with `cpak environment permissions --environment arch`, then apply a
+narrower JSON policy:
+
+```sh
+cpak environment policy --environment arch --policy policy.json
+```
+
+Updating the installed package moves the environment to the new package version
+while retaining its writable state.
+
 ## Addons and SDKs
 
 An application declares which optional packages it supports. Enabled addons are
