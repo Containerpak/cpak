@@ -497,6 +497,18 @@ func TestLegacyBluetoothPermissionUsesThePrivateProxy(t *testing.T) {
 	}
 }
 
+func TestDesktopBusProxyRequiresADeclaredCapability(t *testing.T) {
+	if desktopBusProxyRequested(types.Override{}) {
+		t.Fatal("an application without a desktop bus capability requested a proxy")
+	}
+	if !desktopBusProxyRequested(types.Override{FilePicker: types.FilePickerGrant{OpenFile: true}}) {
+		t.Fatal("file selection did not request the desktop bus proxy")
+	}
+	if !desktopBusProxyRequested(types.Override{SessionBus: types.DBusPolicy{Own: []string{"org.example.App"}}}) {
+		t.Fatal("a session bus policy did not request the desktop bus proxy")
+	}
+}
+
 func TestPrivateDesktopLinksMountOnlyProxyEndpoints(t *testing.T) {
 	container := types.Container{
 		BluetoothBusSocketPath: "/var/lib/cpak/state/bluetooth.sock",

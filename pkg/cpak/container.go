@@ -267,7 +267,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		container.SystemBrokerSocketPath = ""
 		container.SystemBrokerTokenPath = ""
 	}
-	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" || socketIsLive(hostSessionBusPath()) {
+	if desktopBusProxyRequested(override) {
 		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "desktop-bus.sock")
 		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, override)
 		if err != nil {
@@ -618,6 +618,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	containerEnv = inheritHostTimezone(containerEnv)
 	containerEnv = inheritHostCursor(containerEnv)
+	containerEnv = inheritHostAppearance(containerEnv)
 	if override.OpenURI {
 		containerEnv = openURIEnvironment(containerEnv)
 	}
@@ -999,6 +1000,7 @@ func containerEnvironment(app types.Application, override types.Override, contai
 		envVars = inheritHostLocale(envVars, os.Environ())
 	}
 	envVars = inheritHostCursor(envVars)
+	envVars = inheritHostAppearance(envVars)
 	if override.SocketAtSpiBus && len(atSpiSocketPaths(fmt.Sprintf("%d", os.Getuid()))) == 0 {
 		envVars = setEnvironmentValue(envVars, "NO_AT_BRIDGE", "1")
 	}
@@ -1415,6 +1417,10 @@ func startDesktopBusProxy(container types.Container, override types.Override) (i
 		)
 	}
 	return startBusProxy(container.LogPath, container.DesktopBusSocketPath, "desktop bus", arguments)
+}
+
+func desktopBusProxyRequested(override types.Override) bool {
+	return override.FilePicker.Enabled() || override.SessionBus.Enabled()
 }
 
 func bluetoothProxyRequested(override types.Override) bool {
