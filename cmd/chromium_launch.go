@@ -50,6 +50,9 @@ func (c *ChromiumLaunchCmd) Run() error {
 }
 
 func expandUserPath(path string) (string, error) {
+	if len(path) >= 2 && (path[0] == '"' && path[len(path)-1] == '"' || path[0] == '\'' && path[len(path)-1] == '\'') {
+		path = path[1 : len(path)-1]
+	}
 	if path != "~" && !strings.HasPrefix(path, "~/") {
 		return path, nil
 	}

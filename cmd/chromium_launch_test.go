@@ -109,4 +109,13 @@ func TestExpandUserPath(t *testing.T) {
 	if path != filepath.Join(home, ".config", "chromium") {
 		t.Fatalf("unexpected expanded path %s", path)
 	}
+	for _, quoted := range []string{`"~/.config/chromium"`, `'~/.config/chromium'`} {
+		path, err = expandUserPath(quoted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if path != filepath.Join(home, ".config", "chromium") {
+			t.Fatalf("unexpected expanded quoted path %s", path)
+		}
+	}
 }

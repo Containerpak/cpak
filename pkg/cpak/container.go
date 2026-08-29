@@ -287,7 +287,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			return types.Container{}, fmt.Errorf("identify desktop bus proxy: %w", err)
 		}
 	}
-	if override.Bluetooth {
+	if bluetoothProxyRequested(override) {
 		container.BluetoothBusSocketPath = filepath.Join(container.StatePath, "bluetooth-bus.sock")
 		container.BluetoothBusProxyPid, err = startBluetoothBusProxy(container)
 		if err != nil {
@@ -1415,6 +1415,10 @@ func startDesktopBusProxy(container types.Container, override types.Override) (i
 		)
 	}
 	return startBusProxy(container.LogPath, container.DesktopBusSocketPath, "desktop bus", arguments)
+}
+
+func bluetoothProxyRequested(override types.Override) bool {
+	return override.Bluetooth || override.SocketBluetooth
 }
 
 func startBluetoothBusProxy(container types.Container) (int, error) {

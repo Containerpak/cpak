@@ -491,6 +491,12 @@ func TestContainerEnvironmentUsesPrivateX11AndBluetoothEndpoints(t *testing.T) {
 	}
 }
 
+func TestLegacyBluetoothPermissionUsesThePrivateProxy(t *testing.T) {
+	if !bluetoothProxyRequested(types.Override{SocketBluetooth: true}) {
+		t.Fatal("the legacy Bluetooth permission did not request the private proxy")
+	}
+}
+
 func TestPrivateDesktopLinksMountOnlyProxyEndpoints(t *testing.T) {
 	container := types.Container{
 		BluetoothBusSocketPath: "/var/lib/cpak/state/bluetooth.sock",
