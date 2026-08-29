@@ -267,7 +267,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		container.SystemBrokerSocketPath = ""
 		container.SystemBrokerTokenPath = ""
 	}
-	if override.FilePicker.Enabled() || override.SessionBus.Enabled() {
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" || socketIsLive(hostSessionBusPath()) {
 		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "desktop-bus.sock")
 		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, override)
 		if err != nil {

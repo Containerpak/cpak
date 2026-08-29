@@ -89,6 +89,39 @@ func TestSessionBusPolicyAllowsOnlyDeclaredCallsAndNames(t *testing.T) {
 	}
 }
 
+func TestRestrictedBusAllowsOnlyPortalAppearanceSettings(t *testing.T) {
+	if !restrictedBusCallAllowed(
+		portalDestination,
+		portalDestination,
+		portalObjectPath,
+		settingsInterface,
+		"Read",
+		[]any{"org.freedesktop.appearance", "color-scheme"},
+	) {
+		t.Fatal("the desktop appearance setting was refused")
+	}
+	if !restrictedBusCallAllowed(
+		portalDestination,
+		portalDestination,
+		portalObjectPath,
+		settingsInterface,
+		"ReadAll",
+		[]any{[]string{"org.freedesktop.appearance"}},
+	) {
+		t.Fatal("the desktop appearance namespace was refused")
+	}
+	if restrictedBusCallAllowed(
+		portalDestination,
+		portalDestination,
+		portalObjectPath,
+		settingsInterface,
+		"Read",
+		[]any{"org.gnome.desktop.interface", "color-scheme"},
+	) {
+		t.Fatal("an unrelated settings namespace was allowed")
+	}
+}
+
 func TestBluetoothBusAllowsOnlyBluezAndRequiredBusCalls(t *testing.T) {
 	if !bluetoothBusCallAllowed(bluezDestination, "/org/bluez/hci0", "org.bluez.Adapter1", "StartDiscovery", nil, ":1.9") {
 		t.Fatal("a BlueZ call was refused")

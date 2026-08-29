@@ -55,7 +55,7 @@ func readNetworkReady(reader io.Reader) error {
 	if _, err := io.ReadFull(reader, buffer); err != nil {
 		return err
 	}
-	if buffer[0] != '1' {
+	if buffer[0] != 1 && buffer[0] != '1' {
 		return fmt.Errorf("invalid network readiness response")
 	}
 	return nil

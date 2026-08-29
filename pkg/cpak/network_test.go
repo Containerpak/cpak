@@ -87,11 +87,13 @@ func TestSlirpNetworkDoesNotExposeTheHost(t *testing.T) {
 	}
 }
 
-func TestSlirpReadinessUsesTheDocumentedASCIIByte(t *testing.T) {
-	if err := readNetworkReady(bytes.NewReader([]byte("1"))); err != nil {
-		t.Fatalf("read slirp readiness: %v", err)
+func TestSlirpReadinessAcceptsSupportedBytes(t *testing.T) {
+	for _, response := range [][]byte{{1}, {'1'}} {
+		if err := readNetworkReady(bytes.NewReader(response)); err != nil {
+			t.Fatalf("read slirp readiness %v: %v", response, err)
+		}
 	}
-	for _, response := range [][]byte{{1}, {'0'}, {}} {
+	for _, response := range [][]byte{{0}, {'0'}, {}} {
 		if err := readNetworkReady(bytes.NewReader(response)); err == nil {
 			t.Fatalf("accepted invalid slirp readiness response %v", response)
 		}

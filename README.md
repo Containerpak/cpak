@@ -312,10 +312,12 @@ the number of installed applications that are not enrolled.
 Filtered session bus access, Bluetooth and the file chooser use native proxies
 exposed on private Unix sockets. The Bluetooth proxy talks only to BlueZ and is
 started only for a package that declares `bluetooth`. cpak does not invoke a
-D-Bus daemon or an external D-Bus proxy. Desktop notifications and external
-URIs use the system broker instead. It is enabled with the `notification` and
-`openURI` permissions and exposes only the matching shim. The application never
-receives a raw host D-Bus socket or command.
+D-Bus daemon or an external D-Bus proxy. The private desktop proxy exposes the
+standard `org.freedesktop.appearance` settings so applications follow the host
+light or dark preference. Desktop notifications and external URIs use the
+system broker instead. It is enabled with the `notification` and `openURI`
+permissions and exposes only the matching shim. The application never receives
+a raw host D-Bus socket or command.
 
 ### File selection
 

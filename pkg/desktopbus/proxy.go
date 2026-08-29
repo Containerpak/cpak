@@ -27,6 +27,7 @@ const (
 	portalDestination    = "org.freedesktop.portal.Desktop"
 	bluezDestination     = "org.bluez"
 	fileChooserInterface = "org.freedesktop.portal.FileChooser"
+	settingsInterface    = "org.freedesktop.portal.Settings"
 	requestInterface     = "org.freedesktop.portal.Request"
 	portalObjectPath     = dbus.ObjectPath("/org/freedesktop/portal/desktop")
 	requestPathPrefix    = "/org/freedesktop/portal/desktop/request/cpak/"
@@ -409,6 +410,8 @@ func restrictedBusCallAllowed(destination, portalSender string, path dbus.Object
 		return false
 	}
 	switch interfaceName {
+	case settingsInterface:
+		return portalSettingsCallAllowed(member, body)
 	case "org.freedesktop.DBus.Properties":
 		return member == "Get" || member == "GetAll"
 	case "org.freedesktop.DBus.Introspectable":
@@ -417,6 +420,29 @@ func restrictedBusCallAllowed(destination, portalSender string, path dbus.Object
 		return member == "Ping" || member == "GetMachineId"
 	}
 	return false
+}
+
+func portalSettingsCallAllowed(member string, body []any) bool {
+	switch member {
+	case "Read":
+		return len(body) == 2 && body[0] == "org.freedesktop.appearance"
+	case "ReadAll":
+		if len(body) != 1 {
+			return false
+		}
+		namespaces, ok := body[0].([]string)
+		if !ok || len(namespaces) == 0 {
+			return false
+		}
+		for _, namespace := range namespaces {
+			if namespace != "org.freedesktop.appearance" {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Proxy) portalDestination(destination string) bool {
