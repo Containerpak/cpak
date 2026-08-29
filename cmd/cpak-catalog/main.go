@@ -33,9 +33,10 @@ const defaultStoreIndex = "https://raw.githubusercontent.com/Containerpak/store/
 const defaultGitHubAPI = "https://api.github.com"
 
 type storeEntry struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Manifest    string `json:"manifest"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	Manifest      string   `json:"manifest"`
+	Architectures []string `json:"architectures"`
 }
 
 type storeManifest struct {
@@ -141,8 +142,12 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 			if description == "" {
 				description = "cpak application"
 			}
+			architectures, err := installerArchitectures(entry)
+			if err != nil {
+				return catalog{}, fmt.Errorf("read %s architectures: %w", origin, err)
+			}
 			result.Packages[origin] = map[string]signedEntry{}
-			for _, arch := range []string{"amd64", "arm64"} {
+			for _, arch := range architectures {
 				digest := digests[arch]
 				if digest == "" {
 					return catalog{}, fmt.Errorf("installer digest is missing for %s", arch)
@@ -174,6 +179,25 @@ func buildCatalog(ctx context.Context, client *http.Client, indexURL, githubAPI,
 		}
 	}
 	return result, nil
+}
+
+func installerArchitectures(entry storeEntry) ([]string, error) {
+	if len(entry.Architectures) == 0 {
+		return []string{"amd64", "arm64"}, nil
+	}
+	seen := make(map[string]struct{}, len(entry.Architectures))
+	architectures := make([]string, 0, len(entry.Architectures))
+	for _, arch := range entry.Architectures {
+		if arch != "amd64" && arch != "arm64" {
+			return nil, fmt.Errorf("unsupported architecture %q", arch)
+		}
+		if _, exists := seen[arch]; exists {
+			return nil, fmt.Errorf("duplicate architecture %q", arch)
+		}
+		seen[arch] = struct{}{}
+		architectures = append(architectures, arch)
+	}
+	return architectures, nil
 }
 
 func signedManifestDigest(manifest *types.CpakManifest) (string, error) {

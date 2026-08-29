@@ -73,6 +73,23 @@ func TestInstallerDigests(t *testing.T) {
 	}
 }
 
+func TestInstallerArchitectures(t *testing.T) {
+	architectures, err := installerArchitectures(storeEntry{})
+	if err != nil || !reflect.DeepEqual(architectures, []string{"amd64", "arm64"}) {
+		t.Fatalf("unexpected default architectures: %#v, %v", architectures, err)
+	}
+	architectures, err = installerArchitectures(storeEntry{Architectures: []string{"amd64"}})
+	if err != nil || !reflect.DeepEqual(architectures, []string{"amd64"}) {
+		t.Fatalf("unexpected explicit architectures: %#v, %v", architectures, err)
+	}
+	if _, err = installerArchitectures(storeEntry{Architectures: []string{"riscv64"}}); err == nil {
+		t.Fatal("unsupported store architecture was accepted")
+	}
+	if _, err = installerArchitectures(storeEntry{Architectures: []string{"amd64", "amd64"}}); err == nil {
+		t.Fatal("duplicate store architecture was accepted")
+	}
+}
+
 func TestLoadPackageManifest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/repos/containerpak/demo/contents/cpak.json" || request.URL.Query().Get("ref") != "abc123" {
