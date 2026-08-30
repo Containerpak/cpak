@@ -440,6 +440,23 @@ parent cpak, and a read-only grant cannot be promoted. Unsupported flags, host
 namespaces, devices and privileged mode are rejected before the container
 backend is started. There is no generic host command action.
 
+Environment frontends can request the cpak provider instead:
+
+```json
+"hostActions": [
+  {
+    "provider": "cpak",
+    "capabilities": ["read", "manage", "exec"]
+  }
+]
+```
+
+The `cpak-host` shim accepts only discovery and persistent environment
+operations. `read` lists packages, environments, permissions and processes;
+`manage` installs distribution packages and changes their environments; `exec`
+opens an interactive command in a selected environment. Other cpak commands
+and malformed argument shapes are rejected before the host binary starts.
+
 Resource limits use delegated cgroup v2 controllers when available. Hosts
 without a compatible cgroup manager can run applications without limits; a
 requested limit fails with a direct diagnostic instead of being ignored.

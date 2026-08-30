@@ -12,8 +12,8 @@ import (
 	"strings"
 )
 
-func InvokeShim(ctx context.Context, socketPath, token, shim string, args []string, environment map[string]string, stdout, stderr io.Writer) error {
-	client := Client{SocketPath: socketPath, Token: token, Stdout: stdout, Stderr: stderr}
+func InvokeShim(ctx context.Context, socketPath, token, shim string, args []string, environment map[string]string, stdin io.Reader, stdout, stderr io.Writer, interactive bool) error {
+	client := Client{SocketPath: socketPath, Token: token, Stdin: stdin, Stdout: stdout, Stderr: stderr}
 	switch shim {
 	case "notify-send":
 		request, err := parseNotification(args)
@@ -67,6 +67,11 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 			request.Backend = "docker"
 		}
 		return client.Containers(ctx, request)
+	case "cpak-host":
+		return client.Cpak(ctx, CpakRequest{
+			Arguments:   append([]string{}, args...),
+			Interactive: interactive,
+		})
 	default:
 		return errors.New("unsupported system integration shim")
 	}

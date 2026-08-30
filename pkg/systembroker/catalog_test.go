@@ -74,6 +74,22 @@ func TestCatalogPreservesFilePickerApplication(t *testing.T) {
 	}
 }
 
+func TestCatalogPreservesCpakCapabilities(t *testing.T) {
+	directory := t.TempDir()
+	token := strings.Repeat("h", 64)
+	policy := Policy{CpakCapabilities: map[string]bool{"read": true}}
+	if err := WritePolicy(directory, token, policy); err != nil {
+		t.Fatal(err)
+	}
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.CpakCapabilities["read"] {
+		t.Fatalf("cpak capabilities: %v", options.CpakCapabilities)
+	}
+}
+
 func TestCatalogRejectsSymlinkedPolicy(t *testing.T) {
 	directory := t.TempDir()
 	token := strings.Repeat("e", 64)

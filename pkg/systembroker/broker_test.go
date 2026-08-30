@@ -163,6 +163,43 @@ func TestContainerCallStreamsOutputAndExitCode(t *testing.T) {
 	}
 }
 
+func TestCpakCallStreamsInputOutputAndExitCode(t *testing.T) {
+	options := testOptions(t)
+	options.CpakCapabilities = map[string]bool{types.HostActionCpakManage: true}
+	options.Cpak = func(_ context.Context, capabilities map[string]bool, request CpakRequest, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+		if !capabilities[types.HostActionCpakManage] || !equalArguments(request.Arguments, "environment", "policy", "--environment", "env-id", "--policy", "-", "--json") {
+			t.Fatalf("unexpected cpak request: %v %+v", capabilities, request)
+		}
+		input, err := io.ReadAll(stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(input) != "{\"network\":true}" {
+			t.Fatalf("cpak input: %q", string(input))
+		}
+		_, _ = stdout.Write([]byte("out\n"))
+		_, _ = stderr.Write([]byte("err\n"))
+		return 9, nil
+	}
+	startBroker(t, options)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := testClient(options)
+	client.Stdin = strings.NewReader(`{"network":true}`)
+	client.Stdout = &stdout
+	client.Stderr = &stderr
+	err := client.Cpak(context.Background(), CpakRequest{Arguments: []string{
+		"environment", "policy", "--environment", "env-id", "--policy", "-", "--json",
+	}})
+	var exitError *types.ExitError
+	if !errors.As(err, &exitError) || exitError.Code != 9 {
+		t.Fatalf("cpak exit: %v", err)
+	}
+	if stdout.String() != "out\n" || stderr.String() != "err\n" {
+		t.Fatalf("cpak streams: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 func TestDockerShimSelectsDockerBackend(t *testing.T) {
 	options := testOptions(t)
 	options.ContainerOwner = "app-id"
@@ -174,7 +211,7 @@ func TestDockerShimSelectsDockerBackend(t *testing.T) {
 		return 0, nil
 	}
 	startBroker(t, options)
-	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "docker", []string{"ps"}, nil, io.Discard, io.Discard); err != nil {
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "docker", []string{"ps"}, nil, nil, io.Discard, io.Discard, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -190,7 +227,7 @@ func TestPodmanShimKeepsLegacyRequestShape(t *testing.T) {
 		return 0, nil
 	}
 	startBroker(t, options)
-	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "podman", []string{"ps"}, nil, io.Discard, io.Discard); err != nil {
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "podman", []string{"ps"}, nil, nil, io.Discard, io.Discard, false); err != nil {
 		t.Fatal(err)
 	}
 }

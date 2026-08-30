@@ -14,21 +14,26 @@ import (
 
 const (
 	HostActionProviderContainers = "containers"
+	HostActionProviderCpak       = "cpak"
 
 	HostActionContainersRead        = "read"
 	HostActionContainersManageOwned = "manage-owned"
 	HostActionContainersExecOwned   = "exec-owned"
+
+	HostActionCpakRead   = "read"
+	HostActionCpakManage = "manage"
+	HostActionCpakExec   = "exec"
 )
 
 type HostActionGrant struct {
-	Provider     string   `json:"provider" jsonschema:"enum=containers,description=Built-in host service provider"`
+	Provider     string   `json:"provider" jsonschema:"enum=containers,enum=cpak,description=Built-in host service provider"`
 	Capabilities []string `json:"capabilities" jsonschema:"minItems=1,description=Provider capabilities"`
 }
 
 func ValidateHostActions(grants []HostActionGrant) error {
 	providers := map[string]bool{}
 	for _, grant := range grants {
-		if grant.Provider != HostActionProviderContainers {
+		if grant.Provider != HostActionProviderContainers && grant.Provider != HostActionProviderCpak {
 			return fmt.Errorf("unsupported host action provider: %s", grant.Provider)
 		}
 		if providers[grant.Provider] {
@@ -40,7 +45,7 @@ func ValidateHostActions(grants []HostActionGrant) error {
 		}
 		capabilities := map[string]bool{}
 		for _, capability := range grant.Capabilities {
-			if !validContainerCapability(capability) {
+			if !validHostActionCapability(grant.Provider, capability) {
 				return fmt.Errorf("unsupported %s capability: %s", grant.Provider, capability)
 			}
 			if capabilities[capability] {
@@ -108,4 +113,17 @@ func validContainerCapability(capability string) bool {
 	default:
 		return false
 	}
+}
+
+func validHostActionCapability(provider, capability string) bool {
+	switch provider {
+	case HostActionProviderContainers:
+		return validContainerCapability(capability)
+	case HostActionProviderCpak:
+		switch capability {
+		case HostActionCpakRead, HostActionCpakManage, HostActionCpakExec:
+			return true
+		}
+	}
+	return false
 }

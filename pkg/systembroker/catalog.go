@@ -29,6 +29,7 @@ type Policy struct {
 	ContainerOwner        string                `json:"container_owner,omitempty"`
 	ContainerCapabilities map[string]bool       `json:"container_capabilities,omitempty"`
 	ContainerPaths        []ContainerPathGrant  `json:"container_paths,omitempty"`
+	CpakCapabilities      map[string]bool       `json:"cpak_capabilities,omitempty"`
 	FilePicker            FilePickerPolicy      `json:"file_picker,omitempty"`
 	FilePickerPaths       []FilePickerPathGrant `json:"file_picker_paths,omitempty"`
 	FilePickerApplication string                `json:"file_picker_application,omitempty"`
@@ -144,6 +145,7 @@ func resolveCatalogPolicy(socketPath, directory string, request Request) (Option
 		ContainerOwner:        policy.ContainerOwner,
 		ContainerCapabilities: policy.ContainerCapabilities,
 		ContainerPaths:        policy.ContainerPaths,
+		CpakCapabilities:      policy.CpakCapabilities,
 		FilePicker:            policy.FilePicker,
 		FilePickerPaths:       policy.FilePickerPaths,
 		FilePickerApplication: policy.FilePickerApplication,

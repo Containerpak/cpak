@@ -1876,7 +1876,7 @@ func (c *SpawnCmd) createSystemBrokerShimAndLinks(rootFs string, shims []string)
 		return fmt.Errorf("chmod system broker shim: %w", err)
 	}
 	for _, name := range shims {
-		if name != "notify-send" && name != "xdg-open" && name != "gio" && name != "cpak-launch-app" && name != "cpak-file-picker" && name != "podman" && name != "docker" {
+		if name != "notify-send" && name != "xdg-open" && name != "gio" && name != "cpak-launch-app" && name != "cpak-file-picker" && name != "podman" && name != "docker" && name != "cpak-host" {
 			return fmt.Errorf("invalid system broker shim: %s", name)
 		}
 		linkPath, prepareErr := prepareRootfsFile(rootFs, filepath.Join("/usr/local/bin", name))

@@ -208,6 +208,9 @@ func systemBrokerShims(o types.Override) []string {
 	if len(types.HostActionCapabilities(o.HostActions, types.HostActionProviderContainers)) > 0 {
 		shims = append(shims, "podman", "docker")
 	}
+	if len(types.HostActionCapabilities(o.HostActions, types.HostActionProviderCpak)) > 0 {
+		shims = append(shims, "cpak-host")
+	}
 	return shims
 }
 

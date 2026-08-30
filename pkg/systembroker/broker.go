@@ -5,6 +5,7 @@
 package systembroker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/subtle"
@@ -45,6 +46,7 @@ type Options struct {
 	ContainerOwner        string
 	ContainerCapabilities map[string]bool
 	ContainerPaths        []ContainerPathGrant
+	CpakCapabilities      map[string]bool
 	FilePicker            FilePickerPolicy
 	FilePickerPaths       []FilePickerPathGrant
 	FilePickerApplication string
@@ -54,6 +56,7 @@ type Options struct {
 	Notify                func(context.Context, NotificationRequest) error
 	LaunchApplication     func(context.Context, string, []string, []string) error
 	Containers            func(context.Context, string, map[string]bool, []ContainerPathGrant, ContainerRequest, io.Writer, io.Writer) (int, error)
+	Cpak                  func(context.Context, map[string]bool, CpakRequest, io.Reader, io.Writer, io.Writer) (int, error)
 	PickFile              func(context.Context, desktopui.FilePickerRequest) (desktopui.FilePickerResult, error)
 	ConfirmFileGrant      func(context.Context, desktopui.FilePickerResult, desktopui.FilePickerRequest) (desktopui.FilePickerResult, error)
 }
@@ -65,7 +68,7 @@ func (o Options) validate() error {
 	if len(o.Token) < 32 {
 		return errors.New("system broker token is too short")
 	}
-	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && !o.FilePicker.Enabled() {
+	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && len(o.CpakCapabilities) == 0 && !o.FilePicker.Enabled() {
 		return errors.New("system broker has no enabled operations")
 	}
 	if o.AllowHostApplications {
@@ -101,6 +104,11 @@ func (o Options) validate() error {
 	for capability := range o.ContainerCapabilities {
 		if capability != "read" && capability != "manage-owned" && capability != "exec-owned" {
 			return fmt.Errorf("unsupported container capability: %s", capability)
+		}
+	}
+	for capability := range o.CpakCapabilities {
+		if capability != "read" && capability != "manage" && capability != "exec" {
+			return fmt.Errorf("unsupported cpak capability: %s", capability)
 		}
 	}
 	for _, path := range o.ContainerPaths {
@@ -161,8 +169,14 @@ func handleResolved(connection *net.UnixConn, authorize func(*net.UnixConn) erro
 		writer.fail("system broker denied the caller")
 		return
 	}
+	reader := bufio.NewReaderSize(connection, maxRequestSize+1)
+	line, err := reader.ReadSlice('\n')
+	if err != nil || len(line) > maxRequestSize {
+		writer.fail("invalid system broker request")
+		return
+	}
 	request := Request{}
-	if err := json.NewDecoder(io.LimitReader(connection, maxRequestSize)).Decode(&request); err != nil {
+	if err = json.Unmarshal(bytes.TrimSpace(line), &request); err != nil {
 		writer.fail("invalid system broker request")
 		return
 	}
@@ -182,12 +196,13 @@ func handleResolved(connection *net.UnixConn, authorize func(*net.UnixConn) erro
 	_ = connection.SetReadDeadline(time.Time{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() {
-		var buffer [1]byte
-		_, _ = connection.Read(buffer[:])
-		cancel()
-	}()
-	code, err := execute(ctx, request, options, writer)
+	if request.Action != ActionCpak {
+		go func() {
+			_, _ = reader.ReadByte()
+			cancel()
+		}()
+	}
+	code, err := execute(ctx, request, options, reader, writer)
 	if err != nil {
 		writer.fail(err.Error())
 		return
@@ -202,13 +217,13 @@ func authorizeRequest(request Request, token string) error {
 	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(token)) != 1 {
 		return errors.New("invalid system broker token")
 	}
-	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionFilePicker && request.Action != ActionContainers {
+	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionFilePicker && request.Action != ActionContainers && request.Action != ActionCpak {
 		return errors.New("unsupported system broker operation")
 	}
 	return nil
 }
 
-func execute(ctx context.Context, request Request, options Options, writer *frameWriter) (int, error) {
+func execute(ctx context.Context, request Request, options Options, input io.Reader, writer *frameWriter) (int, error) {
 	switch request.Action {
 	case ActionNotify:
 		if !options.AllowNotify {
@@ -303,6 +318,18 @@ func execute(ctx context.Context, request Request, options Options, writer *fram
 			return options.Containers(ctx, options.ContainerOwner, options.ContainerCapabilities, options.ContainerPaths, container, writer.stdout(), writer.stderr())
 		}
 		return executeContainer(ctx, options.ContainerOwner, options.ContainerCapabilities, options.ContainerPaths, container, writer.stdout(), writer.stderr())
+	case ActionCpak:
+		if len(options.CpakCapabilities) == 0 {
+			return 0, errors.New("cpak host actions are not permitted")
+		}
+		cpakRequest := CpakRequest{}
+		if err := decodePayload(request.Payload, &cpakRequest); err != nil {
+			return 0, err
+		}
+		if options.Cpak != nil {
+			return options.Cpak(ctx, options.CpakCapabilities, cpakRequest, input, writer.stdout(), writer.stderr())
+		}
+		return executeCpak(ctx, options.CpakCapabilities, cpakRequest, input, writer.stdout(), writer.stderr())
 	}
 	return 0, errors.New("unsupported system broker operation")
 }

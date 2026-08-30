@@ -14,6 +14,7 @@ const (
 	ActionLaunchApplication = "desktop.launch-application"
 	ActionFilePicker        = "desktop.file-picker"
 	ActionContainers        = "containers"
+	ActionCpak              = "cpak"
 
 	FrameStdout = "stdout"
 	FrameStderr = "stderr"
@@ -136,4 +137,9 @@ type ContainerMount struct {
 type ContainerPathGrant struct {
 	Path     string
 	ReadOnly bool
+}
+
+type CpakRequest struct {
+	Arguments   []string `json:"arguments"`
+	Interactive bool     `json:"interactive,omitempty"`
 }

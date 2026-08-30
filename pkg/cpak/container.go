@@ -1879,6 +1879,7 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 		}
 	}
 	capabilities := types.HostActionCapabilities(override.HostActions, types.HostActionProviderContainers)
+	cpakCapabilities := types.HostActionCapabilities(override.HostActions, types.HostActionProviderCpak)
 	paths := []systembroker.ContainerPathGrant(nil)
 	if len(capabilities) > 0 {
 		paths, err = systemBrokerContainerPaths(override.Filesystem)
@@ -1902,6 +1903,7 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 		ContainerOwner:        owner,
 		ContainerCapabilities: capabilities,
 		ContainerPaths:        paths,
+		CpakCapabilities:      cpakCapabilities,
 		FilePicker: systembroker.FilePickerPolicy{
 			OpenFile:         override.FilePicker.OpenFile,
 			OpenFolder:       override.FilePicker.OpenFolder,

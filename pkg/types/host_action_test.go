@@ -13,6 +13,7 @@ func TestValidateHostActionsRejectsUnknownAndDuplicateCapabilities(t *testing.T)
 	for _, grants := range [][]HostActionGrant{
 		{{Provider: "commands", Capabilities: []string{"exec"}}},
 		{{Provider: HostActionProviderContainers, Capabilities: []string{"all"}}},
+		{{Provider: HostActionProviderCpak, Capabilities: []string{"all"}}},
 		{{Provider: HostActionProviderContainers, Capabilities: []string{HostActionContainersRead, HostActionContainersRead}}},
 		{
 			{Provider: HostActionProviderContainers, Capabilities: []string{HostActionContainersRead}},
@@ -22,6 +23,21 @@ func TestValidateHostActionsRejectsUnknownAndDuplicateCapabilities(t *testing.T)
 		if err := ValidateHostActions(grants); err == nil {
 			t.Fatalf("invalid host actions were accepted: %+v", grants)
 		}
+	}
+}
+
+func TestIntersectHostActionsKeepsProvidersSeparate(t *testing.T) {
+	parent := []HostActionGrant{
+		{Provider: HostActionProviderContainers, Capabilities: []string{HostActionContainersRead}},
+		{Provider: HostActionProviderCpak, Capabilities: []string{HostActionCpakRead, HostActionCpakManage}},
+	}
+	child := []HostActionGrant{
+		{Provider: HostActionProviderContainers, Capabilities: []string{HostActionContainersExecOwned}},
+		{Provider: HostActionProviderCpak, Capabilities: []string{HostActionCpakExec, HostActionCpakRead}},
+	}
+	want := []HostActionGrant{{Provider: HostActionProviderCpak, Capabilities: []string{HostActionCpakRead}}}
+	if got := IntersectHostActions(parent, child); !reflect.DeepEqual(got, want) {
+		t.Fatalf("host action intersection: got %+v, want %+v", got, want)
 	}
 }
 

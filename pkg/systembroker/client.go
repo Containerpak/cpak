@@ -20,6 +20,7 @@ import (
 type Client struct {
 	SocketPath string
 	Token      string
+	Stdin      io.Reader
 	Stdout     io.Writer
 	Stderr     io.Writer
 }
@@ -56,6 +57,10 @@ func (c Client) Containers(ctx context.Context, request ContainerRequest) error 
 	return c.call(ctx, ActionContainers, request)
 }
 
+func (c Client) Cpak(ctx context.Context, request CpakRequest) error {
+	return c.call(ctx, ActionCpak, request)
+}
+
 func (c Client) call(ctx context.Context, action string, payload any) error {
 	if c.SocketPath == "" {
 		return errors.New("system broker socket path is required")
@@ -89,6 +94,14 @@ func (c Client) call(ctx context.Context, action string, payload any) error {
 			return ctx.Err()
 		}
 		return fmt.Errorf("write system broker request: %w", err)
+	}
+	if c.Stdin != nil {
+		go func() {
+			_, _ = io.Copy(connection, c.Stdin)
+			if unixConnection, ok := connection.(*net.UnixConn); ok {
+				_ = unixConnection.CloseWrite()
+			}
+		}()
 	}
 	decoder := json.NewDecoder(connection)
 	for {

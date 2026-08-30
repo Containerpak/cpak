@@ -10,6 +10,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
+	"golang.org/x/sys/unix"
 )
 
 type HostActionCmd struct {
@@ -45,7 +46,8 @@ func (c *HostActionCmd) Run() error {
 	}
 	ctx, stop := signalContext()
 	defer stop()
-	if err := systembroker.InvokeShim(ctx, socketPath, token, c.Shim, c.Args, environment, os.Stdout, os.Stderr); err != nil {
+	_, terminalErr := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
+	if err := systembroker.InvokeShim(ctx, socketPath, token, c.Shim, c.Args, environment, os.Stdin, os.Stdout, os.Stderr, terminalErr == nil); err != nil {
 		return fmt.Errorf("host action failed: %w", err)
 	}
 	return nil

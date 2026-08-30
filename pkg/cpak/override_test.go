@@ -177,10 +177,13 @@ func TestSystemBrokerShimsAreExplicit(t *testing.T) {
 		HostActions: []types.HostActionGrant{{
 			Provider:     types.HostActionProviderContainers,
 			Capabilities: []string{types.HostActionContainersRead},
+		}, {
+			Provider:     types.HostActionProviderCpak,
+			Capabilities: []string{types.HostActionCpakRead},
 		}},
 	}
 	shims := systemBrokerShims(override)
-	if !reflect.DeepEqual(shims, []string{"notify-send", "xdg-open", "gio", "podman", "docker"}) {
+	if !reflect.DeepEqual(shims, []string{"notify-send", "xdg-open", "gio", "podman", "docker", "cpak-host"}) {
 		t.Fatalf("system broker shims: %v", shims)
 	}
 }

@@ -240,7 +240,8 @@
         "provider": {
           "type": "string",
           "enum": [
-            "containers"
+            "containers",
+            "cpak"
           ],
           "description": "Built-in host service provider"
         },
