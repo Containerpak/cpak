@@ -176,6 +176,19 @@ func TestSpawnArgumentsPairTheHostSocketWithTheContainerAddress(t *testing.T) {
 	}
 }
 
+func TestSystemBrokerSocketDoesNotReuseTheLegacyProtocol(t *testing.T) {
+	runtimeDirectory := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+
+	path, err := sharedSystemBrokerSocketPath()
+	if err != nil {
+		t.Fatalf("system broker socket path: %v", err)
+	}
+	if filepath.Base(path) != systemBrokerSocketName || filepath.Base(path) == "system-broker.sock" {
+		t.Fatalf("system broker socket can reuse an incompatible service: %s", path)
+	}
+}
+
 func TestNestedServiceArgumentsAreLimitedToDeclaredDependencies(t *testing.T) {
 	runtimeDirectory, err := os.MkdirTemp("", "cpak")
 	if err != nil {

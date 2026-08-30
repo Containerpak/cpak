@@ -20,6 +20,9 @@ import (
 
 const maxCpakArgumentsSize = 64 << 10
 
+const TerminalRowsEnvironment = "CPAK_TERMINAL_ROWS"
+const TerminalColumnsEnvironment = "CPAK_TERMINAL_COLUMNS"
+
 func executeCpak(ctx context.Context, capabilities map[string]bool, request CpakRequest, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	arguments, err := validateCpakRequest(capabilities, request)
 	if err != nil {
@@ -37,6 +40,12 @@ func executeCpak(ctx context.Context, capabilities map[string]bool, request Cpak
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
+	if request.Rows != 0 {
+		command.Env = mergeEnvironment(os.Environ(), []string{
+			TerminalRowsEnvironment + "=" + strconv.Itoa(int(request.Rows)),
+			TerminalColumnsEnvironment + "=" + strconv.Itoa(int(request.Columns)),
+		})
+	}
 	if err = command.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -48,6 +57,9 @@ func executeCpak(ctx context.Context, capabilities map[string]bool, request Cpak
 }
 
 func validateCpakRequest(capabilities map[string]bool, request CpakRequest) ([]string, error) {
+	if (request.Rows == 0) != (request.Columns == 0) || (!request.Interactive && request.Rows != 0) {
+		return nil, errors.New("invalid cpak terminal size")
+	}
 	arguments := request.Arguments
 	if len(arguments) < 2 || len(arguments) > 64 {
 		return nil, errors.New("invalid cpak host action")
@@ -140,7 +152,15 @@ func validateCpakEnvironmentArguments(arguments []string, interactive bool) (str
 		}
 		return types.HostActionCpakManage, nil
 	case "shell":
-		if !interactive || len(arguments) < 6 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[4] != "--command" || !validCpakValue(arguments[5], 4096) {
+		commandOption := 4
+		if len(arguments) > commandOption && arguments[commandOption] == "--terminal" {
+			commandOption++
+		}
+		if !interactive || len(arguments) < commandOption+2 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[commandOption] != "--command" || !validCpakValue(arguments[commandOption+1], 4096) {
+			return "", errors.New("invalid cpak environment request")
+		}
+		extra := arguments[commandOption+2:]
+		if len(extra) > 0 && (len(extra) < 2 || extra[0] != "--") {
 			return "", errors.New("invalid cpak environment request")
 		}
 		return types.HostActionCpakExec, nil

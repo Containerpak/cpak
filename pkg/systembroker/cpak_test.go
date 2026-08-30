@@ -46,6 +46,27 @@ func TestCpakHostActionsAreLimitedByCapability(t *testing.T) {
 			allowed:      true,
 		},
 		{
+			name:         "interactive terminal shell with arguments",
+			capabilities: map[string]bool{types.HostActionCpakExec: true},
+			request:      CpakRequest{Arguments: []string{"environment", "shell", "--environment", "env-id", "--terminal", "--command", "/bin/bash", "--", "-i"}, Interactive: true, Rows: 41, Columns: 132},
+			allowed:      true,
+		},
+		{
+			name:         "terminal size requires an interactive request",
+			capabilities: map[string]bool{types.HostActionCpakRead: true},
+			request:      CpakRequest{Arguments: []string{"discover", "list"}, Rows: 41, Columns: 132},
+		},
+		{
+			name:         "terminal size requires both dimensions",
+			capabilities: map[string]bool{types.HostActionCpakExec: true},
+			request:      CpakRequest{Arguments: []string{"environment", "shell", "--environment", "env-id", "--command", "/bin/bash"}, Interactive: true, Rows: 41},
+		},
+		{
+			name:         "shell arguments require a separator",
+			capabilities: map[string]bool{types.HostActionCpakExec: true},
+			request:      CpakRequest{Arguments: []string{"environment", "shell", "--environment", "env-id", "--terminal", "--command", "/bin/bash", "-i"}, Interactive: true},
+		},
+		{
 			name:         "arbitrary cpak command",
 			capabilities: map[string]bool{types.HostActionCpakExec: true},
 			request:      CpakRequest{Arguments: []string{"run", "github.com/example/app"}, Interactive: true},

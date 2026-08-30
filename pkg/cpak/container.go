@@ -1079,7 +1079,8 @@ func runtimeTerminalSize(force bool) (bool, bool, uint16, uint16) {
 	local := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 	if !local {
 		if force {
-			return true, false, 24, 80
+			rows, columns := proxiedTerminalSize()
+			return true, false, rows, columns
 		}
 		return false, false, 0, 0
 	}
@@ -1094,6 +1095,15 @@ func runtimeTerminalSize(force bool) (bool, bool, uint16, uint16) {
 		columns = 1<<16 - 1
 	}
 	return true, true, uint16(rows), uint16(columns)
+}
+
+func proxiedTerminalSize() (uint16, uint16) {
+	rows, rowsErr := strconv.Atoi(os.Getenv(systembroker.TerminalRowsEnvironment))
+	columns, columnsErr := strconv.Atoi(os.Getenv(systembroker.TerminalColumnsEnvironment))
+	if rowsErr != nil || columnsErr != nil || rows <= 0 || columns <= 0 || rows > 1<<16-1 || columns > 1<<16-1 {
+		return 24, 80
+	}
+	return uint16(rows), uint16(columns)
 }
 
 func runtimeTerminalEnvironment(values []string, terminal, colorTerminal string) []string {
@@ -1717,6 +1727,7 @@ func getNested() (token string, nested bool) {
 
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
 const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
+const systemBrokerSocketName = "system-broker-v2.sock"
 
 func createSystemBrokerRuntime(statePath string) (string, string, error) {
 	socketPath, err := sharedSystemBrokerSocketPath()
@@ -1734,7 +1745,7 @@ func sharedSystemBrokerSocketPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(directory, "system-broker.sock"), nil
+	return filepath.Join(directory, systemBrokerSocketName), nil
 }
 
 func sharedSystemBrokerRuntimeDirectory() (string, error) {

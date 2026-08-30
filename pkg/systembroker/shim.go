@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 func InvokeShim(ctx context.Context, socketPath, token, shim string, args []string, environment map[string]string, stdin io.Reader, stdout, stderr io.Writer, interactive bool) error {
@@ -68,13 +70,34 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 		}
 		return client.Containers(ctx, request)
 	case "cpak-host":
+		rows, columns := shimTerminalSize(stdin, interactive)
 		return client.Cpak(ctx, CpakRequest{
 			Arguments:   append([]string{}, args...),
 			Interactive: interactive,
+			Rows:        rows,
+			Columns:     columns,
 		})
 	default:
 		return errors.New("unsupported system integration shim")
 	}
+}
+
+func shimTerminalSize(input io.Reader, interactive bool) (uint16, uint16) {
+	file, ok := input.(interface{ Fd() uintptr })
+	if !interactive || !ok {
+		return 0, 0
+	}
+	columns, rows, err := term.GetSize(int(file.Fd()))
+	if err != nil || rows <= 0 || columns <= 0 {
+		return 0, 0
+	}
+	if rows > 1<<16-1 {
+		rows = 1<<16 - 1
+	}
+	if columns > 1<<16-1 {
+		columns = 1<<16 - 1
+	}
+	return uint16(rows), uint16(columns)
 }
 
 func parseFilePicker(args []string) (FilePickerRequest, error) {

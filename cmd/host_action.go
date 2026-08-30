@@ -11,6 +11,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 type HostActionCmd struct {
@@ -47,8 +48,27 @@ func (c *HostActionCmd) Run() error {
 	ctx, stop := signalContext()
 	defer stop()
 	_, terminalErr := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
-	if err := systembroker.InvokeShim(ctx, socketPath, token, c.Shim, c.Args, environment, os.Stdin, os.Stdout, os.Stderr, terminalErr == nil); err != nil {
+	interactive := terminalErr == nil
+	restoreTerminal, err := prepareHostActionTerminal(c.Shim, os.Stdin, interactive)
+	if err != nil {
+		return err
+	}
+	defer restoreTerminal()
+	if err := systembroker.InvokeShim(ctx, socketPath, token, c.Shim, c.Args, environment, os.Stdin, os.Stdout, os.Stderr, interactive); err != nil {
 		return fmt.Errorf("host action failed: %w", err)
 	}
 	return nil
+}
+
+func prepareHostActionTerminal(shim string, input *os.File, interactive bool) (func(), error) {
+	if shim != "cpak-host" || !interactive {
+		return func() {}, nil
+	}
+	state, err := term.MakeRaw(int(input.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("prepare host action terminal: %w", err)
+	}
+	return func() {
+		_ = term.Restore(int(input.Fd()), state)
+	}, nil
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/filegrant"
 	"github.com/mirkobrombin/cpak/pkg/grantproto"
+	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -73,12 +74,23 @@ func TestBuildContainerPath(t *testing.T) {
 }
 
 func TestForcedRuntimeTerminalSurvivesProxiedIO(t *testing.T) {
+	t.Setenv(systembroker.TerminalRowsEnvironment, "41")
+	t.Setenv(systembroker.TerminalColumnsEnvironment, "132")
 	requested, _, rows, columns := runtimeTerminalSize(true)
 	if !requested {
 		t.Fatal("a forced terminal session was not requested")
 	}
-	if rows == 0 || columns == 0 {
-		t.Fatalf("a forced terminal session has no initial size: %dx%d", columns, rows)
+	if rows != 41 || columns != 132 {
+		t.Fatalf("forced terminal size: %dx%d", columns, rows)
+	}
+}
+
+func TestForcedRuntimeTerminalRejectsIncompleteSize(t *testing.T) {
+	t.Setenv(systembroker.TerminalRowsEnvironment, "41")
+	t.Setenv(systembroker.TerminalColumnsEnvironment, "")
+	rows, columns := proxiedTerminalSize()
+	if rows != 24 || columns != 80 {
+		t.Fatalf("fallback terminal size: %dx%d", columns, rows)
 	}
 }
 

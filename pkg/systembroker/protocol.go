@@ -142,4 +142,6 @@ type ContainerPathGrant struct {
 type CpakRequest struct {
 	Arguments   []string `json:"arguments"`
 	Interactive bool     `json:"interactive,omitempty"`
+	Rows        uint16   `json:"rows,omitempty"`
+	Columns     uint16   `json:"columns,omitempty"`
 }
