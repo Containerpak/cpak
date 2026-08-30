@@ -63,6 +63,12 @@ func TestEnvironmentRoundTripUsesInstalledPackagePolicy(t *testing.T) {
 	}
 }
 
+func TestEnvironmentUsesItsOwnRuntimePolicyVersion(t *testing.T) {
+	if containerRuntimeVersion(environmentInstance("id")) == containerRuntimeVersion("") {
+		t.Fatal("environment containers can reuse a single-ID runtime")
+	}
+}
+
 func TestEnvironmentNamesAreUniqueAndBounded(t *testing.T) {
 	cp := newTestCpak(t)
 	app := environmentTestApplication()

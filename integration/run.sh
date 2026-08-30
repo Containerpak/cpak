@@ -116,6 +116,7 @@ def write(name, title, image="probe", override=None, dependencies=None, addons=N
 write("desktop", "Desktop probe", override={"socketWayland": True})
 write("bluetooth", "Bluetooth probe", override={"network": True, "bluetooth": True})
 write("loopback", "Loopback probe", override={"network": True, "hostNetwork": True})
+write("environment", "Environment probe", override={"asRoot": True})
 write("dependency", "Dependency probe", image="dependency")
 write(
     "dependency-main",
@@ -187,6 +188,12 @@ run_probe "$manifest_host/integration/bluetooth" bluetooth
 
 install "$manifest_host/integration/loopback"
 run_probe "$manifest_host/integration/loopback" loopback
+
+install "$manifest_host/integration/environment"
+"$cpak" environment create --name system-identities --origin "$manifest_host/integration/environment"
+"$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- system-identities
+"$cpak" environment stop --environment system-identities
+"$cpak" environment delete --environment system-identities
 
 install "$manifest_host/integration/dependency-main"
 run_probe "$manifest_host/integration/dependency-main" dependency

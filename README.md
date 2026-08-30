@@ -146,6 +146,8 @@ cpak environment shell --environment arch
 Package-manager changes and the private home survive container stops and host
 reboots. `cpak environment stop` ends the running container without deleting
 that state. `cpak environment delete` removes the environment and its data.
+Persistent environments require `unshare`, `newuidmap`, `newgidmap` and at
+least 65536 subordinate user and group IDs for the current account.
 
 ```sh
 cpak environment list

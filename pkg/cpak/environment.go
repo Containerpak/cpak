@@ -326,10 +326,11 @@ func (c *Cpak) environmentPersistentState(environment types.Environment) (*persi
 		return nil, err
 	}
 	return &persistentContainerState{
-		scope:    environmentContainerScope(environment.ID),
-		upperDir: upperDir,
-		workDir:  workDir,
-		dataID:   environmentDataID(environment.ID),
+		scope:        environmentContainerScope(environment.ID),
+		upperDir:     upperDir,
+		workDir:      workDir,
+		dataID:       environmentDataID(environment.ID),
+		mapSystemIDs: true,
 	}, nil
 }
 

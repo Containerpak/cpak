@@ -5,6 +5,7 @@
 package cpak
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
@@ -80,6 +81,7 @@ type persistentContainerState struct {
 	upperDir      string
 	workDir       string
 	dataID        string
+	mapSystemIDs  bool
 	refreshPolicy func(launchPolicy) (launchPolicy, error)
 }
 
@@ -344,7 +346,8 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 	}
 	store = nil
 
-	_, container.Pid, container.CgroupPath, err = c.StartContainer(container, app, components, addons, config, override)
+	mapSystemIDs := persistent != nil && persistent.mapSystemIDs
+	_, container.Pid, container.CgroupPath, err = c.startContainer(container, app, components, addons, config, override, mapSystemIDs)
 	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
@@ -411,6 +414,9 @@ func containerRuntimeVersion(instance string) int {
 	if isSessionInstance(instance) {
 		return loginSessionRuntimePolicyVersion
 	}
+	if strings.HasPrefix(instance, "environment-") {
+		return containerRuntimePolicyVersion + 1
+	}
 	return containerRuntimePolicyVersion
 }
 
@@ -461,6 +467,10 @@ func containerLaunchPolicyHash(runtimeVersion int, launchRoot string, override t
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
 func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
+	return c.startContainer(container, app, components, addons, config, override, false)
+}
+
+func (c *Cpak) startContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override, mapSystemIDs bool) (rootfs string, pid int, cgroupPath string, err error) {
 	network, err := resolveUserNetwork(override.Network, override.HostNetwork)
 	if err != nil {
 		return "", 0, "", err
@@ -668,6 +678,16 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 	}
 	defer readyReader.Close()
 	defer readyWriter.Close()
+	var hostPIDReader, hostPIDWriter *os.File
+	if mapSystemIDs {
+		hostPIDReader, hostPIDWriter, err = os.Pipe()
+		if err != nil {
+			return "", 0, "", fmt.Errorf("create namespace PID pipe: %w", err)
+		}
+		defer hostPIDReader.Close()
+		defer hostPIDWriter.Close()
+		cmds = append(cmds, "--host-pid-fd", "4")
+	}
 
 	var networkExitReader, networkExitWriter *os.File
 	if network != nil {
@@ -679,13 +699,25 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		defer networkExitWriter.Close()
 	}
 
-	cmd := nativeNamespaceCommand(cpakBinary, cmds, containerNamespaceOptions(override))
+	namespace := containerNamespaceOptions(override)
+	var cmd *exec.Cmd
+	if mapSystemIDs {
+		cmd, err = systemIDNamespaceCommand(cpakBinary, cmds, namespace)
+		if err != nil {
+			return "", 0, "", err
+		}
+	} else {
+		cmd = nativeNamespaceCommand(cpakBinary, cmds, namespace)
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), containerEnv...)
 	cmd.Env = append(cmd.Env, "CPAK_CONTAINER_ID="+container.CpakId)
 	cmd.ExtraFiles = []*os.File{readyWriter}
+	if hostPIDWriter != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, hostPIDWriter)
+	}
 	if networkExitWriter != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, networkExitWriter)
 	}
@@ -694,6 +726,23 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		return "", 0, "", fmt.Errorf("start container namespace: %w", err)
 	}
 	_ = readyWriter.Close()
+	namespacePID := cmd.Process.Pid
+	if hostPIDWriter != nil {
+		_ = hostPIDWriter.Close()
+		value, readErr := bufio.NewReader(hostPIDReader).ReadString('\n')
+		if readErr != nil {
+			_ = cmd.Process.Kill()
+			waitErr := cmd.Wait()
+			return "", 0, "", fmt.Errorf("read namespace process ID: %w (%v)", readErr, waitErr)
+		}
+		namespacePID, err = strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || namespacePID <= 0 {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return "", 0, "", fmt.Errorf("invalid namespace process ID %q", strings.TrimSpace(value))
+		}
+		_ = hostPIDReader.Close()
+	}
 	if networkExitWriter != nil {
 		_ = networkExitWriter.Close()
 	}
@@ -706,7 +755,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 			_ = cmd.Process.Kill()
 			return "", 0, "", fmt.Errorf("create network readiness pipe: %w", pipeErr)
 		}
-		helper := network.command(cmd.Process.Pid, helperReadyWriter, networkExitReader)
+		helper := network.command(namespacePID, helperReadyWriter, networkExitReader)
 		helper.Stdout = os.Stdout
 		helper.Stderr = os.Stderr
 		if err = helper.Start(); err != nil {
@@ -783,7 +832,7 @@ func (c *Cpak) StartContainer(container types.Container, app types.Application, 
 		}
 	}
 
-	pid = cmd.Process.Pid
+	pid = namespacePID
 	cgroupPath, err = applyCgroupLimits(container.CpakId, pid, override)
 	if err != nil {
 		_ = cmd.Process.Kill()

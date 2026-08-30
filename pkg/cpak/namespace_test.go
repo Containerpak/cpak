@@ -6,6 +6,7 @@ package cpak
 
 import (
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 )
@@ -49,5 +50,29 @@ func TestNativeNamespaceCommandCanShareNetworkAndProcesses(t *testing.T) {
 		if cmd.SysProcAttr.Cloneflags&flag == 0 {
 			t.Fatalf("missing clone flag %#x in %#x", flag, cmd.SysProcAttr.Cloneflags)
 		}
+	}
+}
+
+func TestReadSubordinateIDRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subuid")
+	if err := os.WriteFile(path, []byte("other:200000:65536\nmirko:165536:65536\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSubordinateIDRange(path, "mirko", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.start != 165536 || got.size != 65536 {
+		t.Fatalf("subordinate ID range: got %+v", got)
+	}
+}
+
+func TestReadSubordinateIDRangeRejectsShortAllocations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subuid")
+	if err := os.WriteFile(path, []byte("mirko:165536:1000\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSubordinateIDRange(path, "mirko", 1000); err == nil {
+		t.Fatal("short subordinate ID allocation was accepted")
 	}
 }

@@ -422,9 +422,62 @@ func TestApplicationCommandsAlwaysUseANestedUserNamespace(t *testing.T) {
 		if command.SysProcAttr.Cloneflags&syscall.CLONE_NEWUSER == 0 {
 			t.Fatalf("allow root %t: application shares the container init user namespace", allowRoot)
 		}
-		if len(command.SysProcAttr.UidMappings) != 1 || len(command.SysProcAttr.GidMappings) != 1 {
+		if len(command.SysProcAttr.UidMappings) == 0 || len(command.SysProcAttr.GidMappings) == 0 {
 			t.Fatalf("allow root %t: incomplete identity mapping: %+v", allowRoot, command.SysProcAttr)
 		}
+	}
+}
+
+func TestRootApplicationCommandsCanUseSystemIdentities(t *testing.T) {
+	command := (&SpawnCmd{AllowRoot: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+	want := []syscall.SysProcIDMap{
+		{ContainerID: 0, HostID: 0, Size: 1},
+		{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
+	}
+	if !reflect.DeepEqual(command.SysProcAttr.UidMappings, want) {
+		t.Fatalf("root application UID map: %v", command.SysProcAttr.UidMappings)
+	}
+	if !reflect.DeepEqual(command.SysProcAttr.GidMappings, want) {
+		t.Fatalf("root application GID map: %v", command.SysProcAttr.GidMappings)
+	}
+	if !command.SysProcAttr.GidMappingsEnableSetgroups {
+		t.Fatal("root application cannot select a mapped supplementary group")
+	}
+}
+
+func TestRootApplicationIdentityMap(t *testing.T) {
+	if os.Getenv("CPAK_TEST_SYSTEM_ID_MAP") != "1" {
+		t.Skip("requires a parent namespace with system IDs mapped")
+	}
+	mappings := []syscall.SysProcIDMap{
+		{ContainerID: 0, HostID: 0, Size: 1},
+		{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestRootApplicationIdentityMapHelper$")
+	command.Env = append(os.Environ(), "CPAK_TEST_SYSTEM_ID_MAP_HELPER=1")
+	command.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:                 syscall.CLONE_NEWUSER,
+		UidMappings:                mappings,
+		GidMappings:                mappings,
+		GidMappingsEnableSetgroups: true,
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("system identity namespace: %v: %s", err, output)
+	}
+}
+
+func TestRootApplicationIdentityMapHelper(t *testing.T) {
+	if os.Getenv("CPAK_TEST_SYSTEM_ID_MAP_HELPER") != "1" {
+		return
+	}
+	if err := syscall.Setgroups([]int{65534}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Setegid(65534); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Seteuid(42); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -34,6 +35,8 @@ func main() {
 		err = probeAddon()
 	case "loopback":
 		err = probeLoopback()
+	case "system-identities":
+		err = probeSystemIdentities()
 	default:
 		err = fmt.Errorf("unknown probe %q", os.Args[1])
 	}
@@ -41,6 +44,35 @@ func main() {
 		fail(err.Error())
 	}
 	fmt.Printf("%s probe passed\n", os.Args[1])
+}
+
+func probeSystemIdentities() error {
+	if err := syscall.Setgroups([]int{65534}); err != nil {
+		return fmt.Errorf("setgroups: %w", err)
+	}
+	if err := syscall.Setegid(65534); err != nil {
+		return fmt.Errorf("setegid: %w", err)
+	}
+	if err := syscall.Seteuid(42); err != nil {
+		return fmt.Errorf("seteuid: %w", err)
+	}
+	if os.Geteuid() != 42 || os.Getegid() != 65534 {
+		return fmt.Errorf("identity is %d:%d", os.Geteuid(), os.Getegid())
+	}
+	if _, err := os.ReadDir("/"); err != nil {
+		return fmt.Errorf("traverse environment root: %w", err)
+	}
+	temporary, err := os.CreateTemp("/tmp", "cpak-system-identity-")
+	if err != nil {
+		return fmt.Errorf("write environment temporary directory: %w", err)
+	}
+	if err = temporary.Close(); err != nil {
+		return fmt.Errorf("close environment temporary file: %w", err)
+	}
+	if err = os.Remove(temporary.Name()); err != nil {
+		return fmt.Errorf("remove environment temporary file: %w", err)
+	}
+	return nil
 }
 
 func runBluezMock() error {

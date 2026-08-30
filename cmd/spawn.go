@@ -85,6 +85,7 @@ type SpawnCmd struct {
 	ExtraLinks         []string `cli:"extra-links,x" help:"set the extra links"`
 	DesktopRuntime     string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
 	ReadyFd            int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
+	HostPidFd          int      `cli:"host-pid-fd" help:"write the outer process ID to this file descriptor"`
 	ExecSocket         string   `cli:"exec-socket" help:"container command socket"`
 	GrantSocket        string   `cli:"grant-socket" help:"file grant mount socket"`
 	ServiceSocket      string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
@@ -114,6 +115,9 @@ func (c *SpawnCmd) spawnVerbose(args ...any) {
 }
 
 func (c *SpawnCmd) Run() error {
+	if err := c.writeHostPID(); err != nil {
+		return err
+	}
 	c.Logger.Info("Spawning a new cpak namespace...")
 
 	finalEnvVarsForContainer := []string{}
@@ -252,6 +256,33 @@ func (c *SpawnCmd) Run() error {
 	return nil
 }
 
+func (c *SpawnCmd) writeHostPID() error {
+	if c.HostPidFd <= 0 {
+		return nil
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return fmt.Errorf("read process identity: %w", err)
+	}
+	hostPID := ""
+	for _, line := range strings.Split(string(status), "\n") {
+		if fields := strings.Fields(line); len(fields) > 1 && fields[0] == "NSpid:" {
+			hostPID = fields[1]
+			break
+		}
+	}
+	if hostPID == "" {
+		return errors.New("process identity does not contain NSpid")
+	}
+	writer := os.NewFile(uintptr(c.HostPidFd), "cpak-host-pid")
+	if writer == nil {
+		return fmt.Errorf("host PID file descriptor %d is invalid", c.HostPidFd)
+	}
+	_, writeErr := io.WriteString(writer, hostPID+"\n")
+	closeErr := writer.Close()
+	return errors.Join(writeErr, closeErr)
+}
+
 func (c *SpawnCmd) injectMachineID(rootFs, machineID string) (sandbox.PathGrant, error) {
 	if machineID == "" {
 		var err error
@@ -357,8 +388,14 @@ func mountLayers(rootFs, lowerDir, upperDir, workDir string) error {
 		return fmt.Errorf("mount:layers: no writable layer directories")
 	}
 	err := tools.MountOverlay(rootFs, lowerDir, upperDir, workDir)
+	if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
+		err = tools.MountFuseOverlayfs(rootFs, lowerDir, upperDir, workDir)
+	}
 	if err != nil {
 		return fmt.Errorf("mount:layers %s: an error occurred while spawning the namespace: %s", lowerDir, err)
+	}
+	if err = os.Chmod(rootFs, 0755); err != nil {
+		return fmt.Errorf("chmod:layers %s: an error occurred while spawning the namespace: %s", lowerDir, err)
 	}
 	return nil
 }
@@ -401,7 +438,7 @@ func (c *SpawnCmd) setupBuildMountPoints(rootFs string) error {
 	if err != nil {
 		return fmt.Errorf("mkdir:/tmp: an error occurred while building the layer: %s", err)
 	}
-	if err := tools.MountTmpfsPrepared(tmpPath); err != nil {
+	if err := mountTemporaryDirectory(tmpPath); err != nil {
 		return fmt.Errorf("mount:/tmp: an error occurred while building the layer: %s", err)
 	}
 	if _, err := c.setupBaseDevices(rootFs); err != nil {
@@ -431,7 +468,7 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	if err != nil {
 		return nil, fmt.Errorf("mkdir:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
-	err = tools.MountTmpfsPrepared(tmpPath)
+	err = mountTemporaryDirectory(tmpPath)
 	if err != nil {
 		return nil, fmt.Errorf("mount:/tmp: an error occurred while spawning the namespace: %s", err)
 	}
@@ -549,6 +586,13 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 		grants = append(grants, serviceGrant)
 	}
 	return grants, nil
+}
+
+func mountTemporaryDirectory(path string) error {
+	if err := tools.MountTmpfsPrepared(path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 01777)
 }
 
 func setupUserRuntimeDirectory(userUid int, rootFs string) (sandbox.PathGrant, error) {
@@ -1783,13 +1827,20 @@ func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {
 	// directory. A nested namespace has no capability in its parent, so the
 	// traversal is refused whichever identity the application was given.
 	command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
-	command.SysProcAttr.GidMappingsEnableSetgroups = false
 	if c.AllowRoot {
-		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
-		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
+		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: 0, Size: 1},
+			{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
+		}
+		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: 0, Size: 1},
+			{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
+		}
+		command.SysProcAttr.GidMappingsEnableSetgroups = true
 	} else {
 		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
 		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
+		command.SysProcAttr.GidMappingsEnableSetgroups = false
 		command.SysProcAttr.Credential = &syscall.Credential{Uid: 1000, Gid: 1000}
 	}
 	return command
