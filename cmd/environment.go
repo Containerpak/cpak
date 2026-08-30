@@ -36,6 +36,7 @@ type EnvironmentCmd struct {
 	Policy      string   `cli:"policy" help:"Policy JSON file, or - for standard input"`
 	PID         int      `cli:"pid" help:"Process ID inside the environment"`
 	Signal      string   `cli:"signal" default:"TERM" help:"Signal to send"`
+	Terminal    bool     `cli:"terminal" help:"Run the shell in a terminal"`
 	JSON        bool     `cli:"json,j" help:"Print output in JSON format"`
 	Verbose     bool     `cli:"verbose,v" help:"Enable verbose output"`
 
@@ -94,6 +95,7 @@ func (c *EnvironmentCmd) Run() error {
 		if len(arguments) == 0 {
 			arguments = []string{"-i"}
 		}
+		cp.SetTerminalSession(c.Terminal)
 		return cp.RunEnvironment(environment.ID, command, c.Verbose, arguments...)
 	case "stop":
 		environment, err := c.environment(cp)

@@ -11,7 +11,14 @@ import (
 )
 
 func TestRequestFrameRoundTrip(t *testing.T) {
-	want := Request{Args: []string{"app", "--flag"}, Env: []string{"LANG=C"}, AsRoot: true}
+	want := Request{
+		Args:     []string{"app", "--flag"},
+		Env:      []string{"LANG=C"},
+		AsRoot:   true,
+		Terminal: true,
+		Rows:     42,
+		Columns:  120,
+	}
 	payload, err := EncodeRequest(want)
 	if err != nil {
 		t.Fatal(err)
@@ -51,5 +58,18 @@ func TestExitFrameRoundTrip(t *testing.T) {
 func TestDecodeRequestRejectsEmptyCommand(t *testing.T) {
 	if _, err := DecodeRequest([]byte(`{"args":[]}`)); err == nil {
 		t.Fatal("empty command was accepted")
+	}
+}
+
+func TestTerminalSizeFrameRoundTrip(t *testing.T) {
+	rows, columns, err := DecodeSize(EncodeSize(42, 120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows != 42 || columns != 120 {
+		t.Fatalf("terminal size: got %dx%d, want 42x120", columns, rows)
+	}
+	if _, _, err = DecodeSize([]byte{1, 2, 3}); err == nil {
+		t.Fatal("invalid terminal size frame was accepted")
 	}
 }

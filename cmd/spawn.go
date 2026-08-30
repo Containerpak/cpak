@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/filegrant"
 	"github.com/mirkobrombin/cpak/pkg/grantproto"
@@ -1753,15 +1754,41 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	args = append(args, "--")
 	args = append(args, request.Args...)
 	command := c.applicationCommand(args, append(append([]string{}, baseEnv...), request.Env...))
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
-		return
-	}
 	output := runtimeOutputWriter{writer: writer}
-	command.Stdout = output
-	command.Stderr = output
-	if err = command.Start(); err != nil {
+	var input io.WriteCloser
+	var terminal *os.File
+	var outputDone chan struct{}
+	if request.Terminal {
+		rows := request.Rows
+		columns := request.Columns
+		if rows == 0 {
+			rows = 24
+		}
+		if columns == 0 {
+			columns = 80
+		}
+		command.SysProcAttr.Setpgid = false
+		terminal, err = pty.StartWithSize(command, &pty.Winsize{
+			Rows: rows,
+			Cols: columns,
+		})
+		if err == nil {
+			input = terminal
+			outputDone = make(chan struct{})
+			go func() {
+				defer close(outputDone)
+				_, _ = io.Copy(output, terminal)
+			}()
+		}
+	} else {
+		input, err = command.StdinPipe()
+		if err == nil {
+			command.Stdout = output
+			command.Stderr = output
+			err = command.Start()
+		}
+	}
+	if err != nil {
 		_ = writer.Write(runtimeproto.FrameOutput, []byte(err.Error()+"\n"))
 		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(127))
 		return
@@ -1770,7 +1797,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	inputDone := make(chan struct{})
 	go func() {
 		defer close(inputDone)
-		defer stdin.Close()
+		defer input.Close()
 		for {
 			frameKind, framePayload, readErr := runtimeproto.Read(connection)
 			if readErr != nil {
@@ -1779,17 +1806,32 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 			}
 			switch frameKind {
 			case runtimeproto.FrameInput:
-				if _, writeErr := stdin.Write(framePayload); writeErr != nil {
+				if _, writeErr := input.Write(framePayload); writeErr != nil {
 					return
 				}
 			case runtimeproto.FrameInputClose:
+				if terminal != nil {
+					_, _ = terminal.Write([]byte{4})
+				}
 				return
+			case runtimeproto.FrameResize:
+				if terminal == nil {
+					continue
+				}
+				rows, columns, sizeErr := runtimeproto.DecodeSize(framePayload)
+				if sizeErr != nil || rows == 0 || columns == 0 {
+					continue
+				}
+				_ = pty.Setsize(terminal, &pty.Winsize{Rows: rows, Cols: columns})
 			}
 		}
 	}()
 
 	waitErr := command.Wait()
-	_ = stdin.Close()
+	_ = input.Close()
+	if outputDone != nil {
+		<-outputDone
+	}
 	code := 0
 	if waitErr != nil {
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {

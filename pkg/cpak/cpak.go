@@ -32,12 +32,18 @@ type Cpak struct {
 	storagePreparation StoragePreparationHandler
 	storageDriver      storage.Handler
 	desktopLaunch      bool
+	terminalSession    bool
 	fileSpan           *desktopFileSpan
 }
 
 // SetDesktopLaunch enables file grants for exported desktop entries.
 func (c *Cpak) SetDesktopLaunch(enabled bool) {
 	c.desktopLaunch = enabled
+}
+
+// SetTerminalSession requests a PTY even when a caller proxies standard I/O.
+func (c *Cpak) SetTerminalSession(enabled bool) {
+	c.terminalSession = enabled
 }
 
 // SetDesktopFileSpan records how many arguments the publisher wrote on each side

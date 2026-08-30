@@ -20,12 +20,16 @@ const (
 	FrameInputClose
 	FrameOutput
 	FrameExit
+	FrameResize
 )
 
 type Request struct {
-	Args   []string `json:"args"`
-	Env    []string `json:"env"`
-	AsRoot bool     `json:"as_root"`
+	Args     []string `json:"args"`
+	Env      []string `json:"env"`
+	AsRoot   bool     `json:"as_root"`
+	Terminal bool     `json:"terminal,omitempty"`
+	Rows     uint16   `json:"rows,omitempty"`
+	Columns  uint16   `json:"columns,omitempty"`
 }
 
 type Writer struct {
@@ -93,4 +97,18 @@ func DecodeExit(payload []byte) (int, error) {
 		return 0, fmt.Errorf("invalid runtime exit frame")
 	}
 	return int(int32(binary.BigEndian.Uint32(payload))), nil
+}
+
+func EncodeSize(rows, columns uint16) []byte {
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint16(payload, rows)
+	binary.BigEndian.PutUint16(payload[2:], columns)
+	return payload
+}
+
+func DecodeSize(payload []byte) (uint16, uint16, error) {
+	if len(payload) != 4 {
+		return 0, 0, fmt.Errorf("invalid terminal size frame")
+	}
+	return binary.BigEndian.Uint16(payload), binary.BigEndian.Uint16(payload[2:]), nil
 }

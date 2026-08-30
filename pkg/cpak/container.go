@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 // PrepareContainer dispatches the creation of a new container for the given
@@ -975,17 +977,56 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 	}
 	defer connection.Close()
 
+	terminal, localTerminal, rows, columns := runtimeTerminalSize(c.terminalSession)
+	if terminal {
+		envVars = runtimeTerminalEnvironment(envVars, os.Getenv("TERM"), os.Getenv("COLORTERM"))
+	}
 	request, err := runtimeproto.EncodeRequest(runtimeproto.Request{
-		Args:   command,
-		Env:    envVars,
-		AsRoot: override.AsRoot,
+		Args:     command,
+		Env:      envVars,
+		AsRoot:   override.AsRoot,
+		Terminal: terminal,
+		Rows:     rows,
+		Columns:  columns,
 	})
 	if err != nil {
 		return err
 	}
+	if localTerminal {
+		state, rawErr := term.MakeRaw(int(os.Stdin.Fd()))
+		if rawErr != nil {
+			return fmt.Errorf("prepare terminal: %w", rawErr)
+		}
+		defer term.Restore(int(os.Stdin.Fd()), state)
+	}
 	writer := runtimeproto.NewWriter(connection)
 	if err = writer.Write(runtimeproto.FrameRequest, request); err != nil {
 		return fmt.Errorf("send runtime command: %w", err)
+	}
+	if localTerminal {
+		resizeSignals := make(chan os.Signal, 1)
+		resizeDone := make(chan struct{})
+		signal.Notify(resizeSignals, syscall.SIGWINCH)
+		defer func() {
+			signal.Stop(resizeSignals)
+			close(resizeDone)
+		}()
+		go func() {
+			for {
+				select {
+				case <-resizeDone:
+					return
+				case <-resizeSignals:
+					_, _, currentRows, currentColumns := runtimeTerminalSize(false)
+					if writeErr := writer.Write(
+						runtimeproto.FrameResize,
+						runtimeproto.EncodeSize(currentRows, currentColumns),
+					); writeErr != nil {
+						return
+					}
+				}
+			}
+		}()
 	}
 	logger.Println("Executing command:", strings.Join(command, " "))
 
@@ -1032,6 +1073,38 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 			return nil
 		}
 	}
+}
+
+func runtimeTerminalSize(force bool) (bool, bool, uint16, uint16) {
+	local := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	if !local {
+		if force {
+			return true, false, 24, 80
+		}
+		return false, false, 0, 0
+	}
+	columns, rows, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || rows <= 0 || columns <= 0 {
+		return true, true, 24, 80
+	}
+	if rows > 1<<16-1 {
+		rows = 1<<16 - 1
+	}
+	if columns > 1<<16-1 {
+		columns = 1<<16 - 1
+	}
+	return true, true, uint16(rows), uint16(columns)
+}
+
+func runtimeTerminalEnvironment(values []string, terminal, colorTerminal string) []string {
+	if terminal == "" || terminal == "dumb" {
+		terminal = "xterm-256color"
+	}
+	values = setEnvironmentValue(values, "TERM", terminal)
+	if colorTerminal != "" {
+		values = setEnvironmentValue(values, "COLORTERM", colorTerminal)
+	}
+	return values
 }
 
 func containerEnvironment(app types.Application, override types.Override, container types.Container, addons ...types.Application) ([]string, error) {

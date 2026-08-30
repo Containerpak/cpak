@@ -72,6 +72,30 @@ func TestBuildContainerPath(t *testing.T) {
 	}
 }
 
+func TestForcedRuntimeTerminalSurvivesProxiedIO(t *testing.T) {
+	requested, _, rows, columns := runtimeTerminalSize(true)
+	if !requested {
+		t.Fatal("a forced terminal session was not requested")
+	}
+	if rows == 0 || columns == 0 {
+		t.Fatalf("a forced terminal session has no initial size: %dx%d", columns, rows)
+	}
+}
+
+func TestRuntimeTerminalEnvironmentReplacesDumbTerminal(t *testing.T) {
+	values := runtimeTerminalEnvironment(
+		[]string{"PATH=/usr/bin", "TERM=dumb", "TERM=linux"},
+		"dumb",
+		"truecolor",
+	)
+	if got := environmentValue(values, "TERM"); got != "xterm-256color" {
+		t.Fatalf("terminal type: %q", got)
+	}
+	if got := environmentValue(values, "COLORTERM"); got != "truecolor" {
+		t.Fatalf("color terminal type: %q", got)
+	}
+}
+
 func TestContainerScopeLockSerializesTheSameApplication(t *testing.T) {
 	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
 	firstUnlock, err := cp.lockContainerScope("application")
