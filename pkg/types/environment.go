@@ -29,3 +29,15 @@ type EnvironmentProcess struct {
 	Memory    uint64  `json:"memory_bytes"`
 	CanSignal bool    `json:"can_signal"`
 }
+
+type EnvironmentApplicationExport struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command"`
+	IconPNG     []byte `json:"icon_png,omitempty"`
+}
+
+type EnvironmentApplicationExportState struct {
+	Application string `json:"application"`
+	Exported    bool   `json:"exported"`
+}

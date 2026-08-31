@@ -35,6 +35,29 @@ func TestCpakHostActionsAreLimitedByCapability(t *testing.T) {
 			allowed:      true,
 		},
 		{
+			name:         "list application exports",
+			capabilities: map[string]bool{types.HostActionCpakRead: true},
+			request:      CpakRequest{Arguments: []string{"environment", "application-exports", "--environment", "env-id", "--json"}},
+			allowed:      true,
+		},
+		{
+			name:         "export application",
+			capabilities: map[string]bool{types.HostActionCpakManage: true},
+			request:      CpakRequest{Arguments: []string{"environment", "export-application", "--environment", "env-id", "--application", "/usr/share/applications/demo.desktop", "--application-data", "-", "--json"}},
+			allowed:      true,
+		},
+		{
+			name:         "application export requires manage",
+			capabilities: map[string]bool{types.HostActionCpakRead: true},
+			request:      CpakRequest{Arguments: []string{"environment", "export-application", "--environment", "env-id", "--application", "/usr/share/applications/demo.desktop", "--application-data", "-", "--json"}},
+		},
+		{
+			name:         "unexport application",
+			capabilities: map[string]bool{types.HostActionCpakManage: true},
+			request:      CpakRequest{Arguments: []string{"environment", "unexport-application", "--environment", "env-id", "--application", "/usr/share/applications/demo.desktop", "--json"}},
+			allowed:      true,
+		},
+		{
 			name:         "noninteractive shell",
 			capabilities: map[string]bool{types.HostActionCpakExec: true},
 			request:      CpakRequest{Arguments: []string{"environment", "shell", "--environment", "env-id", "--command", "/bin/bash"}},

@@ -117,7 +117,7 @@ func validateCpakEnvironmentArguments(arguments []string, interactive bool) (str
 			return "", errors.New("invalid cpak environment request")
 		}
 		return types.HostActionCpakRead, nil
-	case "permissions", "processes":
+	case "permissions", "processes", "application-exports":
 		if interactive || len(arguments) != 5 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[4] != "--json" {
 			return "", errors.New("invalid cpak environment request")
 		}
@@ -139,6 +139,16 @@ func validateCpakEnvironmentArguments(arguments []string, interactive bool) (str
 		return types.HostActionCpakManage, nil
 	case "stop", "delete":
 		if interactive || len(arguments) != 4 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) {
+			return "", errors.New("invalid cpak environment request")
+		}
+		return types.HostActionCpakManage, nil
+	case "export-application":
+		if interactive || len(arguments) != 9 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[4] != "--application" || !validCpakValue(arguments[5], 4096) || arguments[6] != "--application-data" || arguments[7] != "-" || arguments[8] != "--json" {
+			return "", errors.New("invalid cpak environment request")
+		}
+		return types.HostActionCpakManage, nil
+	case "unexport-application":
+		if interactive || len(arguments) != 7 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[4] != "--application" || !validCpakValue(arguments[5], 4096) || arguments[6] != "--json" {
 			return "", errors.New("invalid cpak environment request")
 		}
 		return types.HostActionCpakManage, nil

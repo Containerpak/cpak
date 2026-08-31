@@ -435,6 +435,9 @@ func (c *Cpak) DeleteEnvironment(value string) error {
 			return err
 		}
 	}
+	if err = c.removeAllEnvironmentApplicationExports(environment); err != nil {
+		return err
+	}
 	dataPath, err := c.applicationDataPath(environmentDataID(environment.ID))
 	if err != nil {
 		return err

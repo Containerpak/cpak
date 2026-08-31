@@ -22,24 +22,27 @@ import (
 )
 
 const environmentPolicySizeLimit = 1 << 20
+const environmentApplicationExportSizeLimit = 2 << 20
 
 type EnvironmentCmd struct {
-	Action      string   `arg:"action" help:"Action: create, list, inspect, shell, stop, delete, policy, permissions, processes, signals or signal"`
-	Extra       []string `arg:"extra" help:"Arguments passed to the environment shell"`
-	Environment string   `cli:"environment,e" help:"Environment ID or name"`
-	Name        string   `cli:"name,n" help:"Environment name"`
-	Origin      string   `cli:"origin,o" help:"Installed package origin or alias"`
-	Version     string   `cli:"version" help:"Installed package version"`
-	Branch      string   `cli:"branch,b" help:"Installed package branch"`
-	Commit      string   `cli:"commit,c" help:"Installed package commit"`
-	Release     string   `cli:"release,r" help:"Installed package release"`
-	Command     string   `cli:"command" default:"sh" help:"Shell command inside the environment"`
-	Policy      string   `cli:"policy" help:"Policy JSON file, or - for standard input"`
-	PID         int      `cli:"pid" help:"Process ID inside the environment"`
-	Signal      string   `cli:"signal" default:"TERM" help:"Signal to send"`
-	Terminal    bool     `cli:"terminal" help:"Run the shell in a terminal"`
-	JSON        bool     `cli:"json,j" help:"Print output in JSON format"`
-	Verbose     bool     `cli:"verbose,v" help:"Enable verbose output"`
+	Action          string   `arg:"action" help:"Action: create, list, inspect, shell, stop, delete, policy, permissions, processes, signals, signal, application-exports, export-application or unexport-application"`
+	Extra           []string `arg:"extra" help:"Arguments passed to the environment shell"`
+	Environment     string   `cli:"environment,e" help:"Environment ID or name"`
+	Name            string   `cli:"name,n" help:"Environment name"`
+	Origin          string   `cli:"origin,o" help:"Installed package origin or alias"`
+	Version         string   `cli:"version" help:"Installed package version"`
+	Branch          string   `cli:"branch,b" help:"Installed package branch"`
+	Commit          string   `cli:"commit,c" help:"Installed package commit"`
+	Release         string   `cli:"release,r" help:"Installed package release"`
+	Command         string   `cli:"command" default:"sh" help:"Shell command inside the environment"`
+	Policy          string   `cli:"policy" help:"Policy JSON file, or - for standard input"`
+	Application     string   `cli:"application" help:"Desktop application identifier inside the environment"`
+	ApplicationData string   `cli:"application-data" help:"Application export JSON file, or - for standard input"`
+	PID             int      `cli:"pid" help:"Process ID inside the environment"`
+	Signal          string   `cli:"signal" default:"TERM" help:"Signal to send"`
+	Terminal        bool     `cli:"terminal" help:"Run the shell in a terminal"`
+	JSON            bool     `cli:"json,j" help:"Print output in JSON format"`
+	Verbose         bool     `cli:"verbose,v" help:"Enable verbose output"`
 
 	cli.Base
 }
@@ -176,9 +179,89 @@ func (c *EnvironmentCmd) Run() error {
 			return errors.New("signal requires a positive --pid")
 		}
 		return cp.SignalEnvironmentProcess(environment.ID, c.PID, c.Signal)
+	case "application-exports":
+		environment, err := c.environment(cp)
+		if err != nil {
+			return err
+		}
+		applications, err := cp.ListEnvironmentApplicationExports(environment.ID)
+		if err != nil {
+			return err
+		}
+		return printEnvironmentJSON(applications)
+	case "export-application":
+		environment, err := c.environment(cp)
+		if err != nil {
+			return err
+		}
+		if c.Application == "" || c.ApplicationData == "" {
+			return errors.New("export-application requires --application and --application-data")
+		}
+		export, err := readEnvironmentApplicationExport(c.ApplicationData)
+		if err != nil {
+			return err
+		}
+		state, err := cp.ExportEnvironmentApplication(environment.ID, c.Application, export)
+		if err != nil {
+			return err
+		}
+		return printEnvironmentJSON(state)
+	case "unexport-application":
+		environment, err := c.environment(cp)
+		if err != nil {
+			return err
+		}
+		if c.Application == "" {
+			return errors.New("unexport-application requires --application")
+		}
+		state, err := cp.RemoveEnvironmentApplicationExport(environment.ID, c.Application)
+		if err != nil {
+			return err
+		}
+		return printEnvironmentJSON(state)
 	default:
 		return fmt.Errorf("unsupported environment action %q", c.Action)
 	}
+}
+
+func readEnvironmentApplicationExport(path string) (types.EnvironmentApplicationExport, error) {
+	var reader io.Reader
+	var file *os.File
+	if path == "-" {
+		reader = os.Stdin
+	} else {
+		var err error
+		file, err = os.Open(path)
+		if err != nil {
+			return types.EnvironmentApplicationExport{}, err
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return types.EnvironmentApplicationExport{}, err
+		}
+		if !info.Mode().IsRegular() {
+			return types.EnvironmentApplicationExport{}, errors.New("environment application export must be a regular file")
+		}
+		reader = file
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, environmentApplicationExportSizeLimit+1))
+	if err != nil {
+		return types.EnvironmentApplicationExport{}, err
+	}
+	if len(data) > environmentApplicationExportSizeLimit {
+		return types.EnvironmentApplicationExport{}, fmt.Errorf("environment application export exceeds %d bytes", environmentApplicationExportSizeLimit)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	export := types.EnvironmentApplicationExport{}
+	if err := decoder.Decode(&export); err != nil {
+		return types.EnvironmentApplicationExport{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return types.EnvironmentApplicationExport{}, errors.New("environment application export contains multiple JSON values")
+	}
+	return export, nil
 }
 
 func (c *EnvironmentCmd) environment(cp cpak.Cpak) (types.Environment, error) {
