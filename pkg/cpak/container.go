@@ -409,8 +409,8 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 6
-const loginSessionRuntimePolicyVersion = 7
+const containerRuntimePolicyVersion = 7
+const loginSessionRuntimePolicyVersion = 8
 
 func containerRuntimeVersion(instance string) int {
 	if isSessionInstance(instance) {
@@ -589,6 +589,13 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	// Mount the main cpak binary into a known location inside the container
 	cpakInContainerPath := "/usr/local/bin/cpak"
 	cmds = append(cmds, "--extra-links", cpakBinary+":"+cpakInContainerPath)
+	runtimeRoots, err := nixRuntimeStoreRoots(cpakBinary)
+	if err != nil {
+		return "", 0, "", err
+	}
+	for _, root := range runtimeRoots {
+		cmds = append(cmds, "--extra-links", root+":"+root)
+	}
 	if override.HostApplications {
 		if source := hostOSReleaseSource(); source != "" {
 			cmds = append(cmds, "--extra-links", source+":"+hostOSReleaseTarget)

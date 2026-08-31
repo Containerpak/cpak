@@ -428,10 +428,10 @@ func TestApplicationCommandsAlwaysUseANestedUserNamespace(t *testing.T) {
 	}
 }
 
-func TestApplicationCommandsUseTheRunningExecutable(t *testing.T) {
+func TestApplicationCommandsUseTheMountedRuntimeExecutable(t *testing.T) {
 	command := (&SpawnCmd{}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
-	if command.Path != runningExecutablePath {
-		t.Fatalf("application runtime: got %q, want %q", command.Path, runningExecutablePath)
+	if command.Path != cpakInContainerPath {
+		t.Fatalf("application runtime: got %q, want %q", command.Path, cpakInContainerPath)
 	}
 }
 

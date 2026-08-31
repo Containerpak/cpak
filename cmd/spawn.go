@@ -37,7 +37,6 @@ import (
 )
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
-const runningExecutablePath = "/proc/self/exe"
 const systemBrokerShimPath = "/usr/local/bin/cpak-system-broker-shim"
 const desktopRuntimeTarget = "/run/cpak/desktop-runtime"
 
@@ -1851,7 +1850,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 }
 
 func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {
-	command := exec.Command(runningExecutablePath, args...)
+	command := exec.Command(cpakInContainerPath, args...)
 	command.Env = env
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Whether a nested command may run as root is a property of the container,
