@@ -125,7 +125,7 @@ func startX11Bridge(container types.Container) (types.Container, error) {
 	if socketPath == "" {
 		socketPath = socketTarget
 	}
-	if err = waitForSocket(socketPath, 3*time.Second); err != nil {
+	if err = waitForX11Socket(socketPath, 3*time.Second); err != nil {
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		_ = os.Remove(authorityPath)
@@ -251,9 +251,26 @@ func cleanupX11Bridge(container types.Container) {
 	}
 }
 
+func waitForX11Socket(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := validateSocketOwner(path)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("isolated X11 display did not create %s within %s", path, timeout)
+		}
+		time.Sleep(socketWaitInterval)
+	}
+}
+
 func containerX11BridgeAlive(container types.Container) bool {
 	if container.X11SocketPath == "" {
 		return true
 	}
-	return sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) && socketIsLive(container.X11SocketPath)
+	return sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) && validateSocketOwner(container.X11SocketPath) == nil
 }

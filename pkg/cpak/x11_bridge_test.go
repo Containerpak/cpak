@@ -103,6 +103,30 @@ func TestX11ServerFallsBackToXephyrOnX11(t *testing.T) {
 	}
 }
 
+func TestX11SocketReadinessDoesNotOpenAClient(t *testing.T) {
+	path := tempSocketPath(t)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	if err = waitForX11Socket(path, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err = listener.SetDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := listener.AcceptUnix()
+	if err == nil {
+		connection.Close()
+		t.Fatal("X11 readiness opened a client connection")
+	}
+	if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+		t.Fatalf("accept: %v", err)
+	}
+}
+
 func TestX11BridgeStartsAReachablePrivateDisplay(t *testing.T) {
 	if os.Getenv("WAYLAND_DISPLAY") == "" || !socketIsLive(waylandSocketPath(strconv.Itoa(os.Getuid()))) {
 		t.Skip("no Wayland display")
@@ -110,6 +134,30 @@ func TestX11BridgeStartsAReachablePrivateDisplay(t *testing.T) {
 	if _, err := exec.LookPath("Xwayland"); err != nil {
 		t.Skip("Xwayland is not installed")
 	}
+	state := t.TempDir()
+	container, err := startX11Bridge(types.Container{StatePath: state, LogPath: filepath.Join(state, "x11.log")})
+	if err != nil {
+		log, _ := os.ReadFile(filepath.Join(state, "x11.log"))
+		t.Fatalf("%v\n%s", err, log)
+	}
+	t.Cleanup(func() { cleanupX11Bridge(container) })
+	if container.X11Display == "" || !containerX11BridgeAlive(container) {
+		t.Fatalf("X11 bridge is not reachable: %+v", container)
+	}
+	if err = authenticateX11Socket(container.X11SocketPath, container.X11AuthorityPath, container.X11Display); err != nil {
+		log, _ := os.ReadFile(container.LogPath)
+		t.Fatalf("authenticate to private X11 display: %v\n%s", err, log)
+	}
+}
+
+func TestX11BridgeStartsAReachableDisplayOnX11(t *testing.T) {
+	if os.Getenv("DISPLAY") == "" {
+		t.Skip("no X11 display")
+	}
+	if _, err := exec.LookPath("Xephyr"); err != nil {
+		t.Skip("Xephyr is not installed")
+	}
+	t.Setenv("WAYLAND_DISPLAY", "")
 	state := t.TempDir()
 	container, err := startX11Bridge(types.Container{StatePath: state, LogPath: filepath.Join(state, "x11.log")})
 	if err != nil {
