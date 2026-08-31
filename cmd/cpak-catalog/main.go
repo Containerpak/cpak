@@ -205,7 +205,7 @@ func signedManifestDigest(manifest *types.CpakManifest) (string, error) {
 		return "", errUnsupportedSignedInstaller
 	}
 	if manifest.ImageRef != "" {
-		return "", errors.New("signed installers do not accept image_ref")
+		return "", errUnsupportedSignedInstaller
 	}
 	reference, err := oci.ParseReference(manifest.Image)
 	if err != nil {
@@ -325,12 +325,32 @@ func loadIcon(ctx context.Context, client *http.Client, base string) (string, st
 	return "", base64.StdEncoding.EncodeToString(raster), nil
 }
 
+func githubContentsURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != "raw.githubusercontent.com" {
+		return rawURL
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 4 {
+		return rawURL
+	}
+	owner := url.PathEscape(parts[0])
+	repository := url.PathEscape(parts[1])
+	reference := url.QueryEscape(parts[2])
+	fileParts := parts[3:]
+	for index := range fileParts {
+		fileParts[index] = url.PathEscape(fileParts[index])
+	}
+	return defaultGitHubAPI + "/repos/" + owner + "/" + repository + "/contents/" + strings.Join(fileParts, "/") + "?ref=" + reference
+}
+
 func fetchText(ctx context.Context, client *http.Client, url string, limit int64) (string, error) {
 	encoded, err := fetch(ctx, client, url, limit)
 	return string(encoded), err
 }
 
 func fetch(ctx context.Context, client *http.Client, url string, limit int64) ([]byte, error) {
+	url = githubContentsURL(url)
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		encoded, retry, err := fetchOnce(ctx, client, url, limit)

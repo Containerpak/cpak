@@ -111,6 +111,18 @@ func TestLoadPackageManifest(t *testing.T) {
 	}
 }
 
+func TestGitHubContentsURL(t *testing.T) {
+	rawURL := "https://raw.githubusercontent.com/Containerpak/store/main/categories/Graphics/icon.svg"
+	want := "https://api.github.com/repos/Containerpak/store/contents/categories/Graphics/icon.svg?ref=main"
+	if got := githubContentsURL(rawURL); got != want {
+		t.Fatalf("unexpected contents URL: %s", got)
+	}
+	customURL := "https://store.example/icon.svg"
+	if got := githubContentsURL(customURL); got != customURL {
+		t.Fatalf("custom URL changed: %s", got)
+	}
+}
+
 func TestBuildCatalogOmitsLoginSessions(t *testing.T) {
 	const origin = "github.com/example/desktop"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -184,6 +196,14 @@ func TestSignedCatalogOmitsUnsupportedPackageShapes(t *testing.T) {
 	manifest.Image = "ghcr.io/containerpak/desktop:main"
 	if _, err = signedCatalogManifestDigest(manifest); err == nil {
 		t.Fatal("the signed installer catalog ignored a mutable image")
+	}
+	manifest.ImageRef = "source"
+	digest, err = signedCatalogManifestDigest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != "" {
+		t.Fatal("the signed installer catalog included a tracked image tag")
 	}
 }
 
