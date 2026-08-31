@@ -428,6 +428,13 @@ func TestApplicationCommandsAlwaysUseANestedUserNamespace(t *testing.T) {
 	}
 }
 
+func TestApplicationCommandsUseTheRunningExecutable(t *testing.T) {
+	command := (&SpawnCmd{}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+	if command.Path != runningExecutablePath {
+		t.Fatalf("application runtime: got %q, want %q", command.Path, runningExecutablePath)
+	}
+}
+
 func TestRootApplicationCommandsCanUseSystemIdentities(t *testing.T) {
 	command := (&SpawnCmd{AllowRoot: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
 	want := []syscall.SysProcIDMap{
