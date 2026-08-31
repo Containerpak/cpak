@@ -153,10 +153,11 @@ func validateCpakEnvironmentArguments(arguments []string, interactive bool) (str
 		return types.HostActionCpakManage, nil
 	case "shell":
 		commandOption := 4
-		if len(arguments) > commandOption && arguments[commandOption] == "--terminal" {
+		terminal := len(arguments) > commandOption && arguments[commandOption] == "--terminal"
+		if terminal {
 			commandOption++
 		}
-		if !interactive || len(arguments) < commandOption+2 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[commandOption] != "--command" || !validCpakValue(arguments[commandOption+1], 4096) {
+		if (terminal && !interactive) || len(arguments) < commandOption+2 || arguments[2] != "--environment" || !validCpakValue(arguments[3], 160) || arguments[commandOption] != "--command" || !validCpakValue(arguments[commandOption+1], 4096) {
 			return "", errors.New("invalid cpak environment request")
 		}
 		extra := arguments[commandOption+2:]

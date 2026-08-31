@@ -35,9 +35,15 @@ func TestCpakHostActionsAreLimitedByCapability(t *testing.T) {
 			allowed:      true,
 		},
 		{
-			name:         "shell requires a terminal",
+			name:         "noninteractive shell",
 			capabilities: map[string]bool{types.HostActionCpakExec: true},
 			request:      CpakRequest{Arguments: []string{"environment", "shell", "--environment", "env-id", "--command", "/bin/bash"}},
+			allowed:      true,
+		},
+		{
+			name:         "terminal flag requires an interactive request",
+			capabilities: map[string]bool{types.HostActionCpakExec: true},
+			request:      CpakRequest{Arguments: []string{"environment", "shell", "--environment", "env-id", "--terminal", "--command", "/bin/bash"}},
 		},
 		{
 			name:         "interactive shell",

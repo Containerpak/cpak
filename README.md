@@ -454,8 +454,9 @@ Environment frontends can request the cpak provider instead:
 The `cpak-host` shim accepts only discovery and persistent environment
 operations. `read` lists packages, environments, permissions and processes;
 `manage` installs distribution packages and changes their environments; `exec`
-opens an interactive command in a selected environment. Other cpak commands
-and malformed argument shapes are rejected before the host binary starts.
+opens a command in a selected environment, with or without a terminal. Other
+cpak commands and malformed argument shapes are rejected before the host binary
+starts.
 
 Resource limits use delegated cgroup v2 controllers when available. Hosts
 without a compatible cgroup manager can run applications without limits; a
