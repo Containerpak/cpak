@@ -15,12 +15,12 @@ import (
 // a caller writes version=$(zig version) and reads whatever came out. Every
 // line cpak adds to that stream is read as the tool's answer, which is why the
 // shims were unusable in a pipeline until this existed.
-func TestProxyModeLeavesTheOutputStreamToTheProgram(t *testing.T) {
+func TestMachineOutputModeLeavesTheOutputStreamToTheProgram(t *testing.T) {
 	saved := l
 	t.Cleanup(func() { l = saved })
 
 	out, errOut := captureStandardStreams(t, func() {
-		ProxyMode()
+		MachineOutputMode()
 		Info("executing something on behalf of a caller")
 		Warn("landlock is unavailable")
 		Success("done")

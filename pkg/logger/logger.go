@@ -59,6 +59,11 @@ func Printf(format string, args ...interface{}) {
 	l.Info(format, args...)
 }
 
+// MachineOutputMode keeps diagnostic messages away from structured output.
+func MachineOutputMode() {
+	l = clilog.NewWriter(os.Stderr, os.Stderr)
+}
+
 // ProxyMode sends everything cpak says to the error stream.
 //
 // A command that runs another program owns that program's standard output and
@@ -71,5 +76,5 @@ func Printf(format string, args ...interface{}) {
 // caller cannot tell which of cpak's lines are safe to receive and the answer
 // is none of them.
 func ProxyMode() {
-	l = clilog.NewWriter(os.Stderr, os.Stderr)
+	MachineOutputMode()
 }
