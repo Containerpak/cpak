@@ -647,12 +647,19 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 			containerEnv = append(containerEnv, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
 		}
 	}
-	if override.SocketWayland {
-		containerEnv = append(containerEnv, "WAYLAND_DISPLAY="+waylandDisplay(strconv.Itoa(os.Getuid())))
+	uid := strconv.Itoa(os.Getuid())
+	display := ""
+	if override.SocketWayland && os.Getenv("WAYLAND_DISPLAY") != "" {
+		display = waylandDisplay(uid)
 	}
+	containerEnv = configureWaylandDisplay(containerEnv, display, waylandSocketPath(uid))
 	if container.DesktopBusSocketPath != "" {
 		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		containerEnv = setEnvironmentValue(containerEnv, "GTK_USE_PORTAL", "1")
+		if override.Network {
+			containerEnv = setEnvironmentValue(containerEnv, "GIO_USE_PORTALS", "1")
+			containerEnv = setEnvironmentValue(containerEnv, "GIO_USE_NETWORK_MONITOR", "portal")
+		}
 	}
 	if container.BluetoothBusSocketPath != "" {
 		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+hostSystemBusPath())
@@ -1152,6 +1159,12 @@ func containerEnvironment(app types.Application, override types.Override, contai
 			envVars = append(envVars, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
 		}
 	}
+	uid := strconv.Itoa(os.Getuid())
+	display := ""
+	if override.SocketWayland && os.Getenv("WAYLAND_DISPLAY") != "" {
+		display = waylandDisplay(uid)
+	}
+	envVars = configureWaylandDisplay(envVars, display, waylandSocketPath(uid))
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	if container.SystemBrokerSocketPath != "" {
 		envVars = append(envVars, "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
@@ -1160,6 +1173,10 @@ func containerEnvironment(app types.Application, override types.Override, contai
 	if container.DesktopBusSocketPath != "" {
 		envVars = setEnvironmentValue(envVars, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		envVars = setEnvironmentValue(envVars, "GTK_USE_PORTAL", "1")
+		if override.Network {
+			envVars = setEnvironmentValue(envVars, "GIO_USE_PORTALS", "1")
+			envVars = setEnvironmentValue(envVars, "GIO_USE_NETWORK_MONITOR", "portal")
+		}
 	}
 	if container.BluetoothBusSocketPath != "" {
 		envVars = setEnvironmentValue(envVars, "DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+hostSystemBusPath())
@@ -1374,6 +1391,21 @@ func setEnvironmentValue(environment []string, name, value string) []string {
 	return append(result, prefix+value)
 }
 
+func configureWaylandDisplay(environment []string, display, socket string) []string {
+	prefix := "WAYLAND_DISPLAY="
+	result := make([]string, 0, len(environment)+1)
+	for _, variable := range environment {
+		if !strings.HasPrefix(variable, prefix) {
+			result = append(result, variable)
+		}
+	}
+	info, err := os.Stat(socket)
+	if display == "" || err != nil || info.Mode()&os.ModeSocket == 0 {
+		return append(result, prefix)
+	}
+	return append(result, prefix+display)
+}
+
 func (c *Cpak) dependencyLinks(app types.Application) ([]string, error) {
 	if len(app.ParsedDependencies) == 0 {
 		return nil, nil
@@ -1555,11 +1587,14 @@ func startDesktopBusProxy(container types.Container, override types.Override) (i
 			"--token-file", container.SystemBrokerTokenPath,
 		)
 	}
+	if override.Network {
+		arguments = append(arguments, "--network-monitor")
+	}
 	return startBusProxy(container.LogPath, container.DesktopBusSocketPath, "desktop bus", arguments)
 }
 
 func desktopBusProxyRequested(override types.Override) bool {
-	return override.FilePicker.Enabled() || override.SessionBus.Enabled()
+	return override.Network || override.FilePicker.Enabled() || override.SessionBus.Enabled()
 }
 
 func bluetoothProxyRequested(override types.Override) bool {

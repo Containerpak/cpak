@@ -96,7 +96,7 @@ func TestRestrictedBusAllowsOnlyPortalAppearanceSettings(t *testing.T) {
 		portalObjectPath,
 		settingsInterface,
 		"Read",
-		[]any{"org.freedesktop.appearance", "color-scheme"},
+		[]any{"org.freedesktop.appearance", "color-scheme"}, false,
 	) {
 		t.Fatal("the desktop appearance setting was refused")
 	}
@@ -106,7 +106,7 @@ func TestRestrictedBusAllowsOnlyPortalAppearanceSettings(t *testing.T) {
 		portalObjectPath,
 		settingsInterface,
 		"ReadAll",
-		[]any{[]string{"org.freedesktop.appearance"}},
+		[]any{[]string{"org.freedesktop.appearance"}}, false,
 	) {
 		t.Fatal("the desktop appearance namespace was refused")
 	}
@@ -116,9 +116,93 @@ func TestRestrictedBusAllowsOnlyPortalAppearanceSettings(t *testing.T) {
 		portalObjectPath,
 		settingsInterface,
 		"Read",
-		[]any{"org.gnome.desktop.interface", "color-scheme"},
+		[]any{"org.gnome.desktop.interface", "color-scheme"}, false,
 	) {
 		t.Fatal("an unrelated settings namespace was allowed")
+	}
+}
+
+func TestNetworkMonitorRequiresNetworkPermission(t *testing.T) {
+	for _, member := range []string{"GetAvailable", "GetMetered", "GetConnectivity", "GetStatus"} {
+		if restrictedBusCallAllowed(portalDestination, portalDestination, portalObjectPath, networkInterface, member, nil, false) {
+			t.Fatalf("%s was allowed without network access", member)
+		}
+		if !restrictedBusCallAllowed(portalDestination, portalDestination, portalObjectPath, networkInterface, member, nil, true) {
+			t.Fatalf("%s was refused with network access", member)
+		}
+	}
+	if !restrictedBusCallAllowed(portalDestination, portalDestination, portalObjectPath, networkInterface, "CanReach", []any{"example.com", uint32(443)}, true) {
+		t.Fatal("CanReach was refused with network access")
+	}
+	if restrictedBusCallAllowed(portalDestination, portalDestination, portalObjectPath, networkInterface, "CanReach", []any{"example.com", "443"}, true) {
+		t.Fatal("CanReach accepted an invalid port")
+	}
+	if restrictedBusCallAllowed(portalDestination, portalDestination, portalObjectPath, networkInterface, "Introspect", nil, true) {
+		t.Fatal("an unrelated NetworkMonitor method was allowed")
+	}
+}
+
+func TestRestrictedBusCanActivateOnlyTheDesktopPortal(t *testing.T) {
+	if !restrictedBusCallAllowed("org.freedesktop.DBus", portalDestination, "/org/freedesktop/DBus", "org.freedesktop.DBus", "StartServiceByName", []any{portalDestination, uint32(0)}, false) {
+		t.Fatal("desktop portal activation was refused")
+	}
+	if restrictedBusCallAllowed("org.freedesktop.DBus", portalDestination, "/org/freedesktop/DBus", "org.freedesktop.DBus", "StartServiceByName", []any{"org.freedesktop.systemd1", uint32(0)}, false) {
+		t.Fatal("an unrelated session service could be activated")
+	}
+	if restrictedBusCallAllowed("org.freedesktop.DBus", portalDestination, "/org/freedesktop/DBus", "org.freedesktop.DBus", "StartServiceByName", []any{portalDestination, "0"}, false) {
+		t.Fatal("desktop portal activation accepted invalid flags")
+	}
+}
+
+func TestNetworkMonitorAllowsOnlyItsSignalSubscriptions(t *testing.T) {
+	for _, rule := range []string{portalOwnerMatch, networkMonitorMatch} {
+		if !networkMonitorMatchCallAllowed("AddMatch", []any{rule}) || !networkMonitorMatchCallAllowed("RemoveMatch", []any{rule}) {
+			t.Fatalf("network monitor match %q was refused", rule)
+		}
+	}
+	if networkMonitorMatchCallAllowed("AddMatch", []any{"type='signal',interface='org.freedesktop.Notifications'"}) {
+		t.Fatal("an unrelated signal subscription was allowed")
+	}
+}
+
+func TestNetworkMonitorSignalsRequireThePortalOwner(t *testing.T) {
+	message := &dbus.Message{
+		Type: dbus.TypeSignal,
+		Headers: map[dbus.HeaderField]dbus.Variant{
+			dbus.FieldPath:      dbus.MakeVariant(portalObjectPath),
+			dbus.FieldSender:    dbus.MakeVariant(":1.9"),
+			dbus.FieldInterface: dbus.MakeVariant(networkInterface),
+			dbus.FieldMember:    dbus.MakeVariant("changed"),
+		},
+	}
+	if !restrictedUpstreamMessage(message, types.DBusPolicy{}, true, ":1.9") {
+		t.Fatal("the portal NetworkMonitor change signal was refused")
+	}
+	message.Headers[dbus.FieldSender] = dbus.MakeVariant(":1.10")
+	if restrictedUpstreamMessage(message, types.DBusPolicy{}, true, ":1.9") {
+		t.Fatal("a forged NetworkMonitor change signal was allowed")
+	}
+	message.Headers[dbus.FieldSender] = dbus.MakeVariant("")
+	if restrictedUpstreamMessage(message, types.DBusPolicy{}, true, "") {
+		t.Fatal("a NetworkMonitor signal without a portal owner was allowed")
+	}
+}
+
+func TestNetworkMonitorTracksPortalRestarts(t *testing.T) {
+	proxy := &Proxy{portalSender: ":1.9"}
+	message := &dbus.Message{
+		Type: dbus.TypeSignal,
+		Headers: map[dbus.HeaderField]dbus.Variant{
+			dbus.FieldPath:      dbus.MakeVariant(dbus.ObjectPath("/org/freedesktop/DBus")),
+			dbus.FieldSender:    dbus.MakeVariant("org.freedesktop.DBus"),
+			dbus.FieldInterface: dbus.MakeVariant("org.freedesktop.DBus"),
+			dbus.FieldMember:    dbus.MakeVariant("NameOwnerChanged"),
+		},
+		Body: []any{portalDestination, ":1.9", ":1.10"},
+	}
+	proxy.observePortalOwner(message)
+	if owner := proxy.currentPortalSender(); owner != ":1.10" {
+		t.Fatalf("portal owner after restart: %q", owner)
 	}
 }
 

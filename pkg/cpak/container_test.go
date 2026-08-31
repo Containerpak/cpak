@@ -499,6 +499,56 @@ func TestContainerEnvironmentUsesThePrivateDesktopBusForFileSelection(t *testing
 	}
 }
 
+func TestContainerEnvironmentUsesThePortalNetworkMonitor(t *testing.T) {
+	app := types.Application{Config: `{"config":{}}`}
+	container := types.Container{
+		CpakId:               "container-id",
+		DesktopBusSocketPath: "/tmp/desktop-bus.sock",
+	}
+	environment, err := containerEnvironment(app, types.Override{Network: true}, container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + hostSessionBusPath(),
+		"GIO_USE_PORTALS=1",
+		"GIO_USE_NETWORK_MONITOR=portal",
+	} {
+		if !slicesContain(environment, value) {
+			t.Fatalf("network monitor setting %q is missing from %v", value, environment)
+		}
+	}
+}
+
+func TestConfigureWaylandDisplayRequiresALiveSocket(t *testing.T) {
+	environment := []string{"LANG=C", "WAYLAND_DISPLAY=stale"}
+	configured := configureWaylandDisplay(environment, "wayland-7", filepath.Join(t.TempDir(), "missing"))
+	if value := environmentValue(configured, "WAYLAND_DISPLAY"); value != "" {
+		t.Fatalf("missing Wayland socket left display %q", value)
+	}
+	if !slicesContain(configured, "WAYLAND_DISPLAY=") {
+		t.Fatalf("missing Wayland socket did not override the inherited display: %v", configured)
+	}
+
+	socket := filepath.Join(t.TempDir(), "wayland-7")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	configured = configureWaylandDisplay(environment, "wayland-7", socket)
+	if value := environmentValue(configured, "WAYLAND_DISPLAY"); value != "wayland-7" {
+		t.Fatalf("live Wayland display: got %q, want wayland-7", value)
+	}
+	configured = configureWaylandDisplay(environment, "", socket)
+	if value := environmentValue(configured, "WAYLAND_DISPLAY"); value != "" {
+		t.Fatalf("inactive Wayland session left display %q", value)
+	}
+	if !slicesContain(configured, "WAYLAND_DISPLAY=") {
+		t.Fatalf("inactive Wayland session did not override the inherited display: %v", configured)
+	}
+}
+
 func TestContainerEnvironmentUsesPrivateX11AndBluetoothEndpoints(t *testing.T) {
 	app := types.Application{Config: `{"config":{"Env":["DISPLAY=:0","XAUTHORITY=/home/user/.Xauthority","DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"]}}`}
 	container := types.Container{
@@ -542,6 +592,9 @@ func TestDesktopBusProxyRequiresADeclaredCapability(t *testing.T) {
 	}
 	if !desktopBusProxyRequested(types.Override{SessionBus: types.DBusPolicy{Own: []string{"org.example.App"}}}) {
 		t.Fatal("a session bus policy did not request the desktop bus proxy")
+	}
+	if !desktopBusProxyRequested(types.Override{Network: true}) {
+		t.Fatal("network access did not request the desktop bus proxy")
 	}
 }
 

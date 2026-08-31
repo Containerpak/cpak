@@ -27,10 +27,13 @@ const (
 	portalDestination    = "org.freedesktop.portal.Desktop"
 	bluezDestination     = "org.bluez"
 	fileChooserInterface = "org.freedesktop.portal.FileChooser"
+	networkInterface     = "org.freedesktop.portal.NetworkMonitor"
 	settingsInterface    = "org.freedesktop.portal.Settings"
 	requestInterface     = "org.freedesktop.portal.Request"
 	portalObjectPath     = dbus.ObjectPath("/org/freedesktop/portal/desktop")
 	requestPathPrefix    = "/org/freedesktop/portal/desktop/request/cpak/"
+	portalOwnerMatch     = "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',path='/org/freedesktop/DBus',arg0='org.freedesktop.portal.Desktop'"
+	networkMonitorMatch  = "type='signal',sender='org.freedesktop.portal.Desktop',interface='org.freedesktop.portal.NetworkMonitor',path='/org/freedesktop/portal/desktop'"
 	maxPortalSelections  = 128
 )
 
@@ -40,6 +43,7 @@ type Options struct {
 	BrokerSocketPath string
 	BrokerToken      string
 	FilePicker       bool
+	NetworkMonitor   bool
 	Bluetooth        bool
 	Policy           types.DBusPolicy
 	PickFile         func(context.Context, systembroker.FilePickerRequest) (systembroker.FilePickerResult, error)
@@ -132,7 +136,7 @@ func validateOptions(options Options) error {
 	if err := types.ValidateDBusPolicy(options.Policy); err != nil {
 		return err
 	}
-	if options.Bluetooth && (options.FilePicker || options.Policy.Enabled()) {
+	if options.Bluetooth && (options.FilePicker || options.NetworkMonitor || options.Policy.Enabled()) {
 		return errors.New("Bluetooth proxy cannot carry session bus permissions")
 	}
 	if options.FilePicker && options.PickFile == nil && (!filepath.IsAbs(options.BrokerSocketPath) || len(options.BrokerToken) < 32) {
@@ -169,6 +173,9 @@ func (p *Proxy) serveConnection(parent context.Context, raw *net.UnixConn) {
 			}
 			message := packet.message
 			state.observeUpstream(message)
+			if !p.options.Bluetooth {
+				p.observePortalOwner(message)
+			}
 			if !p.upstreamMessageAllowed(state, message) {
 				packet.closeFDs()
 				continue
@@ -329,10 +336,13 @@ func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *co
 		return true
 	}
 	if restrictedBusMatchCall(destination, path, interfaceName, member) {
+		if p.options.NetworkMonitor && networkMonitorMatchCallAllowed(member, message.Body) {
+			return false
+		}
 		_ = client.writeSyntheticMessage(methodReply(message, nil))
 		return true
 	}
-	if restrictedBusCallAllowed(destination, p.portalSender, path, interfaceName, member, message.Body) {
+	if restrictedBusCallAllowed(destination, p.currentPortalSender(), path, interfaceName, member, message.Body, p.options.NetworkMonitor) {
 		return false
 	}
 	if policyBusCallAllowed(p.options.Policy, destination, path, interfaceName, member, message.Body) {
@@ -397,19 +407,35 @@ func restrictedBusMatchCall(destination string, path dbus.ObjectPath, interfaceN
 	return destination == "org.freedesktop.DBus" && path == dbus.ObjectPath("/org/freedesktop/DBus") && interfaceName == "org.freedesktop.DBus" && (member == "AddMatch" || member == "RemoveMatch")
 }
 
-func restrictedBusCallAllowed(destination, portalSender string, path dbus.ObjectPath, interfaceName, member string, body []any) bool {
+func networkMonitorMatchCallAllowed(member string, body []any) bool {
+	if member != "AddMatch" && member != "RemoveMatch" || len(body) != 1 {
+		return false
+	}
+	rule, ok := body[0].(string)
+	return ok && (rule == portalOwnerMatch || rule == networkMonitorMatch)
+}
+
+func restrictedBusCallAllowed(destination, portalSender string, path dbus.ObjectPath, interfaceName, member string, body []any, networkMonitor bool) bool {
 	if destination == "org.freedesktop.DBus" && path == dbus.ObjectPath("/org/freedesktop/DBus") && interfaceName == "org.freedesktop.DBus" {
 		switch member {
 		case "Hello", "GetId":
 			return true
 		case "GetNameOwner", "NameHasOwner":
 			return len(body) == 1 && body[0] == portalDestination
+		case "StartServiceByName":
+			if len(body) != 2 || body[0] != portalDestination {
+				return false
+			}
+			_, ok := body[1].(uint32)
+			return ok
 		}
 	}
-	if destination != portalDestination && destination != portalSender || path != portalObjectPath {
+	if destination != portalDestination && (portalSender == "" || destination != portalSender) || path != portalObjectPath {
 		return false
 	}
 	switch interfaceName {
+	case networkInterface:
+		return networkMonitor && networkMonitorCallAllowed(member, body)
 	case settingsInterface:
 		return portalSettingsCallAllowed(member, body)
 	case "org.freedesktop.DBus.Properties":
@@ -420,6 +446,22 @@ func restrictedBusCallAllowed(destination, portalSender string, path dbus.Object
 		return member == "Ping" || member == "GetMachineId"
 	}
 	return false
+}
+
+func networkMonitorCallAllowed(member string, body []any) bool {
+	switch member {
+	case "GetAvailable", "GetMetered", "GetConnectivity", "GetStatus":
+		return len(body) == 0
+	case "CanReach":
+		if len(body) != 2 {
+			return false
+		}
+		_, hostname := body[0].(string)
+		_, port := body[1].(uint32)
+		return hostname && port
+	default:
+		return false
+	}
 }
 
 func portalSettingsCallAllowed(member string, body []any) bool {
@@ -446,7 +488,8 @@ func portalSettingsCallAllowed(member string, body []any) bool {
 }
 
 func (p *Proxy) portalDestination(destination string) bool {
-	return destination == portalDestination || destination == p.portalSender
+	owner := p.currentPortalSender()
+	return destination == portalDestination || owner != "" && destination == owner
 }
 
 func policyBusCallAllowed(policy types.DBusPolicy, destination string, path dbus.ObjectPath, interfaceName, member string, body []any) bool {
@@ -463,15 +506,23 @@ func policyBusCallAllowed(policy types.DBusPolicy, destination string, path dbus
 	return policy.AllowsCall(destination, string(path), interfaceName, member)
 }
 
-func restrictedUpstreamMessage(message *dbus.Message, policy types.DBusPolicy) bool {
+func restrictedUpstreamMessage(message *dbus.Message, policy types.DBusPolicy, networkMonitor bool, portalSender string) bool {
 	if message.Type == dbus.TypeMethodReply || message.Type == dbus.TypeError {
 		return true
 	}
 	if message.Type != dbus.TypeSignal {
 		return false
 	}
+	path, _ := headerValue[dbus.ObjectPath](message, dbus.FieldPath)
+	sender, _ := headerValue[string](message, dbus.FieldSender)
 	interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
 	member, _ := headerValue[string](message, dbus.FieldMember)
+	if networkMonitor && portalSender != "" && sender == portalSender && path == portalObjectPath && interfaceName == networkInterface && member == "changed" {
+		return true
+	}
+	if networkMonitor && sender == "org.freedesktop.DBus" && path == dbus.ObjectPath("/org/freedesktop/DBus") && interfaceName == "org.freedesktop.DBus" && member == "NameOwnerChanged" {
+		return len(message.Body) == 3 && message.Body[0] == portalDestination
+	}
 	if interfaceName != "org.freedesktop.DBus" || member != "NameAcquired" && member != "NameLost" || len(message.Body) != 1 {
 		return false
 	}
@@ -481,7 +532,7 @@ func restrictedUpstreamMessage(message *dbus.Message, policy types.DBusPolicy) b
 
 func (p *Proxy) upstreamMessageAllowed(state *connectionState, message *dbus.Message) bool {
 	if !p.options.Bluetooth {
-		return restrictedUpstreamMessage(message, p.options.Policy)
+		return restrictedUpstreamMessage(message, p.options.Policy, p.options.NetworkMonitor, p.currentPortalSender())
 	}
 	sender, _ := headerValue[string](message, dbus.FieldSender)
 	if message.Type == dbus.TypeMethodReply || message.Type == dbus.TypeError {
@@ -513,6 +564,32 @@ func (p *Proxy) upstreamMessageAllowed(state *connectionState, message *dbus.Mes
 	}
 	state.allowBluetoothReply(message.Serial(), sender)
 	return true
+}
+
+func (p *Proxy) observePortalOwner(message *dbus.Message) {
+	if message.Type != dbus.TypeSignal || len(message.Body) != 3 || message.Body[0] != portalDestination {
+		return
+	}
+	sender, _ := headerValue[string](message, dbus.FieldSender)
+	path, _ := headerValue[dbus.ObjectPath](message, dbus.FieldPath)
+	interfaceName, _ := headerValue[string](message, dbus.FieldInterface)
+	member, _ := headerValue[string](message, dbus.FieldMember)
+	if sender != "org.freedesktop.DBus" || path != dbus.ObjectPath("/org/freedesktop/DBus") || interfaceName != "org.freedesktop.DBus" || member != "NameOwnerChanged" {
+		return
+	}
+	owner, ok := message.Body[2].(string)
+	if !ok {
+		return
+	}
+	p.mu.Lock()
+	p.portalSender = owner
+	p.mu.Unlock()
+}
+
+func (p *Proxy) currentPortalSender() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.portalSender
 }
 
 func (p *Proxy) watchBluezOwner(ctx context.Context, signals <-chan *dbus.Signal) {
@@ -671,7 +748,7 @@ func (p *Proxy) pick(ctx context.Context, client *serializedConn, handle dbus.Ob
 		values["uris"] = dbus.MakeVariant(uris)
 		values["writable"] = dbus.MakeVariant(result.Access == "read-write")
 	}
-	_ = client.writeSyntheticMessage(responseSignal(handle, p.portalSender, destination, response, values))
+	_ = client.writeSyntheticMessage(responseSignal(handle, p.currentPortalSender(), destination, response, values))
 }
 
 func decodeFileChooserCall(member string, body []any) (systembroker.FilePickerRequest, error) {

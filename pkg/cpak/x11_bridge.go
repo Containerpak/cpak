@@ -158,13 +158,13 @@ func x11ServerCommand(authorityPath string) (x11Server, error) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" && socketIsLive(waylandSocketPath(uid)) {
 		server, err := findX11Server("Xwayland")
 		if err == nil {
-			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-terminate", "-geometry", "1280x800"), privateSocket: true}, nil
+			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-geometry", "1280x800"), privateSocket: true}, nil
 		}
 	}
 	if os.Getenv("DISPLAY") != "" {
 		server, err := findX11Server("Xephyr")
 		if err == nil {
-			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-terminate", "-screen", "1280x800")}, nil
+			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-screen", "1280x800")}, nil
 		}
 	}
 	return x11Server{}, errors.New("displayX11 requires Xwayland on Wayland or Xephyr on X11")

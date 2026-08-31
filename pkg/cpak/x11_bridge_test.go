@@ -97,7 +97,7 @@ func TestX11ServerFallsBackToXephyrOnX11(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/Xephyr", "-auth", "/tmp/authority", "-nolisten", "tcp", "-terminate", "-screen", "1280x800"}
+	want := []string{"/usr/bin/Xephyr", "-auth", "/tmp/authority", "-nolisten", "tcp", "-screen", "1280x800"}
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xephyr arguments: got %v, want %v", server.command.Args, want)
 	}
@@ -144,9 +144,15 @@ func TestX11BridgeStartsAReachablePrivateDisplay(t *testing.T) {
 	if container.X11Display == "" || !containerX11BridgeAlive(container) {
 		t.Fatalf("X11 bridge is not reachable: %+v", container)
 	}
-	if err = authenticateX11Socket(container.X11SocketPath, container.X11AuthorityPath, container.X11Display); err != nil {
-		log, _ := os.ReadFile(container.LogPath)
-		t.Fatalf("authenticate to private X11 display: %v\n%s", err, log)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err = authenticateX11Socket(container.X11SocketPath, container.X11AuthorityPath, container.X11Display); err != nil {
+			log, _ := os.ReadFile(container.LogPath)
+			t.Fatalf("authenticate to private X11 display after %d completed clients: %v\n%s", attempt, err, log)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if !containerX11BridgeAlive(container) {
+		t.Fatal("private X11 display exited after its clients disconnected")
 	}
 }
 
@@ -168,9 +174,15 @@ func TestX11BridgeStartsAReachableDisplayOnX11(t *testing.T) {
 	if container.X11Display == "" || !containerX11BridgeAlive(container) {
 		t.Fatalf("X11 bridge is not reachable: %+v", container)
 	}
-	if err = authenticateX11Socket(container.X11SocketPath, container.X11AuthorityPath, container.X11Display); err != nil {
-		log, _ := os.ReadFile(container.LogPath)
-		t.Fatalf("authenticate to private X11 display: %v\n%s", err, log)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err = authenticateX11Socket(container.X11SocketPath, container.X11AuthorityPath, container.X11Display); err != nil {
+			log, _ := os.ReadFile(container.LogPath)
+			t.Fatalf("authenticate to private X11 display after %d completed clients: %v\n%s", attempt, err, log)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if !containerX11BridgeAlive(container) {
+		t.Fatal("private X11 display exited after its clients disconnected")
 	}
 }
 
