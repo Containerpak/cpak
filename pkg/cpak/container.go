@@ -1734,7 +1734,7 @@ func getNested() (token string, nested bool) {
 
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
 const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
-const systemBrokerSocketName = "system-broker-v2.sock"
+const systemBrokerSocketName = "system-broker-v3.sock"
 
 func createSystemBrokerRuntime(statePath string) (string, string, error) {
 	socketPath, err := sharedSystemBrokerSocketPath()

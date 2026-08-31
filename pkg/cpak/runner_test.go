@@ -184,7 +184,7 @@ func TestSystemBrokerSocketDoesNotReuseTheLegacyProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("system broker socket path: %v", err)
 	}
-	if filepath.Base(path) != systemBrokerSocketName || filepath.Base(path) == "system-broker.sock" {
+	if filepath.Base(path) != "system-broker-v3.sock" {
 		t.Fatalf("system broker socket can reuse an incompatible service: %s", path)
 	}
 }
