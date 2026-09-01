@@ -30,7 +30,7 @@ type EnvironmentCmd struct {
 	Environment     string   `cli:"environment,e" help:"Environment ID or name"`
 	Name            string   `cli:"name,n" help:"Environment name"`
 	Origin          string   `cli:"origin,o" help:"Installed package origin or alias"`
-	Version         string   `cli:"version" help:"Installed package version"`
+	PackageVersion  string   `cli:"package-version" help:"Installed package version"`
 	Branch          string   `cli:"branch,b" help:"Installed package branch"`
 	Commit          string   `cli:"commit,c" help:"Installed package commit"`
 	Release         string   `cli:"release,r" help:"Installed package release"`
@@ -64,7 +64,7 @@ func (c *EnvironmentCmd) Run() error {
 		if err != nil {
 			return err
 		}
-		environment, err := cp.CreateEnvironment(c.Name, origin, c.Version, c.Branch, c.Commit, c.Release)
+		environment, err := cp.CreateEnvironment(c.Name, origin, c.PackageVersion, c.Branch, c.Commit, c.Release)
 		if err != nil {
 			return err
 		}

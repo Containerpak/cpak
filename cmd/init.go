@@ -16,7 +16,7 @@ import (
 type InitCmd struct {
 	ManifestVersion string   `cli:"manifest-version,m" help:"Manifest version (default: 3.0)"`
 	Name            string   `cli:"name,n" help:"Name of the application (required)"`
-	Version         string   `cli:"version,v" help:"Version of the application, e.g. v1.0.0 (required)"`
+	PackageVersion  string   `cli:"package-version,v" help:"Version of the application, e.g. v1.0.0 (required)"`
 	Description     string   `cli:"description,d" help:"Short description of the application (required)"`
 	Image           string   `cli:"image,i" help:"OCI image reference (required)"`
 	Binary          []string `cli:"binary,b" help:"Path to a binary to expose (can be repeated, must be absolute paths, required)"`
@@ -30,7 +30,7 @@ type InitCmd struct {
 }
 
 func (c *InitCmd) Run() error {
-	if c.Name == "" || c.Version == "" || c.Description == "" || c.Image == "" {
+	if c.Name == "" || c.PackageVersion == "" || c.Description == "" || c.Image == "" {
 		return fmt.Errorf("name, version, description and image are mandatory")
 	}
 
@@ -50,7 +50,7 @@ func (c *InitCmd) Run() error {
 		ManifestVersion: manifestVersion,
 		Name:            c.Name,
 		Description:     c.Description,
-		Version:         c.Version,
+		Version:         c.PackageVersion,
 		Image:           c.Image,
 		Binaries:        c.Binary,
 		DesktopEntries:  c.DesktopEntry,

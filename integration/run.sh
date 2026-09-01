@@ -230,6 +230,12 @@ for attempt in $(seq 1 100); do
 done
 WAYLAND_DISPLAY="$stale_wayland_display" "$cpak" service >"$work/cpak-service.log" 2>&1 &
 service_pids="$service_pids $!"
+mkdir -p "$work/init"
+(
+	cd "$work/init"
+	"$cpak" init --name integration --package-version 1.0.0 --description integration --image example.invalid/integration:latest --binary /usr/local/bin/cpak-integration-probe
+)
+grep -F '"version": "1.0.0"' "$work/init/cpak.json" >/dev/null
 install() {
 	"$cpak" install --yes "$1"
 	installed_origins="${installed_origins:-} $1"
@@ -481,7 +487,7 @@ if [ -z "$replacement_helper" ] || [ "$replacement_helper" = "$network_helper" ]
 	echo "dead network helper did not rebuild the container" >&2
 	exit 1
 fi
-"$cpak" stop "$network_origin"
+"$cpak" stop "$network_origin" --package-version main
 wait_no_slirp
 
 offline_origin="$manifest_host/integration/network-disabled"
@@ -495,7 +501,7 @@ fi
 
 install "$manifest_host/integration/environment"
 run_probe "$manifest_host/integration/environment" root-identity
-"$cpak" environment create --name system-identities --origin "$manifest_host/integration/environment"
+"$cpak" environment create --name system-identities --origin "$manifest_host/integration/environment" --package-version main
 "$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- persistence-write
 "$cpak" environment stop --environment system-identities
 "$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- persistence-read
