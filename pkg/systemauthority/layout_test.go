@@ -89,6 +89,54 @@ func TestRelocatedLayoutStaysInScannedDirectories(t *testing.T) {
 	}
 }
 
+func TestNixStoreExecutableUsesItsDeclarativeIntegration(t *testing.T) {
+	binary := "/nix/store/0123456789-cpak-2.10.16/bin/cpak"
+	got, ok := declarativeLayoutForExecutable(binary)
+	if !ok {
+		t.Fatal("Nix store executable was not recognized")
+	}
+	prefix := "/nix/store/0123456789-cpak-2.10.16"
+	if got.binary != binary || got.service != filepath.Join(prefix, "share/dbus-1/system-services", serviceFileName) {
+		t.Fatalf("declarative layout: %+v", got)
+	}
+	if got.polkit != filepath.Join(prefix, "share/polkit-1/actions", polkitPolicyName) {
+		t.Fatalf("declarative polkit action: %s", got.polkit)
+	}
+	if got.policy != filepath.Join(prefix, "share/dbus-1/system.d", "it.cpak.SystemAuthority1.conf") {
+		t.Fatalf("declarative bus policy: %s", got.policy)
+	}
+}
+
+func TestDeclarativeLayoutRejectsPathsOutsideTheNixStore(t *testing.T) {
+	for _, binary := range []string{
+		"/usr/local/bin/cpak",
+		"/nix/store/cpak/bin/other",
+		"/nix/store/cpak/libexec/bin/cpak",
+	} {
+		if _, ok := declarativeLayoutForExecutable(binary); ok {
+			t.Fatalf("non-package executable was accepted: %s", binary)
+		}
+	}
+}
+
+func TestSameFileFollowsTheConfiguredSymlink(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "cpak")
+	if err := os.WriteFile(target, []byte("cpak"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "configured-cpak")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if !sameFile(link, target) {
+		t.Fatal("configured symlink did not resolve to the package file")
+	}
+	if sameFile(filepath.Join(directory, "missing"), target) {
+		t.Fatal("missing system integration was accepted")
+	}
+}
+
 func TestRenderedIntegrationFollowsTheResolvedPrefix(t *testing.T) {
 	relocated := layoutFor("/opt/cpak")
 	service := string(renderAsset(serviceFile, "@BINARY@", relocated.binary))

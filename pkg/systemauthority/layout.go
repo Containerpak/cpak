@@ -14,6 +14,7 @@ import (
 
 const (
 	standardPrefix    = "/usr/local"
+	nixStorePrefix    = "/nix/store"
 	busPolicyPath     = "/etc/dbus-1/system.d/it.cpak.SystemAuthority1.conf"
 	polkitActionsPath = "/etc/polkit-1/actions"
 	serviceFileName   = "it.cpak.SystemAuthority1.service"
@@ -28,6 +29,7 @@ type layout struct {
 	prefix   string
 	binary   string
 	service  string
+	policy   string
 	polkit   string
 	sessions string
 }
@@ -37,6 +39,7 @@ func layoutFor(prefix string) layout {
 		prefix:   prefix,
 		binary:   filepath.Join(prefix, "bin", "cpak"),
 		service:  filepath.Join(prefix, "share", "dbus-1", "system-services", serviceFileName),
+		policy:   busPolicyPath,
 		polkit:   filepath.Join(prefix, "share", "polkit-1", "actions", polkitPolicyName),
 		sessions: filepath.Join(prefix, "share", "wayland-sessions"),
 	}
@@ -114,7 +117,48 @@ func installedLayout() (layout, bool) {
 			return l, true
 		}
 	}
+	if l, ok := declarativeLayout(); ok && trustedFile(l.binary) {
+		return l, true
+	}
 	return layoutFor(standardPrefix), false
+}
+
+func declarativeLayout() (layout, bool) {
+	binary, err := os.Executable()
+	if err != nil {
+		return layout{}, false
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(binary); resolveErr == nil {
+		binary = resolved
+	}
+	return declarativeLayoutForExecutable(binary)
+}
+
+// Declarative reports whether the running binary belongs to a Nix store path.
+func Declarative() bool {
+	_, ok := declarativeLayout()
+	return ok
+}
+
+func declarativeLayoutForExecutable(binary string) (layout, bool) {
+	clean := filepath.Clean(binary)
+	relative, err := filepath.Rel(nixStorePrefix, clean)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return layout{}, false
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+	if len(parts) != 3 || parts[1] != "bin" || parts[2] != "cpak" {
+		return layout{}, false
+	}
+	prefix := filepath.Join(nixStorePrefix, parts[0])
+	return layout{
+		prefix:   prefix,
+		binary:   clean,
+		service:  filepath.Join(prefix, "share", "dbus-1", "system-services", serviceFileName),
+		policy:   filepath.Join(prefix, "share", "dbus-1", "system.d", "it.cpak.SystemAuthority1.conf"),
+		polkit:   filepath.Join(prefix, "share", "polkit-1", "actions", polkitPolicyName),
+		sessions: filepath.Join(prefix, "share", "wayland-sessions"),
+	}, true
 }
 
 func probeWritable(directory string) error {

@@ -28,6 +28,9 @@ var systemdUnit []byte
 // fault, so a caller may report it plainly instead of as a failure.
 var ErrNotInstalled = errors.New("cpak system integration is not installed")
 
+// ErrDeclarativeInstallation means the package manager owns the integration.
+var ErrDeclarativeInstallation = errors.New("cpak system integration is managed declaratively")
+
 //go:embed assets/it.cpak.system.policy
 var polkitPolicy []byte
 
@@ -42,6 +45,9 @@ var lightdmConfig []byte
 func Install() ([]string, error) {
 	if os.Geteuid() != 0 {
 		return nil, errors.New("system integration installation requires root")
+	}
+	if _, ok := declarativeLayout(); ok {
+		return nil, ErrDeclarativeInstallation
 	}
 	target, err := writableLayout()
 	if err != nil {
@@ -83,6 +89,9 @@ func Install() ([]string, error) {
 func Uninstall() error {
 	if os.Geteuid() != 0 {
 		return errors.New("system integration removal requires root")
+	}
+	if _, ok := declarativeLayout(); ok {
+		return ErrDeclarativeInstallation
 	}
 	installed, found := installedLayout()
 	if !found {
@@ -129,12 +138,27 @@ func Installed() bool {
 	if !ok {
 		return false
 	}
-	for _, path := range []string{target.binary, target.service, busPolicyPath, target.polkit} {
+	if _, declarative := declarativeLayout(); declarative {
+		if !sameFile("/run/current-system/sw/bin/cpak", target.binary) ||
+			!sameFile(systemdUnitPath, filepath.Join(target.prefix, "lib", "systemd", "system", "cpak-system-authority.service")) {
+			return false
+		}
+	}
+	for _, path := range []string{target.binary, target.service, target.policy, target.polkit} {
 		if !trustedFile(path) {
 			return false
 		}
 	}
 	return true
+}
+
+func sameFile(path, target string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	want, err := filepath.EvalSymlinks(target)
+	return err == nil && resolved == want
 }
 
 func renderAsset(asset []byte, pairs ...string) []byte {

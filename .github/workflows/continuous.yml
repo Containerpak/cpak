@@ -139,6 +139,18 @@ jobs:
       - name: Run cpak in QEMU
         run: integration/vm.sh
 
+  nixos:
+    name: NixOS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24
+
+      - name: Test flake and NixOS module
+        run: nix flake check --print-build-logs
+
   assemble:
     needs: [prepare, build]
     outputs:
@@ -269,7 +281,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [assemble, compliance, integration]
+    needs: [assemble, compliance, integration, nixos]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

@@ -44,6 +44,13 @@ func (c *SystemCmd) Run() error {
 		}
 		return fmt.Errorf("cpak system integration is not installed")
 	case "setup", "remove":
+		if systemauthority.Declarative() {
+			if action == "setup" && systemauthority.Installed() {
+				c.Logger.Success("cpak system integration is installed")
+				return nil
+			}
+			return fmt.Errorf("cpak system integration is managed declaratively; enable or disable services.cpak in the NixOS configuration")
+		}
 		if os.Geteuid() != 0 {
 			return runSystemSetup(action)
 		}
