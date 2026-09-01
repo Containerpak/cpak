@@ -32,3 +32,13 @@ func TestPermissionSummaryDisclosesHostNetworkSharing(t *testing.T) {
 		t.Fatalf("host network permission summary: %+v", permissions[1])
 	}
 }
+
+func TestPermissionSummaryDisclosesWaylandClipboardAccess(t *testing.T) {
+	permissions := SummarizePermissions(types.Override{SocketWayland: true})
+	if len(permissions) != 1 {
+		t.Fatalf("Wayland permissions: %+v", permissions)
+	}
+	if permissions[0].Name != "Display" || permissions[0].Detail != "Wayland display and compositor-mediated clipboard" {
+		t.Fatalf("Wayland permission summary: %+v", permissions[0])
+	}
+}

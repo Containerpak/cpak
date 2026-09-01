@@ -33,6 +33,11 @@ type layerFile struct {
 	data []byte
 }
 
+type imageSpec struct {
+	files  []layerFile
+	labels map[string]string
+}
+
 type descriptor struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
@@ -80,6 +85,7 @@ func main() {
 		{path: "bin/sh", mode: 0755, data: shellData},
 		{path: "usr/local/bin/cpak-integration-probe", mode: 0755, data: probeData},
 		{path: "usr/share/applications/cpak-integration.desktop", mode: 0644, data: []byte("[Desktop Entry]\nType=Application\nName=cpak integration\nExec=/usr/local/bin/cpak-integration-probe desktop\n")},
+		{path: "usr/share/glib-2.0/schemas/gschemas.compiled", mode: 0644, data: []byte("integration schema fixture\n")},
 	}
 	browser := append([]layerFile{}, base...)
 	browser = append(browser, layerFile{
@@ -87,15 +93,27 @@ func main() {
 		mode: 0644,
 		data: []byte("[Desktop Entry]\nType=Application\nName=cpak integration browser\nExec=/usr/local/bin/cpak-integration-probe browser-open %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\n"),
 	})
-	files := map[string][]layerFile{
-		"probe":      base,
-		"browser":    browser,
-		"dependency": append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/dependency", mode: 0644, data: []byte("present\n")}),
-		"addon":      append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/addon", mode: 0644, data: []byte("present\n")}),
+	specs := map[string]imageSpec{
+		"probe":   {files: base},
+		"browser": {files: browser},
+		"locale-app": {
+			files: base,
+			labels: map[string]string{
+				"io.containerpak.locale.image": "localhost:5000/locales:latest",
+			},
+		},
+		"locales": {
+			files: []layerFile{
+				{path: "usr/lib/locale/en_US.utf8/LC_CTYPE", mode: 0644, data: []byte("en_US locale fixture\n")},
+				{path: "usr/lib/locale/ru_RU.utf8/LC_CTYPE", mode: 0644, data: []byte("ru_RU locale fixture\n")},
+			},
+		},
+		"dependency": {files: append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/dependency", mode: 0644, data: []byte("present\n")})},
+		"addon":      {files: append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/addon", mode: 0644, data: []byte("present\n")})},
 	}
-	images := make(map[string]image, len(files))
-	for name, contents := range files {
-		images[name], err = buildImage(contents)
+	images := make(map[string]image, len(specs))
+	for name, spec := range specs {
+		images[name], err = buildImage(spec.files, spec.labels)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -117,18 +135,22 @@ func main() {
 	log.Fatal(http.ListenAndServe(*listen, registry{images: images}))
 }
 
-func buildImage(files []layerFile) (image, error) {
+func buildImage(files []layerFile, labels map[string]string) (image, error) {
 	layer, err := buildLayer(files)
 	if err != nil {
 		return image{}, err
 	}
+	imageConfig := map[string]any{
+		"Entrypoint": []string{"/usr/local/bin/cpak-integration-probe"},
+		"Env":        []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+	}
+	if len(labels) > 0 {
+		imageConfig["Labels"] = labels
+	}
 	config, err := json.Marshal(map[string]any{
 		"architecture": "amd64",
 		"os":           "linux",
-		"config": map[string]any{
-			"Entrypoint": []string{"/usr/local/bin/cpak-integration-probe"},
-			"Env":        []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
-		},
+		"config":       imageConfig,
 	})
 	if err != nil {
 		return image{}, err

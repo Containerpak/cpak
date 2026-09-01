@@ -136,7 +136,8 @@ func TestBuildLocaleLayerExtractsOnlyHostLocale(t *testing.T) {
 	t.Setenv("LC_ALL", "")
 	appConfig := `{"config":{"Labels":{"io.containerpak.locale.image":"` + strings.TrimPrefix(server.URL, "http://") + `/example/locales:test"}}}`
 	c := newTestCpak(t)
-	layers, err := c.BuildLocaleLayer([]string{"base"}, "ghcr.io/example/app:test", appConfig, types.NewOverride())
+	override := types.Override{Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}}
+	layers, err := c.BuildLocaleLayer([]string{"base"}, "ghcr.io/example/app:test", appConfig, override)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestBuildLocaleLayerExtractsOnlyHostLocale(t *testing.T) {
 	if !found {
 		t.Fatal("selected locale is missing")
 	}
-	if _, err = c.BuildLocaleLayer([]string{"base"}, "ghcr.io/example/app:test", appConfig, types.NewOverride()); err != nil {
+	if _, err = c.BuildLocaleLayer([]string{"base"}, "ghcr.io/example/app:test", appConfig, override); err != nil {
 		t.Fatal(err)
 	}
 	if layerRequests != 1 {
@@ -184,6 +185,20 @@ func TestInheritHostLocaleKeepsApplicationValuesWithoutHostLocale(t *testing.T) 
 	}
 }
 
+func TestNormalizeLocaleEnvironmentKeepsTheLastAssignment(t *testing.T) {
+	environment := []string{"LANG=ru_RU.UTF-8", "LC_NUMERIC=ru_RU.UTF-8", "PATH=/usr/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+	got := normalizeLocaleEnvironment(environment)
+	if !slices.Contains(got, "LANG=C.UTF-8") || !slices.Contains(got, "LC_ALL=C.UTF-8") {
+		t.Fatalf("application locale is missing: %v", got)
+	}
+	if slices.Contains(got, "LANG=ru_RU.UTF-8") {
+		t.Fatalf("host locale survived: %v", got)
+	}
+	if slices.Contains(got, "LC_NUMERIC=ru_RU.UTF-8") {
+		t.Fatalf("a host locale category survived LC_ALL: %v", got)
+	}
+}
+
 func TestHostLocaleWinsOverAManifestDeclaration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	app := types.Application{
@@ -201,6 +216,17 @@ func TestHostLocaleWinsOverAManifestDeclaration(t *testing.T) {
 	}
 	if strings.Contains(joined, "C.UTF-8") {
 		t.Fatalf("the manifest locale survived the host one: %s", joined)
+	}
+}
+
+func TestHostLocaleWinsWithoutAnApplicationChoice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	app := types.Application{
+		Origin:  "github.com/containerpak/bottles",
+		Version: "66.1",
+	}
+	if !hostLocaleWins(app) {
+		t.Fatal("an application without a locale did not inherit the host")
 	}
 }
 

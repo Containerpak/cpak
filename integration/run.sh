@@ -138,6 +138,14 @@ write("bluetooth", "Bluetooth probe", override={"network": True, "bluetooth": Tr
 write("loopback", "Loopback probe", override={"network": True, "hostNetwork": True})
 write("network", "Network probe", override={"network": True})
 write("network-disabled", "Network-disabled probe")
+write(
+    "guest-environment",
+    "Guest environment probe",
+    image="locale-app",
+    override={"env": ["LANG=C.UTF-8", "LC_ALL=C.UTF-8"]},
+)
+write("nested-sandbox", "Nested sandbox probe", override={"userNamespaces": True})
+write("nested-sandbox-disabled", "Blocked nested sandbox probe")
 write("environment", "Environment probe", override={"asRoot": True})
 write("dependency", "Dependency probe", image="dependency")
 write(
@@ -258,6 +266,15 @@ wait_no_slirp() {
 
 install "$manifest_host/integration/desktop"
 run_probe "$manifest_host/integration/desktop" desktop
+
+guest_origin="$manifest_host/integration/guest-environment"
+LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share install "$guest_origin"
+LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share run_probe "$guest_origin" guest-environment
+
+install "$manifest_host/integration/nested-sandbox"
+run_probe "$manifest_host/integration/nested-sandbox" nested-mount
+install "$manifest_host/integration/nested-sandbox-disabled"
+run_probe "$manifest_host/integration/nested-sandbox-disabled" blocked-mount
 
 browser_origin="$manifest_host/integration/browser"
 uri_origin="$manifest_host/integration/uri"
@@ -397,6 +414,20 @@ sudo ip address add "$network_fixture_ip/32" dev "$host_interface"
 network_origin="$manifest_host/integration/network"
 network_url="http://$network_fixture_ip:18080/ready"
 install "$network_origin"
+run_command "$network_origin" network-slow "$network_url" >"$work/network-concurrent-1.log" 2>&1 &
+network_client_1=$!
+run_command "$network_origin" network-slow "$network_url" >"$work/network-concurrent-2.log" 2>&1 &
+network_client_2=$!
+if ! wait "$network_client_1"; then
+	cat "$work/network-concurrent-1.log" >&2
+	echo "first concurrent invocation failed" >&2
+	exit 1
+fi
+if ! wait "$network_client_2"; then
+	cat "$work/network-concurrent-2.log" >&2
+	echo "second concurrent invocation failed" >&2
+	exit 1
+fi
 run_command "$network_origin" network "$network_url"
 network_helper=$(slirp_pid)
 if [ -z "$network_helper" ] || ! kill -0 "$network_helper" 2>/dev/null; then

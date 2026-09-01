@@ -656,10 +656,13 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	containerEnv = applyAddonEnvironment(containerEnv, addons)
 	if hostLocaleWins(app) {
 		containerEnv = inheritHostLocale(containerEnv, os.Environ())
+	} else {
+		containerEnv = normalizeLocaleEnvironment(containerEnv)
 	}
 	containerEnv = inheritHostTimezone(containerEnv)
 	containerEnv = inheritHostCursor(containerEnv)
 	containerEnv = inheritHostAppearance(containerEnv)
+	containerEnv = containerDataDirectories(containerEnv)
 	if override.OpenURI {
 		containerEnv = openURIEnvironment(containerEnv)
 	}
@@ -1174,9 +1177,12 @@ func containerEnvironment(app types.Application, override types.Override, contai
 	envVars = setEnvironmentValue(envVars, "PATH", buildContainerPath(envVars))
 	if hostLocaleWins(app) {
 		envVars = inheritHostLocale(envVars, os.Environ())
+	} else {
+		envVars = normalizeLocaleEnvironment(envVars)
 	}
 	envVars = inheritHostCursor(envVars)
 	envVars = inheritHostAppearance(envVars)
+	envVars = containerDataDirectories(envVars)
 	if override.SocketAtSpiBus && len(atSpiSocketPaths(fmt.Sprintf("%d", os.Getuid()))) == 0 {
 		envVars = setEnvironmentValue(envVars, "NO_AT_BRIDGE", "1")
 	}
@@ -1251,7 +1257,20 @@ func prependEnvironmentPath(environment []string, name, entry, fallback string) 
 		}
 		result = append(result, variable)
 	}
-	return append(result, prefix+entry+":"+value)
+	seen := map[string]bool{}
+	paths := []string{}
+	for _, path := range strings.Split(entry+":"+value, ":") {
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return append(result, prefix+strings.Join(paths, ":"))
+}
+
+func containerDataDirectories(environment []string) []string {
+	return prependEnvironmentPath(environment, "XDG_DATA_DIRS", "/usr/local/share:/usr/share", "/usr/local/share:/usr/share")
 }
 
 func openURIEnvironment(environment []string) []string {

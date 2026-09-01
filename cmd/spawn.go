@@ -1869,6 +1869,9 @@ func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {
 	// directory. A nested namespace has no capability in its parent, so the
 	// traversal is refused whichever identity the application was given.
 	command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
+	if c.UserNamespaces {
+		command.SysProcAttr.Cloneflags |= syscall.CLONE_NEWNS
+	}
 	if c.AllowRoot {
 		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: 0, Size: 1},

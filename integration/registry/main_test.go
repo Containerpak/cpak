@@ -15,7 +15,7 @@ import (
 )
 
 func TestRegistryServesResolvableImages(t *testing.T) {
-	built, err := buildImage([]layerFile{{path: "probe", mode: 0755, data: []byte("probe")}})
+	built, err := buildImage([]layerFile{{path: "probe", mode: 0755, data: []byte("probe")}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

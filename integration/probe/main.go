@@ -5,12 +5,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,8 +39,19 @@ func main() {
 		err = probeLoopback()
 	case "network":
 		err = probeNetwork(argument(2), true)
+	case "network-slow":
+		err = probeNetwork(argument(2), true)
+		if err == nil {
+			time.Sleep(time.Second)
+		}
 	case "network-disabled":
 		err = probeNetwork(argument(2), false)
+	case "guest-environment":
+		err = probeGuestEnvironment()
+	case "nested-mount":
+		err = probeNestedMount(true)
+	case "blocked-mount":
+		err = probeNestedMount(false)
 	case "browser-server":
 		err = runBrowserServer()
 	case "browser-open":
@@ -206,6 +219,49 @@ func probeNetwork(endpoint string, expected bool) error {
 		return err
 	}
 	return checkReady(response)
+}
+
+func probeGuestEnvironment() error {
+	if got := os.Getenv("LANG"); got != "en_US.UTF-8" {
+		return fmt.Errorf("LANG is %q", got)
+	}
+	if got := os.Getenv("LC_NUMERIC"); got != "ru_RU.UTF-8" {
+		return fmt.Errorf("LC_NUMERIC is %q", got)
+	}
+	directories := strings.Split(os.Getenv("XDG_DATA_DIRS"), ":")
+	want := []string{"/usr/local/share", "/usr/share", "/nix/store/desktop/share", "/run/current-system/sw/share"}
+	if len(directories) != len(want) {
+		return fmt.Errorf("XDG_DATA_DIRS is %q", os.Getenv("XDG_DATA_DIRS"))
+	}
+	for index := range want {
+		if directories[index] != want[index] {
+			return fmt.Errorf("XDG_DATA_DIRS is %q", os.Getenv("XDG_DATA_DIRS"))
+		}
+	}
+	for _, path := range []string{
+		"/usr/share/glib-2.0/schemas/gschemas.compiled",
+		"/usr/lib/locale/en_US.utf8/LC_CTYPE",
+		"/usr/lib/locale/ru_RU.utf8/LC_CTYPE",
+	} {
+		if err := requireFile(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func probeNestedMount(expected bool) error {
+	err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SLAVE, "")
+	if expected {
+		return err
+	}
+	if err == nil {
+		return fmt.Errorf("mount succeeded without nested sandbox permission")
+	}
+	if !errors.Is(err, syscall.EPERM) {
+		return fmt.Errorf("mount returned %w, want EPERM", err)
+	}
+	return nil
 }
 
 func fetchReady(endpoint string) error {

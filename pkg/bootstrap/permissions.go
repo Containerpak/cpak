@@ -28,7 +28,7 @@ func SummarizePermissions(override types.Override) []Permission {
 		displays = append(displays, "X11 (no input or screen isolation)")
 	}
 	if override.SocketWayland {
-		displays = append(displays, "Wayland")
+		displays = append(displays, "Wayland display and compositor-mediated clipboard")
 	}
 	if len(displays) > 0 {
 		permissions = append(permissions, Permission{Name: "Display", Detail: strings.Join(displays, ", ")})

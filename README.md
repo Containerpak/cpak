@@ -31,6 +31,19 @@ cpak doctor
 cgroup delegation, display, audio and the host action broker. It
 prints a JSON report with `cpak doctor --json`.
 
+On NixOS, add the flake module so the binary and system authority are installed
+declaratively:
+
+```nix
+inputs.cpak.url = "github:Containerpak/cpak/v2";
+
+imports = [ inputs.cpak.nixosModules.default ];
+services.cpak.enable = true;
+```
+
+The flake also provides `packages.${system}.cpak`. `cpak system setup` checks
+the module-managed integration instead of writing to `/etc`.
+
 To build from source:
 
 ```sh
@@ -231,6 +244,9 @@ Set `displayX11` when an application needs X11 compatibility. cpak starts one
 nested display for the container and mounts only its socket and authority file.
 It uses Xwayland on a Wayland session or Xephyr on an X11 session. The host X11
 display is not exposed.
+
+Set `socketWayland` to share the Wayland display. The compositor also mediates
+clipboard access through that socket, so the install prompt discloses both.
 
 Set `bluetooth` to expose the BlueZ service through a private system bus proxy.
 The permission covers general BlueZ use, including discovery, pairing, GATT,

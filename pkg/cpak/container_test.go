@@ -557,6 +557,19 @@ func TestContainerEnvironmentUsesThePortalNetworkMonitor(t *testing.T) {
 	}
 }
 
+func TestContainerEnvironmentKeepsGuestDataDirectories(t *testing.T) {
+	t.Setenv("XDG_DATA_DIRS", "/nix/store/desktop/share:/run/current-system/sw/share")
+	app := types.Application{Config: `{"config":{}}`}
+	environment, err := containerEnvironment(app, types.Override{}, types.Container{CpakId: "container-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/usr/local/share:/usr/share:/nix/store/desktop/share:/run/current-system/sw/share"
+	if got := environmentValue(environment, "XDG_DATA_DIRS"); got != want {
+		t.Fatalf("XDG_DATA_DIRS: got %q, want %q", got, want)
+	}
+}
+
 func TestConfigureWaylandDisplayRequiresALiveSocket(t *testing.T) {
 	environment := []string{"LANG=C", "WAYLAND_DISPLAY=stale"}
 	configured := configureWaylandDisplay(environment, "wayland-7", filepath.Join(t.TempDir(), "missing"))
@@ -737,7 +750,7 @@ func TestContainerEnvironmentIncludesHostApplicationCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "XDG_DATA_DIRS=/run/cpak/host-applications/share:/opt/desktop/share:/usr/share"
+	want := "XDG_DATA_DIRS=/run/cpak/host-applications/share:/usr/local/share:/usr/share:/opt/desktop/share"
 	if !slicesContain(environment, want) {
 		t.Fatalf("host application catalog is missing from %v", environment)
 	}
@@ -896,10 +909,10 @@ func TestContainerEnvironmentAppliesTheHostLocaleOverTheManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slicesContain(environment, "LANG=pt_BR.UTF-8") {
+	if !slicesContain(environment, "LANG=pt_BR.UTF-8") || !slicesContain(environment, "LC_ALL=pt_BR.UTF-8") {
 		t.Fatalf("the host locale did not reach the application: %v", environment)
 	}
 	if slicesContain(environment, "LANG=C.UTF-8") || slicesContain(environment, "LC_ALL=C.UTF-8") {
-		t.Fatalf("the locale pinned by the manifest survived: %v", environment)
+		t.Fatalf("the manifest locale survived: %v", environment)
 	}
 }

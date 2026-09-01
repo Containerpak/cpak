@@ -270,7 +270,7 @@
         },
         "socketWayland": {
           "type": "boolean",
-          "description": "Mount Wayland socket",
+          "description": "Share the Wayland display including compositor-mediated clipboard access",
           "default": false
         },
         "socketPulseAudio": {

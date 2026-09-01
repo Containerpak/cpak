@@ -15,7 +15,7 @@ import (
 type Override struct {
 	SocketX11        bool `json:"socketX11" jsonschema:"description=Unsupported legacy raw X11 socket access,default=false" flag:"socketX11,bool"`
 	DisplayX11       bool `json:"displayX11" jsonschema:"description=Run an isolated X11 compatibility display,default=false" flag:"displayX11,bool"`
-	SocketWayland    bool `json:"socketWayland" jsonschema:"description=Mount Wayland socket,default=false" flag:"socketWayland,bool"`
+	SocketWayland    bool `json:"socketWayland" jsonschema:"description=Share the Wayland display including compositor-mediated clipboard access,default=false" flag:"socketWayland,bool"`
 	SocketPulseAudio bool `json:"socketPulseAudio" jsonschema:"description=Mount PulseAudio socket,default=false" flag:"socketPulseAudio,bool"`
 	SocketSessionBus bool `json:"socketSessionBus" jsonschema:"description=Unsupported legacy raw session bus access,default=false" flag:"socketSessionBus,bool"`
 	SocketSystemBus  bool `json:"socketSystemBus" jsonschema:"description=Unsupported legacy raw system bus access,default=false" flag:"socketSystemBus,bool"`

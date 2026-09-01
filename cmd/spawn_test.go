@@ -428,6 +428,18 @@ func TestApplicationCommandsAlwaysUseANestedUserNamespace(t *testing.T) {
 	}
 }
 
+func TestNestedSandboxPermissionCreatesAnOwnedMountNamespace(t *testing.T) {
+	command := (&SpawnCmd{UserNamespaces: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+	if command.SysProcAttr.Cloneflags&syscall.CLONE_NEWNS == 0 {
+		t.Fatal("nested sandbox permission did not give the application a mount namespace")
+	}
+
+	command = (&SpawnCmd{}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+	if command.SysProcAttr.Cloneflags&syscall.CLONE_NEWNS != 0 {
+		t.Fatal("application received a mount namespace without nested sandbox permission")
+	}
+}
+
 func TestApplicationCommandsUseTheMountedRuntimeExecutable(t *testing.T) {
 	command := (&SpawnCmd{}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
 	if command.Path != cpakInContainerPath {

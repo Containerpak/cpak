@@ -34,8 +34,8 @@ const (
 // platform. User environment overrides may select another locale.
 func (c *Cpak) BuildLocaleLayer(layers []string, image, config string, override types.Override) ([]string, error) {
 	result := append([]string{}, layers...)
-	environment := append([]string{}, os.Environ()...)
-	environment = append(environment, override.Env...)
+	environment := append([]string{}, override.Env...)
+	environment = append(environment, os.Environ()...)
 	prefixes := localeLayerPaths(environment)
 	if len(prefixes) == 0 {
 		return result, nil
@@ -315,6 +315,34 @@ func inheritHostLocale(environment, host []string) []string {
 	}
 	keys := make([]string, 0, len(values))
 	for name := range values {
+		if values["LC_ALL"] != "" && strings.HasPrefix(name, "LC_") && name != "LC_ALL" {
+			continue
+		}
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		result = append(result, name+"="+values[name])
+	}
+	return result
+}
+
+func normalizeLocaleEnvironment(environment []string) []string {
+	values := make(map[string]string)
+	result := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		name, value, found := strings.Cut(entry, "=")
+		if found && localeEnvironmentVariable(name) {
+			values[name] = value
+			continue
+		}
+		result = append(result, entry)
+	}
+	keys := make([]string, 0, len(values))
+	for name := range values {
+		if values["LC_ALL"] != "" && strings.HasPrefix(name, "LC_") && name != "LC_ALL" {
+			continue
+		}
 		keys = append(keys, name)
 	}
 	sort.Strings(keys)
