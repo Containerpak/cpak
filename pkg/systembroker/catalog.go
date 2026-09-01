@@ -23,6 +23,8 @@ import (
 type Policy struct {
 	AllowNotify           bool                  `json:"allow_notify,omitempty"`
 	AllowOpenURI          bool                  `json:"allow_open_uri,omitempty"`
+	// Kept so old policy files remain readable. The broker does not trust a
+	// container policy to select the host desktop used for URI handlers.
 	DesktopEnvironment    []string              `json:"desktop_environment,omitempty"`
 	AllowHostApplications bool                  `json:"allow_host_applications,omitempty"`
 	Applications          map[string]string     `json:"applications,omitempty"`
@@ -125,12 +127,13 @@ func RemovePolicy(directory, token string) error {
 }
 
 func ServeCatalog(ctx context.Context, socketPath, directory string) error {
+	desktopEnvironment := CaptureDesktopEnvironment(os.Environ(), "")
 	return serve(ctx, socketPath, authorizePeer, func(request Request) (Options, error) {
-		return resolveCatalogPolicy(socketPath, directory, request)
+		return resolveCatalogPolicy(socketPath, directory, desktopEnvironment, request)
 	})
 }
 
-func resolveCatalogPolicy(socketPath, directory string, request Request) (Options, error) {
+func resolveCatalogPolicy(socketPath, directory string, desktopEnvironment []string, request Request) (Options, error) {
 	policy, err := readPolicy(directory, request.Token)
 	if err != nil {
 		return Options{}, errors.New("system broker denied the request")
@@ -140,7 +143,7 @@ func resolveCatalogPolicy(socketPath, directory string, request Request) (Option
 		Token:                 request.Token,
 		AllowNotify:           policy.AllowNotify,
 		AllowOpenURI:          policy.AllowOpenURI,
-		DesktopEnvironment:    policy.DesktopEnvironment,
+		DesktopEnvironment:    desktopEnvironment,
 		AllowHostApplications: policy.AllowHostApplications,
 		Applications:          policy.Applications,
 		RuntimeDirectory:      policy.RuntimeDirectory,

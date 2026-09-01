@@ -263,11 +263,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 				return types.Container{}, err
 			}
 		}
-		desktopEnvironment := []string(nil)
-		if override.OpenURI {
-			desktopEnvironment = systembroker.CaptureDesktopEnvironment(os.Environ(), container.WaylandDisplay)
-		}
-		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, desktopEnvironment, app.CpakId, app.Name, app.Origin, override, container.StatePath, container.GrantSocketPath)
+		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, app.Name, app.Origin, override, container.StatePath, container.GrantSocketPath)
 		if err != nil {
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
@@ -2048,7 +2044,7 @@ func systemBrokerPolicyDirectory() (string, error) {
 	return directory, nil
 }
 
-func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime string, desktopEnvironment []string, owner, filePickerApplication, filePickerOrigin string, override types.Override, statePath, grantSocketPath string) (string, error) {
+func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, filePickerApplication, filePickerOrigin string, override types.Override, statePath, grantSocketPath string) (string, error) {
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return "", fmt.Errorf("read system broker token: %w", err)
@@ -2080,7 +2076,6 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime string, desk
 	policy := systembroker.Policy{
 		AllowNotify:           override.Notification,
 		AllowOpenURI:          override.OpenURI,
-		DesktopEnvironment:    desktopEnvironment,
 		AllowHostApplications: override.HostApplications,
 		Applications:          applications,
 		RuntimeDirectory:      desktopRuntime,

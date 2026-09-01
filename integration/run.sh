@@ -162,6 +162,9 @@ python3 -m http.server 18080 --bind 0.0.0.0 --directory "$web" >"$work/http.log"
 service_pids="$service_pids $!"
 weston --backend=headless-backend.so --socket="$WAYLAND_DISPLAY" --idle-time=0 >"$work/weston.log" 2>&1 &
 service_pids="$service_pids $!"
+stale_wayland_display=wayland-cpak-stale
+weston --backend=headless-backend.so --socket="$stale_wayland_display" --idle-time=0 >"$work/weston-stale.log" 2>&1 &
+service_pids="$service_pids $!"
 sudo "$root/out/cpak-integration-probe" bluez-mock >"$work/bluez.log" 2>&1 &
 service_pids="$service_pids $!"
 
@@ -178,7 +181,7 @@ for endpoint in "https://$manifest_host/integration/desktop/raw/main/cpak.json" 
 	done
 done
 for attempt in $(seq 1 100); do
-	if [ -S "$runtime/$WAYLAND_DISPLAY" ] && busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.bluez | grep -q 'true'; then
+	if [ -S "$runtime/$WAYLAND_DISPLAY" ] && [ -S "$runtime/$stale_wayland_display" ] && busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.bluez | grep -q 'true'; then
 		break
 	fi
 	if [ "$attempt" -eq 100 ]; then
@@ -189,7 +192,7 @@ for attempt in $(seq 1 100); do
 done
 
 cpak="$root/out/cpak"
-WAYLAND_DISPLAY=wayland-cpak-stale "$cpak" service >"$work/cpak-service.log" 2>&1 &
+"$cpak" service >"$work/cpak-service.log" 2>&1 &
 service_pids="$service_pids $!"
 install() {
 	"$cpak" install --yes "$1"
@@ -272,6 +275,30 @@ for attempt in $(seq 1 600); do
 	fi
 	sleep 0.05
 done
+policy_marker="$work/uri-policy-marker"
+touch "$policy_marker"
+WAYLAND_DISPLAY="$stale_wayland_display" run_command "$uri_origin" desktop
+uri_policy_count=$(find "$runtime/cpak/policies" -type f -newer "$policy_marker" | wc -l)
+if [ "$uri_policy_count" -ne 1 ]; then
+	echo "URI container created $uri_policy_count broker policies, want one" >&2
+	exit 1
+fi
+uri_policy=$(find "$runtime/cpak/policies" -type f -newer "$policy_marker")
+if grep -F '"desktop_environment"' "$uri_policy" >/dev/null; then
+	echo "new broker policy persisted its container display" >&2
+	exit 1
+fi
+sed 's/^{/{"desktop_environment":["WAYLAND_DISPLAY=wayland-cpak-stale"],/' "$uri_policy" >"$uri_policy.tmp"
+chmod 0600 "$uri_policy.tmp"
+mv "$uri_policy.tmp" "$uri_policy"
+legacy_url="https://example.com/cpak-legacy-display"
+WAYLAND_DISPLAY="$stale_wayland_display" "$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$legacy_url"
+wait_browser_url "$browser_origin" "$legacy_url"
+legacy_browser_state=$(run_command "$browser_origin" browser-read)
+if [ "$(printf '%s\n' "$legacy_browser_state" | sed -n 's/^server=//p' | head -n 1)" != "$browser_marker" ]; then
+	echo "legacy URI policy replaced the running browser container" >&2
+	exit 1
+fi
 xdg_url="https://example.com/cpak-xdg-open"
 gio_url="https://example.com/cpak-gio-open"
 warm_url="https://example.com/cpak-xdg-open-warm"

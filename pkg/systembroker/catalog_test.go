@@ -21,11 +21,11 @@ func TestCatalogResolvesIndependentPolicies(t *testing.T) {
 	if err := WritePolicy(directory, second, Policy{AllowOpenURI: true}); err != nil {
 		t.Fatal(err)
 	}
-	firstOptions, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: first})
+	firstOptions, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: first})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondOptions, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: second})
+	secondOptions, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestCatalogResolvesIndependentPolicies(t *testing.T) {
 	if !secondOptions.AllowOpenURI || secondOptions.AllowNotify {
 		t.Fatalf("second policy leaked permissions: %+v", secondOptions)
 	}
-	if _, err = resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: strings.Repeat("c", 64)}); err == nil {
+	if _, err = resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: strings.Repeat("c", 64)}); err == nil {
 		t.Fatal("unknown token resolved a policy")
 	}
 }
@@ -49,7 +49,7 @@ func TestCatalogReadsPublishedPolicyUpdates(t *testing.T) {
 	if err := WritePolicy(directory, token, Policy{AllowOpenURI: true}); err != nil {
 		t.Fatal(err)
 	}
-	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestCatalogPreservesFilePickerApplication(t *testing.T) {
 	if err := WritePolicy(directory, token, policy); err != nil {
 		t.Fatal(err)
 	}
-	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,19 +74,25 @@ func TestCatalogPreservesFilePickerApplication(t *testing.T) {
 	}
 }
 
-func TestCatalogPreservesDesktopEnvironment(t *testing.T) {
+func TestCatalogUsesTheBrokerDesktopEnvironment(t *testing.T) {
 	directory := t.TempDir()
 	token := strings.Repeat("i", 64)
-	policy := Policy{AllowOpenURI: true, DesktopEnvironment: []string{"WAYLAND_DISPLAY=wayland-0"}}
+	policy := Policy{AllowOpenURI: true, DesktopEnvironment: []string{"WAYLAND_DISPLAY=wayland-stale"}}
 	if err := WritePolicy(directory, token, policy); err != nil {
 		t.Fatal(err)
 	}
-	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	desktopEnvironment := []string{"WAYLAND_DISPLAY=wayland-current", "DISPLAY=:0"}
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, desktopEnvironment, Request{Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(options.DesktopEnvironment) != 1 || options.DesktopEnvironment[0] != policy.DesktopEnvironment[0] {
+	if len(options.DesktopEnvironment) != len(desktopEnvironment) {
 		t.Fatalf("desktop environment: %v", options.DesktopEnvironment)
+	}
+	for index := range desktopEnvironment {
+		if options.DesktopEnvironment[index] != desktopEnvironment[index] {
+			t.Fatalf("desktop environment: %v", options.DesktopEnvironment)
+		}
 	}
 }
 
@@ -97,7 +103,7 @@ func TestCatalogPreservesCpakCapabilities(t *testing.T) {
 	if err := WritePolicy(directory, token, policy); err != nil {
 		t.Fatal(err)
 	}
-	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +126,7 @@ func TestCatalogRejectsSymlinkedPolicy(t *testing.T) {
 	if err = os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token}); err == nil {
+	if _, err = resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: token}); err == nil {
 		t.Fatal("symlinked policy was accepted")
 	}
 }

@@ -96,7 +96,7 @@ func TestOpenURIReturnsAfterStartingTheDesktopBackend(t *testing.T) {
 	}
 }
 
-func TestOpenURIUsesThePolicyDesktopEnvironment(t *testing.T) {
+func TestOpenURIUsesTheConfiguredDesktopEnvironment(t *testing.T) {
 	directory := t.TempDir()
 	output := filepath.Join(directory, "environment")
 	backend := filepath.Join(directory, "open-uri")
