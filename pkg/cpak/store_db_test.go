@@ -42,6 +42,31 @@ func TestStoreFindsApplicationByOriginAfterReopen(t *testing.T) {
 	}
 }
 
+func TestSetContainerRuntimeStoresTheNetworkHelperIdentity(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	container := types.Container{CpakId: "container-id", ApplicationCpakId: "application-id"}
+	if err = store.NewContainer(container); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SetContainerRuntime(container.CpakId, 101, 202, "/cgroup", 303, 404); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Containers.Get(t.Context(), container.CpakId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pid != 101 || got.ProcessStartTime != 202 || got.CgroupPath != "/cgroup" {
+		t.Fatalf("container runtime was not stored: %+v", got)
+	}
+	if got.NetworkHelperPid != 303 || got.NetworkHelperStartTime != 404 {
+		t.Fatalf("network runtime was not stored: %+v", got)
+	}
+}
+
 func TestOpenWALWaitsForAnotherProcess(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "apps")
 	first, err := wal.NewManager(directory)

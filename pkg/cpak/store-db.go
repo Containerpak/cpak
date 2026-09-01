@@ -182,7 +182,7 @@ func (s *Store) RemoveContainerByCpakId(cpakId string) (err error) {
 	return s.Containers.Delete(context.Background(), cpakId)
 }
 
-func (s *Store) SetContainerRuntime(cpakId string, pid int, processStartTime uint64, cgroupPath string) error {
+func (s *Store) SetContainerRuntime(cpakId string, pid int, processStartTime uint64, cgroupPath string, networkHelperPid int, networkHelperStartTime uint64) error {
 	container, err := s.Containers.Get(context.Background(), cpakId)
 	if err != nil {
 		return err
@@ -190,6 +190,8 @@ func (s *Store) SetContainerRuntime(cpakId string, pid int, processStartTime uin
 	container.Pid = pid
 	container.ProcessStartTime = processStartTime
 	container.CgroupPath = cgroupPath
+	container.NetworkHelperPid = networkHelperPid
+	container.NetworkHelperStartTime = networkHelperStartTime
 	return s.Containers.Put(context.Background(), cpakId, container, 0)
 }
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"syscall"
 )
 
 const slirpNameserver = "10.0.2.3"
@@ -47,6 +48,7 @@ func (p *userNetworkPlan) command(pid int, ready, exit *os.File) *exec.Cmd {
 		"tap0",
 	)
 	command.ExtraFiles = []*os.File{ready, exit}
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return command
 }
 

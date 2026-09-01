@@ -29,6 +29,12 @@ type Container struct {
 	// container record from signalling a process that later reused the PID.
 	ProcessStartTime uint64 `json:"process_start_time"`
 
+	// NetworkHelperPid is the PID of the userspace network process.
+	NetworkHelperPid int `json:"network_helper_pid,omitempty"`
+
+	// NetworkHelperStartTime identifies NetworkHelperPid across PID reuse.
+	NetworkHelperStartTime uint64 `json:"network_helper_start_time,omitempty"`
+
 	// CreateTimestamp is the time the container was created in the store.
 	CreateTimestamp time.Time `json:"create_timestamp"`
 

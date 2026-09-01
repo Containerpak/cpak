@@ -157,7 +157,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerNetworkAlive(container, override) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
 			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
 			if containerProcessRunning(container) {
 				terminateContainerProcess(container)
@@ -352,7 +352,10 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 	store = nil
 
 	mapSystemIDs := persistent != nil && persistent.mapSystemIDs
-	_, container.Pid, container.CgroupPath, err = c.startContainer(container, app, components, addons, config, override, mapSystemIDs)
+	networkRuntime := networkHelperRuntime{}
+	_, container.Pid, container.CgroupPath, err = c.startContainer(container, app, components, addons, config, override, mapSystemIDs, &networkRuntime)
+	container.NetworkHelperPid = networkRuntime.pid
+	container.NetworkHelperStartTime = networkRuntime.startTime
 	if err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
@@ -375,7 +378,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
-	if err = store.SetContainerRuntime(container.CpakId, container.Pid, container.ProcessStartTime, container.CgroupPath); err != nil {
+	if err = store.SetContainerRuntime(container.CpakId, container.Pid, container.ProcessStartTime, container.CgroupPath, container.NetworkHelperPid, container.NetworkHelperStartTime); err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
@@ -482,10 +485,15 @@ func containerLaunchPolicyHashWithWayland(runtimeVersion int, launchRoot string,
 // responsible for setting up the pivot root, mounting the layers and
 // replacing itself with the init process inside native Linux namespaces.
 func (c *Cpak) StartContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override) (rootfs string, pid int, cgroupPath string, err error) {
-	return c.startContainer(container, app, components, addons, config, override, false)
+	return c.startContainer(container, app, components, addons, config, override, false, nil)
 }
 
-func (c *Cpak) startContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override, mapSystemIDs bool) (rootfs string, pid int, cgroupPath string, err error) {
+type networkHelperRuntime struct {
+	pid       int
+	startTime uint64
+}
+
+func (c *Cpak) startContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override, mapSystemIDs bool, networkRuntime *networkHelperRuntime) (rootfs string, pid int, cgroupPath string, err error) {
 	network, err := resolveUserNetwork(override.Network, override.HostNetwork)
 	if err != nil {
 		return "", 0, "", err
@@ -788,6 +796,19 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 			helperReadyWriter.Close()
 			_ = cmd.Process.Kill()
 			return "", 0, "", fmt.Errorf("start network helper: %w", err)
+		}
+		helperStartTime, startErr := processStartTime(helper.Process.Pid)
+		if startErr != nil {
+			helperReadyReader.Close()
+			helperReadyWriter.Close()
+			_ = helper.Process.Kill()
+			_ = helper.Wait()
+			_ = cmd.Process.Kill()
+			return "", 0, "", fmt.Errorf("identify network helper: %w", startErr)
+		}
+		if networkRuntime != nil {
+			networkRuntime.pid = helper.Process.Pid
+			networkRuntime.startTime = helperStartTime
 		}
 		_ = helperReadyWriter.Close()
 		_ = networkExitReader.Close()
@@ -1529,8 +1550,16 @@ func containerBluetoothBusAlive(container types.Container) bool {
 	return sameRecordedProcess(container.BluetoothBusProxyPid, container.BluetoothBusProxyStartTime) && socketIsLive(container.BluetoothBusSocketPath)
 }
 
+func containerNetworkAlive(container types.Container, override types.Override) bool {
+	if !override.Network || override.HostNetwork {
+		return true
+	}
+	return sameRecordedProcess(container.NetworkHelperPid, container.NetworkHelperStartTime)
+}
+
 // CleanupContainer removes the container with the given id.
 func (c *Cpak) CleanupContainer(container types.Container) (err error) {
+	cleanupNetworkHelper(container)
 	cleanupX11Bridge(container)
 	cleanupBluetoothBusProxy(container)
 	cleanupDesktopBusProxy(container)
@@ -1566,6 +1595,25 @@ func (c *Cpak) CleanupContainer(container types.Container) (err error) {
 		return
 	}
 	return
+}
+
+func cleanupNetworkHelper(container types.Container) {
+	pid := container.NetworkHelperPid
+	started := container.NetworkHelperStartTime
+	if !sameRecordedProcess(pid, started) {
+		return
+	}
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !sameRecordedProcess(pid, started) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if sameRecordedProcess(pid, started) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
 }
 
 func startDesktopBusProxy(container types.Container, override types.Override) (int, error) {
