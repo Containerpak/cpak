@@ -111,22 +111,50 @@
           package = self.packages.${system}.cpak;
         }
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
-          nixos-module = pkgs.testers.runNixOSTest {
-            name = "cpak";
-            nodes.machine = { ... }: {
-              imports = [ self.nixosModules.default ];
-              services.cpak.enable = true;
+          nixos-module =
+            let
+              sandbox-test = pkgs.buildGoModule {
+                pname = "cpak-sandbox-test";
+                inherit version;
+                src = ./.;
+                vendorHash = "sha256-5ywPXNyb2YF1Z9XQBHTTghPOMERVauKAm+8DxgZ7D5k=";
+                doCheck = false;
+                buildPhase = ''
+                  runHook preBuild
+                  go test -c -o cpak-sandbox-test ./pkg/sandbox
+                  runHook postBuild
+                '';
+                installPhase = ''
+                  runHook preInstall
+                  install -Dm755 cpak-sandbox-test "$out/bin/cpak-sandbox-test"
+                  runHook postInstall
+                '';
+              };
+            in
+            pkgs.testers.runNixOSTest {
+              name = "cpak";
+              nodes.machine = { ... }: {
+                imports = [ self.nixosModules.default ];
+                services.cpak.enable = true;
+                environment.systemPackages = [ sandbox-test ];
+                users.users.cpak-test = {
+                  isNormalUser = true;
+                  createHome = true;
+                };
+              };
+              testScript = ''
+                machine.wait_for_unit("multi-user.target")
+                machine.succeed("cpak --version | grep -Fx v${version}")
+                machine.succeed("cpak system status")
+                machine.succeed("cpak system setup")
+                machine.succeed("busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus StartServiceByName su it.cpak.SystemAuthority1 0")
+                machine.succeed("busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s it.cpak.SystemAuthority1 | grep -q true")
+                machine.fail("cpak system remove")
+                machine.succeed("runuser -u cpak-test -- cpak-sandbox-test -test.run '^TestSeccompAllowsNestedUserNamespacesWhenRequested$' -test.v | tee /tmp/cpak-sandbox-test.log")
+                machine.succeed("grep -F -- '--- PASS: TestSeccompAllowsNestedUserNamespacesWhenRequested' /tmp/cpak-sandbox-test.log")
+                machine.fail("grep -F -- '--- SKIP:' /tmp/cpak-sandbox-test.log")
+              '';
             };
-            testScript = ''
-              machine.wait_for_unit("multi-user.target")
-              machine.succeed("cpak --version | grep -Fx v${version}")
-              machine.succeed("cpak system status")
-              machine.succeed("cpak system setup")
-              machine.succeed("busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus StartServiceByName su it.cpak.SystemAuthority1 0")
-              machine.succeed("busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s it.cpak.SystemAuthority1 | grep -q true")
-              machine.fail("cpak system remove")
-            '';
-          };
         });
     };
 }

@@ -48,6 +48,9 @@ func TestSeccompBlocksNamespaceSyscalls(t *testing.T) {
 }
 
 func TestSeccompAllowsNestedUserNamespacesWhenRequested(t *testing.T) {
+	if output, err := sandboxHelperOutput("nested-userns", "", ""); err != nil {
+		t.Skipf("host policy does not permit nested mounts: %v\n%s", err, output)
+	}
 	runSandboxHelper(t, "seccomp-userns", "", "")
 }
 
@@ -285,17 +288,13 @@ func TestSandboxHelper(t *testing.T) {
 			}
 			failSandboxHelper(err)
 		}
-		command := exec.Command(os.Args[0], "-test.run=^TestSandboxHelper$")
-		command.Env = append(os.Environ(), "CPAK_SANDBOX_HELPER=seccomp-userns-child")
-		command.SysProcAttr = &syscall.SysProcAttr{
-			Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
-			UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Geteuid(), Size: 1}},
-			GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getegid(), Size: 1}},
-			GidMappingsEnableSetgroups: false,
-			Credential:                 &syscall.Credential{Uid: 0, Gid: 0},
-		}
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := nestedUserNamespaceOutput(); err != nil {
 			failSandboxHelper("nested mount remained filtered: %v: %s", err, output)
+		}
+		os.Exit(0)
+	case "nested-userns":
+		if output, err := nestedUserNamespaceOutput(); err != nil {
+			failSandboxHelper("nested mount denied by host policy: %v: %s", err, output)
 		}
 		os.Exit(0)
 	case "seccomp-userns-child":
@@ -403,15 +402,32 @@ func failSandboxHelper(format any, values ...any) {
 	os.Exit(1)
 }
 
+func nestedUserNamespaceOutput() ([]byte, error) {
+	command := exec.Command(os.Args[0], "-test.run=^TestSandboxHelper$")
+	command.Env = append(os.Environ(), "CPAK_SANDBOX_HELPER=seccomp-userns-child")
+	command.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Geteuid(), Size: 1}},
+		GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getegid(), Size: 1}},
+		GidMappingsEnableSetgroups: false,
+		Credential:                 &syscall.Credential{Uid: 0, Gid: 0},
+	}
+	return command.CombinedOutput()
+}
+
 func runSandboxHelper(t *testing.T, mode, allowed, denied string) {
 	t.Helper()
-	command := exec.Command(os.Args[0], "-test.run=^TestSandboxHelper$")
-	command.Env = append(os.Environ(), "CPAK_SANDBOX_HELPER="+mode, "CPAK_SANDBOX_ALLOWED="+allowed, "CPAK_SANDBOX_DENIED="+denied)
-	output, err := command.CombinedOutput()
+	output, err := sandboxHelperOutput(mode, allowed, denied)
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 77 {
 		t.Skip("kernel does not provide this sandbox feature")
 	}
 	if err != nil {
 		t.Fatalf("sandbox helper failed: %v\n%s", err, output)
 	}
+}
+
+func sandboxHelperOutput(mode, allowed, denied string) ([]byte, error) {
+	command := exec.Command(os.Args[0], "-test.run=^TestSandboxHelper$")
+	command.Env = append(os.Environ(), "CPAK_SANDBOX_HELPER="+mode, "CPAK_SANDBOX_ALLOWED="+allowed, "CPAK_SANDBOX_DENIED="+denied)
+	return command.CombinedOutput()
 }

@@ -286,8 +286,20 @@ guest_origin="$manifest_host/integration/guest-environment"
 LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share install "$guest_origin"
 LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share run_probe "$guest_origin" guest-environment
 
+nested_host_log="$work/nested-host.log"
+if "$root/out/cpak-integration-probe" nested-mount >"$nested_host_log" 2>&1; then
+	nested_host_mounts=true
+else
+	nested_host_mounts=false
+	echo "host policy does not permit nested mounts; runtime coverage is enforced by the NixOS VM" >&2
+	cat "$nested_host_log" >&2
+fi
 install "$manifest_host/integration/nested-sandbox"
-run_probe "$manifest_host/integration/nested-sandbox" nested-mount
+if [ "$nested_host_mounts" = true ]; then
+	run_probe "$manifest_host/integration/nested-sandbox" nested-mount
+else
+	"$cpak" stop "$manifest_host/integration/nested-sandbox"
+fi
 install "$manifest_host/integration/nested-sandbox-disabled"
 run_probe "$manifest_host/integration/nested-sandbox-disabled" blocked-mount
 
