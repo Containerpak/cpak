@@ -21,7 +21,6 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/types"
-	"golang.org/x/sys/unix"
 )
 
 func TestCreateCpakFileSkipsContainersWithoutNestedDependencies(t *testing.T) {
@@ -429,21 +428,13 @@ func TestApplicationCommandsAlwaysUseANestedUserNamespace(t *testing.T) {
 	}
 }
 
-func TestNestedSandboxPermissionCreatesAnOwnedMountNamespace(t *testing.T) {
+func TestNestedSandboxPermissionDoesNotGrantMountCapabilities(t *testing.T) {
 	command := (&SpawnCmd{UserNamespaces: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
-	if command.SysProcAttr.Cloneflags&syscall.CLONE_NEWNS == 0 {
-		t.Fatal("nested sandbox permission did not give the application a mount namespace")
-	}
-	if !slices.Equal(command.SysProcAttr.AmbientCaps, []uintptr{unix.CAP_SYS_ADMIN}) {
-		t.Fatalf("nested sandbox mount capability: %v", command.SysProcAttr.AmbientCaps)
-	}
-
-	command = (&SpawnCmd{}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
 	if command.SysProcAttr.Cloneflags&syscall.CLONE_NEWNS != 0 {
-		t.Fatal("application received a mount namespace without nested sandbox permission")
+		t.Fatal("nested sandbox permission gave the application a mount namespace")
 	}
 	if len(command.SysProcAttr.AmbientCaps) != 0 {
-		t.Fatalf("application received mount capabilities without nested sandbox permission: %v", command.SysProcAttr.AmbientCaps)
+		t.Fatalf("nested sandbox permission granted mount capabilities: %v", command.SysProcAttr.AmbientCaps)
 	}
 }
 

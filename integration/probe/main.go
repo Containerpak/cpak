@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -52,6 +53,8 @@ func main() {
 		err = probeNestedMount(true)
 	case "blocked-mount":
 		err = probeNestedMount(false)
+	case "nested-mount-child":
+		err = syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SLAVE, "")
 	case "browser-server":
 		err = runBrowserServer()
 	case "browser-open":
@@ -251,15 +254,25 @@ func probeGuestEnvironment() error {
 }
 
 func probeNestedMount(expected bool) error {
-	err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SLAVE, "")
+	command := exec.Command(os.Args[0], "nested-mount-child")
+	command.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Geteuid(), Size: 1}},
+		GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getegid(), Size: 1}},
+		GidMappingsEnableSetgroups: false,
+	}
+	output, err := command.CombinedOutput()
 	if expected {
-		return err
+		if err != nil {
+			return fmt.Errorf("nested mount: %w: %s", err, output)
+		}
+		return nil
 	}
 	if err == nil {
-		return fmt.Errorf("mount succeeded without nested sandbox permission")
+		return fmt.Errorf("nested user namespace succeeded without permission")
 	}
 	if !errors.Is(err, syscall.EPERM) {
-		return fmt.Errorf("mount returned %w, want EPERM", err)
+		return fmt.Errorf("nested user namespace returned %w: %s, want EPERM", err, output)
 	}
 	return nil
 }

@@ -34,7 +34,6 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
-	"golang.org/x/sys/unix"
 )
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
@@ -1870,10 +1869,6 @@ func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {
 	// directory. A nested namespace has no capability in its parent, so the
 	// traversal is refused whichever identity the application was given.
 	command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
-	if c.UserNamespaces {
-		command.SysProcAttr.Cloneflags |= syscall.CLONE_NEWNS
-		command.SysProcAttr.AmbientCaps = []uintptr{unix.CAP_SYS_ADMIN}
-	}
 	if c.AllowRoot {
 		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: 0, Size: 1},
