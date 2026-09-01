@@ -41,7 +41,7 @@ type Options struct {
 	// stream directly into the content store.
 	CachePath string `json:"cache_path" conf:"cache_path"`
 
-	// RegistryAuthPath stores public registry credential bindings.
+	// RegistryAuthPath stores public package credential bindings.
 	RegistryAuthPath string `json:"registry_auth_path" conf:"registry_auth_path"`
 
 	// StorageDriver selects the runtime layer checkout driver.

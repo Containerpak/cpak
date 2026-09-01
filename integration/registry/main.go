@@ -25,6 +25,10 @@ const (
 	manifestMediaType = "application/vnd.oci.image.manifest.v1+json"
 	configMediaType   = "application/vnd.oci.image.config.v1+json"
 	layerMediaType    = "application/vnd.oci.image.layer.v1.tar+gzip"
+	privateRepository = "private"
+	privateUsername   = "github-user"
+	privatePassword   = "source-secret"
+	privateToken      = "registry-token"
 )
 
 type layerFile struct {
@@ -110,6 +114,7 @@ func main() {
 		},
 		"dependency": {files: append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/dependency", mode: 0644, data: []byte("present\n")})},
 		"addon":      {files: append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/addon", mode: 0644, data: []byte("present\n")})},
+		"private":    {files: append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/private", mode: 0644, data: []byte("present\n")})},
 	}
 	images := make(map[string]image, len(specs))
 	for name, spec := range specs {
@@ -209,6 +214,16 @@ func digest(data []byte) string {
 }
 
 func (r registry) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path == "/token" {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != privateUsername || password != privatePassword {
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"token":"` + privateToken + `","expires_in":300}`))
+		return
+	}
 	if request.URL.Path == "/v2/" {
 		writer.WriteHeader(http.StatusOK)
 		return
@@ -221,6 +236,11 @@ func (r registry) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	current, ok := r.images[parts[1]]
 	if !ok {
 		http.NotFound(writer, request)
+		return
+	}
+	if parts[1] == privateRepository && request.Header.Get("Authorization") != "Bearer "+privateToken {
+		writer.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="http://%s/token",service="cpak-integration",scope="repository:%s:pull"`, request.Host, privateRepository))
+		writer.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	switch parts[2] {

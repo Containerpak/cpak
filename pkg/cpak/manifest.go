@@ -718,7 +718,7 @@ func (c *Cpak) FetchManifest(origin, branch, release, commit string) (manifest *
 		return nil, fmt.Errorf("do not specify any protocol in the origin repository URL")
 	}
 
-	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
+	repoProvider, err := c.newRepoProvider(origin)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create repo provider: %w", err)
 	}

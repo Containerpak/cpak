@@ -70,6 +70,79 @@ func TestGetDefaultBranchFromGithubApi(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedGithubRequestsUseTheContentsAPI(t *testing.T) {
+	var userRequest, repositoryRequest, fileRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer source-secret" {
+			http.Error(w, "missing access token", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/user":
+			userRequest = true
+			w.Write([]byte(`{"login":"example"}`))
+		case "/repos/user/demo":
+			repositoryRequest = true
+			w.Write([]byte(`{"default_branch":"main"}`))
+		case "/repos/user/demo/contents/cpak.json":
+			fileRequest = true
+			if r.URL.Query().Get("ref") != "main" || r.URL.Query().Get("cpak") == "" {
+				http.Error(w, "missing reference or cache bypass", http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get("Accept") != "application/vnd.github.raw+json" {
+				http.Error(w, "wrong media type", http.StatusNotAcceptable)
+				return
+			}
+			w.Write([]byte(`{"name":"private"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := newTestRepoProvider(t, "github.com/user/demo")
+	provider.APIBaseURL = server.URL
+	provider.AccessToken = "source-secret"
+	login, err := provider.GetAuthenticatedUser()
+	if err != nil || login != "example" {
+		t.Fatalf("authenticated user: %q %v", login, err)
+	}
+	branch, err := provider.GetDefaultBranch()
+	if err != nil || branch != "main" {
+		t.Fatalf("default branch: %q %v", branch, err)
+	}
+	content, err := provider.GetFileInBranch("cpak.json", branch)
+	if err != nil || string(content) != `{"name":"private"}` {
+		t.Fatalf("private manifest: %q %v", content, err)
+	}
+	if !userRequest || !repositoryRequest || !fileRequest {
+		t.Fatalf("missing GitHub request: user=%t repository=%t file=%t", userRequest, repositoryRequest, fileRequest)
+	}
+}
+
+func TestAuthenticatedGithubRequestRejectsRedirect(t *testing.T) {
+	received := false
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		received = true
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	provider := newTestRepoProvider(t, "github.com/user/demo")
+	provider.APIBaseURL = source.URL
+	provider.AccessToken = "source-secret"
+	if _, err := provider.GetDefaultBranch(); err == nil {
+		t.Fatal("authenticated redirect was accepted")
+	}
+	if received {
+		t.Fatal("repository credential followed a redirect")
+	}
+}
+
 func TestGetDefaultBranchUnsupportedHost(t *testing.T) {
 	provider := newTestRepoProvider(t, "example.com/user/demo")
 
@@ -131,6 +204,10 @@ func TestGetFileInBranch(t *testing.T) {
 		}
 		cacheBypass = r.URL.Query().Get("cpak")
 		cacheControl = r.Header.Get("Cache-Control")
+		if r.Header.Get("Authorization") != "" {
+			http.Error(w, "public request received credentials", http.StatusBadRequest)
+			return
+		}
 		w.Write([]byte(`{"name":"demo"}`))
 	}))
 	defer server.Close()

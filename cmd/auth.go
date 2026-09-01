@@ -7,6 +7,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -25,6 +26,7 @@ type AuthCmd struct {
 	Token      bool     `cli:"token" help:"Store an access token instead of a password"`
 	SecretFile string   `cli:"secret-file" help:"Read the password or token from a mode 0600 file"`
 	TokenHosts []string `cli:"token-host" help:"Allow a separate registry token host"`
+	GitHub     bool     `cli:"github" help:"Use the authenticated GitHub CLI for a private repository and GHCR"`
 
 	cli.Base
 }
@@ -54,7 +56,7 @@ func (c *AuthCmd) Run() error {
 		if err = registryauth.Remove(cp.Ctx, cp.Options.RegistryAuthPath, origin); err != nil {
 			return err
 		}
-		c.Logger.Success("Registry access removed for %s", origin)
+		c.Logger.Success("Package access removed for %s", origin)
 		return nil
 	case "list":
 		records, err := registryauth.Load(cp.Options.RegistryAuthPath)
@@ -63,9 +65,9 @@ func (c *AuthCmd) Run() error {
 		}
 		rows := make([][]string, 0, len(records))
 		for _, record := range records {
-			rows = append(rows, []string{record.Origin, record.Registry, record.Repository, authenticationType(record)})
+			rows = append(rows, []string{record.Origin, record.SourceHost, record.Registry, record.Repository, authenticationType(record)})
 		}
-		tools.ShowTable([]string{"Origin", "Registry", "Repository", "Type"}, rows)
+		tools.ShowTable([]string{"Origin", "Source", "Registry", "Repository", "Type"}, rows)
 		return nil
 	case "status":
 		if origin == "" {
@@ -75,19 +77,29 @@ func (c *AuthCmd) Run() error {
 		if err != nil {
 			return err
 		}
+		found := false
 		for _, record := range records {
 			if record.Origin == origin {
-				c.Logger.Info("%s may authenticate to %s/%s using %s", origin, record.Registry, record.Repository, authenticationType(record))
-				return nil
+				c.Logger.Info("%s may authenticate to %s using %s", origin, authenticationScope(record), authenticationType(record))
+				found = true
 			}
 		}
-		return fmt.Errorf("no registry access is stored for %s", origin)
+		if found {
+			return nil
+		}
+		return fmt.Errorf("no package access is stored for %s", origin)
 	default:
 		return fmt.Errorf("unsupported auth action %q", c.Action)
 	}
 }
 
 func (c *AuthCmd) login(cp cpak.Cpak, origin string) error {
+	if c.GitHub {
+		return c.loginGitHub(cp, origin)
+	}
+	if c.Token && c.Username != "" {
+		return fmt.Errorf("--token cannot be combined with --username; use --github for GitHub and GHCR")
+	}
 	branch, err := cp.GetDefaultBranch(origin)
 	if err != nil {
 		return err
@@ -128,6 +140,106 @@ func (c *AuthCmd) login(cp cpak.Cpak, origin string) error {
 	return nil
 }
 
+func (c *AuthCmd) loginGitHub(cp cpak.Cpak, origin string) error {
+	if c.Username != "" || c.Token || len(c.TokenHosts) != 0 {
+		return fmt.Errorf("--github cannot be combined with registry credential options")
+	}
+	parts := strings.Split(origin, "/")
+	if len(parts) != 3 || parts[0] != "github.com" {
+		return fmt.Errorf("--github requires a github.com package origin")
+	}
+	secret, err := c.readGitHubSecret()
+	if err != nil {
+		return err
+	}
+	provider, err := cpak.NewRepoProvider(origin, cp.Options.ManifestsPath)
+	if err != nil {
+		return err
+	}
+	provider.AccessToken = secret
+	username, err := provider.GetAuthenticatedUser()
+	if err != nil {
+		return err
+	}
+	branch, err := provider.GetDefaultBranch()
+	if err != nil {
+		return err
+	}
+	content, err := provider.GetFileInBranch("cpak.json", branch)
+	if err != nil {
+		return fmt.Errorf("failed to get manifest file: %w", err)
+	}
+	manifest, err := cpak.DecodeManifest(content)
+	if err != nil {
+		return fmt.Errorf("failed to decode manifest file: %w", err)
+	}
+	ref, err := oci.ParseReference(manifest.Image)
+	if err != nil {
+		return err
+	}
+	record := registryauth.Record{Origin: origin, SourceHost: "github.com"}
+	if ref.Registry == "ghcr.io" {
+		record.Registry = ref.Registry
+		record.Repository = ref.Repository
+		record.Username = username
+	}
+	if c.SecretFile != "" {
+		record.SecretFile, err = filepath.Abs(c.SecretFile)
+		if err != nil {
+			return err
+		}
+	}
+	c.Logger.Info("GitHub access will be limited to %s for %s.", record.SourceHost, origin)
+	if record.Registry != "" {
+		c.Logger.Info("GHCR access will be limited to %s/%s for %s.", record.Registry, record.Repository, origin)
+	}
+	if err = registryauth.Save(cp.Ctx, cp.Options.RegistryAuthPath, record, secret); err != nil {
+		return err
+	}
+	c.Logger.Success("GitHub access saved for %s", origin)
+	return nil
+}
+
+func (c *AuthCmd) readGitHubSecret() (string, error) {
+	if c.SecretFile != "" {
+		return registryauth.ReadSecretFile(c.SecretFile)
+	}
+	secret, err := githubToken()
+	if err == nil {
+		return secret, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("GitHub CLI is not authenticated; run gh auth login or use --secret-file: %w", err)
+	}
+	if err = githubLogin(); err != nil {
+		return "", err
+	}
+	return githubToken()
+}
+
+var githubToken = func() (string, error) {
+	output, err := exec.Command("gh", "auth", "token", "--hostname", "github.com").Output()
+	if err != nil {
+		return "", fmt.Errorf("read GitHub CLI token: %w", err)
+	}
+	secret := strings.TrimSpace(string(output))
+	if secret == "" {
+		return "", fmt.Errorf("GitHub CLI returned an empty token")
+	}
+	return secret, nil
+}
+
+var githubLogin = func() error {
+	command := exec.Command("gh", "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--scopes", "repo,read:packages")
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("authenticate GitHub CLI: %w", err)
+	}
+	return nil
+}
+
 func (c *AuthCmd) readSecret() (string, error) {
 	if c.SecretFile != "" {
 		return registryauth.ReadSecretFile(c.SecretFile)
@@ -153,8 +265,26 @@ func (c *AuthCmd) readSecret() (string, error) {
 }
 
 func authenticationType(record registryauth.Record) string {
-	if record.Username == "" {
-		return "token"
+	prefix := ""
+	if record.SourceHost != "" {
+		prefix = "github+"
 	}
-	return "basic"
+	if record.Registry == "" {
+		return strings.TrimSuffix(prefix, "+")
+	}
+	if record.Username == "" {
+		return prefix + "token"
+	}
+	return prefix + "basic"
+}
+
+func authenticationScope(record registryauth.Record) string {
+	scopes := make([]string, 0, 2)
+	if record.SourceHost != "" {
+		scopes = append(scopes, record.SourceHost)
+	}
+	if record.Registry != "" {
+		scopes = append(scopes, record.Registry+"/"+record.Repository)
+	}
+	return strings.Join(scopes, " and ")
 }

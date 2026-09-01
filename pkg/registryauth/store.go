@@ -17,9 +17,10 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/oci"
 )
 
-// Record binds one package origin to the exact OCI repository it may access.
+// Record binds one package origin to the exact source and OCI repository it may access.
 type Record struct {
 	Origin     string   `json:"origin"`
+	SourceHost string   `json:"source_host,omitempty"`
 	Registry   string   `json:"registry"`
 	Repository string   `json:"repository"`
 	Username   string   `json:"username,omitempty"`
@@ -41,6 +42,25 @@ type injectedRecord struct {
 type Provider struct {
 	Origin string
 	Path   string
+}
+
+// SourceCredential returns a token only for an exact package origin and source host.
+func SourceCredential(ctx context.Context, path, origin, host string) (string, error) {
+	host = strings.ToLower(host)
+	if injectedPath := os.Getenv("CPAK_REGISTRY_AUTH_FILE"); injectedPath != "" {
+		return sourceCredentialFromFile(injectedPath, origin, host)
+	}
+	records, err := Load(path)
+	if err != nil {
+		return "", err
+	}
+	for _, record := range records {
+		if record.Origin != origin || record.SourceHost != host {
+			continue
+		}
+		return recordSecret(ctx, record)
+	}
+	return "", nil
 }
 
 // Credential implements oci.CredentialProvider.
@@ -76,6 +96,10 @@ func Save(ctx context.Context, path string, record Record, secret string) error 
 	if secret == "" {
 		return fmt.Errorf("registryauth: secret is required")
 	}
+	record.SourceHost = strings.ToLower(record.SourceHost)
+	if err := validateRecord(record); err != nil {
+		return err
+	}
 	if record.SecretFile != "" {
 		if !filepath.IsAbs(record.SecretFile) {
 			return fmt.Errorf("registryauth: secret file path must be absolute")
@@ -101,7 +125,7 @@ func Save(ctx context.Context, path string, record Record, secret string) error 
 	previous := make([]Record, 0, 1)
 	filtered := records[:0]
 	for _, current := range records {
-		if current.Origin == record.Origin && current.Registry == record.Registry && current.Repository == record.Repository {
+		if sameRegistryScope(current, record) || sameSourceScope(current, record) {
 			previous = append(previous, current)
 			continue
 		}
@@ -185,7 +209,7 @@ func Load(path string) ([]Record, error) {
 
 func writeRecords(path string, records []Record) error {
 	sort.Slice(records, func(i, j int) bool {
-		return records[i].Origin+records[i].Registry+records[i].Repository < records[j].Origin+records[j].Registry+records[j].Repository
+		return records[i].Origin+records[i].SourceHost+records[i].Registry+records[i].Repository < records[j].Origin+records[j].SourceHost+records[j].Registry+records[j].Repository
 	})
 	content, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
@@ -213,23 +237,9 @@ func writeRecords(path string, records []Record) error {
 }
 
 func credentialFromFile(path, origin string, ref oci.Reference) (oci.Credential, error) {
-	info, err := os.Stat(path)
+	file, err := readCredentialFile(path)
 	if err != nil {
 		return oci.Credential{}, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if info.Mode().Perm()&0077 != 0 || !info.Mode().IsRegular() || !ok || int(stat.Uid) != os.Getuid() {
-		return oci.Credential{}, fmt.Errorf("registryauth: injected credential file must be a regular file with mode 0600")
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return oci.Credential{}, err
-	}
-	var file credentialFile
-	decoder := json.NewDecoder(strings.NewReader(string(content)))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&file); err != nil {
-		return oci.Credential{}, fmt.Errorf("registryauth: decode injected credentials: %w", err)
 	}
 	for _, record := range file.Records {
 		if record.Origin == origin && record.Registry == ref.Registry && record.Repository == ref.Repository {
@@ -242,6 +252,51 @@ func credentialFromFile(path, origin string, ref oci.Reference) (oci.Credential,
 	return oci.Credential{}, nil
 }
 
+func sourceCredentialFromFile(path, origin, host string) (string, error) {
+	file, err := readCredentialFile(path)
+	if err != nil {
+		return "", err
+	}
+	for _, record := range file.Records {
+		if record.Origin != origin || strings.ToLower(record.SourceHost) != host {
+			continue
+		}
+		if record.AccessToken != "" && record.Password != "" {
+			return "", fmt.Errorf("registryauth: injected source credential contains two secrets")
+		}
+		if record.AccessToken != "" {
+			return record.AccessToken, nil
+		}
+		if record.Password != "" {
+			return record.Password, nil
+		}
+		return "", fmt.Errorf("registryauth: injected source credential is empty")
+	}
+	return "", nil
+}
+
+func readCredentialFile(path string) (credentialFile, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return credentialFile{}, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if info.Mode().Perm()&0077 != 0 || !info.Mode().IsRegular() || !ok || int(stat.Uid) != os.Getuid() {
+		return credentialFile{}, fmt.Errorf("registryauth: injected credential file must be a regular file with mode 0600")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return credentialFile{}, err
+	}
+	var file credentialFile
+	decoder := json.NewDecoder(strings.NewReader(string(content)))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&file); err != nil {
+		return credentialFile{}, fmt.Errorf("registryauth: decode injected credentials: %w", err)
+	}
+	return file, nil
+}
+
 func recordSecret(ctx context.Context, record Record) (string, error) {
 	if record.SecretFile != "" {
 		return ReadSecretFile(record.SecretFile)
@@ -250,7 +305,7 @@ func recordSecret(ctx context.Context, record Record) (string, error) {
 }
 
 func secretAttributes(record Record) map[string]string {
-	return map[string]string{
+	attributes := map[string]string{
 		"application": "cpak",
 		"origin":      record.Origin,
 		"registry":    record.Registry,
@@ -258,10 +313,38 @@ func secretAttributes(record Record) map[string]string {
 		"username":    record.Username,
 		"token-hosts": secretTokenHosts(record.TokenHosts),
 	}
+	if record.SourceHost != "" {
+		attributes["source-host"] = record.SourceHost
+	}
+	return attributes
 }
 
 func secretBinding(record Record) string {
-	return record.Origin + "\x00" + record.Registry + "\x00" + record.Repository + "\x00" + record.Username + "\x00" + secretTokenHosts(record.TokenHosts) + "\x00" + record.SecretFile
+	return record.Origin + "\x00" + record.SourceHost + "\x00" + record.Registry + "\x00" + record.Repository + "\x00" + record.Username + "\x00" + secretTokenHosts(record.TokenHosts) + "\x00" + record.SecretFile
+}
+
+func validateRecord(record Record) error {
+	if record.Origin == "" {
+		return fmt.Errorf("registryauth: package origin is required")
+	}
+	if record.SourceHost != "" && (strings.ContainsAny(record.SourceHost, "/@") || record.SourceHost != strings.TrimSpace(record.SourceHost)) {
+		return fmt.Errorf("registryauth: invalid source host")
+	}
+	if (record.Registry == "") != (record.Repository == "") {
+		return fmt.Errorf("registryauth: registry and repository must be set together")
+	}
+	if record.SourceHost == "" && record.Registry == "" {
+		return fmt.Errorf("registryauth: source or registry scope is required")
+	}
+	return nil
+}
+
+func sameRegistryScope(first, second Record) bool {
+	return first.Origin == second.Origin && first.Registry != "" && second.Registry != "" && first.Registry == second.Registry && first.Repository == second.Repository
+}
+
+func sameSourceScope(first, second Record) bool {
+	return first.Origin == second.Origin && first.SourceHost != "" && second.SourceHost != "" && first.SourceHost == second.SourceHost
 }
 
 func secretTokenHosts(hosts []string) string {

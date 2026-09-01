@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mirkobrombin/cpak/pkg/registryauth"
 )
 
 // ErrLatestReleaseUnsupported is returned when the repository host does not
@@ -28,8 +30,9 @@ var ErrLatestReleaseUnsupported = errors.New("latest release lookup is not suppo
 var ErrDefaultBranchUnsupported = errors.New("default branch lookup is not supported for this host")
 
 type RepoProvider struct {
-	Origin string
-	GitDir string
+	Origin      string
+	GitDir      string
+	AccessToken string
 
 	// Scheme is the protocol used to reach the remote host.
 	Scheme string
@@ -84,6 +87,33 @@ func (r *RepoProvider) client() *http.Client {
 	return r.Client
 }
 
+func (r *RepoProvider) do(request *http.Request, authenticated bool) (*http.Response, error) {
+	client := r.client()
+	if !authenticated {
+		return client.Do(request)
+	}
+	if r.AccessToken == "" {
+		return nil, fmt.Errorf("repository access token is required")
+	}
+	request.Header.Set("Authorization", "Bearer "+r.AccessToken)
+	copy := *client
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return copy.Do(request)
+}
+
+func (r *RepoProvider) get(remoteURL string, authenticated bool, accept string) (*http.Response, error) {
+	request, err := http.NewRequest(http.MethodGet, remoteURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if accept != "" {
+		request.Header.Set("Accept", accept)
+	}
+	return r.do(request, authenticated)
+}
+
 // GetLatestRelease returns the tag of the latest release published for the
 // origin repository. Only GitHub is supported, any other host returns
 // ErrLatestReleaseUnsupported so that the caller can report it instead of
@@ -94,7 +124,7 @@ func (r *RepoProvider) GetLatestRelease() (release string, err error) {
 		return "", err
 	}
 
-	resp, err := r.client().Get(url)
+	resp, err := r.get(url, r.AccessToken != "", "application/vnd.github+json")
 	if err != nil {
 		return "", fmt.Errorf("failed to get latest release: %w", err)
 	}
@@ -129,7 +159,7 @@ func (r *RepoProvider) GetDefaultBranch() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := r.client().Get(url)
+	resp, err := r.get(url, r.AccessToken != "", "application/vnd.github+json")
 	if err != nil {
 		return "", fmt.Errorf("failed to get repository: %w", err)
 	}
@@ -147,6 +177,39 @@ func (r *RepoProvider) GetDefaultBranch() (string, error) {
 		return "", fmt.Errorf("repository %s has no default branch", r.Origin)
 	}
 	return payload.DefaultBranch, nil
+}
+
+// GetAuthenticatedUser validates the configured GitHub token and returns its login.
+func (r *RepoProvider) GetAuthenticatedUser() (string, error) {
+	if r.AccessToken == "" {
+		return "", fmt.Errorf("repository access token is required")
+	}
+	parts := strings.Split(r.Origin, "/")
+	if len(parts) != 3 || !strings.EqualFold(parts[0], "github.com") {
+		return "", fmt.Errorf("GitHub authentication is not supported for %s", r.Origin)
+	}
+	base := strings.TrimRight(r.APIBaseURL, "/")
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	resp, err := r.get(base+"/user", true, "application/vnd.github+json")
+	if err != nil {
+		return "", fmt.Errorf("failed to get GitHub user: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to get GitHub user: %s", resp.Status)
+	}
+	var payload struct {
+		Login string `json:"login"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("failed to decode GitHub user: %w", err)
+	}
+	if payload.Login == "" {
+		return "", fmt.Errorf("GitHub user has no login")
+	}
+	return payload.Login, nil
 }
 
 func (r *RepoProvider) repositoryURL() (string, error) {
@@ -278,7 +341,7 @@ func normalizeRepositoryHost(value string) (string, error) {
 // fetchFileContent fetches the content of a file from a remote URL and
 // stores it in the given cache directory, returning the file content as
 // a byte slice.
-func (r *RepoProvider) fetchFileContent(rawURL, gitDir, name string, bypassCache bool) (fileContent []byte, err error) {
+func (r *RepoProvider) fetchFileContent(rawURL, gitDir, name string, bypassCache, authenticated bool) (fileContent []byte, err error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file URL: %w", err)
@@ -296,8 +359,11 @@ func (r *RepoProvider) fetchFileContent(rawURL, gitDir, name string, bypassCache
 		request.Header.Set("Cache-Control", "no-cache")
 		request.Header.Set("Pragma", "no-cache")
 	}
+	if authenticated {
+		request.Header.Set("Accept", "application/vnd.github.raw+json")
+	}
 
-	resp, err := r.client().Do(request)
+	resp, err := r.do(request, authenticated)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file content: %w", err)
 	}
@@ -363,20 +429,44 @@ func (r *RepoProvider) getFileInDirectory(filePath, reference, kind string, bypa
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
+	parts := strings.Split(r.Origin, "/")
+	if r.AccessToken != "" && len(parts) == 3 && strings.EqualFold(parts[0], "github.com") {
+		remoteURL, urlErr := r.githubFileURL(filePath, reference)
+		if urlErr != nil {
+			return nil, urlErr
+		}
+		return r.fetchFileContent(remoteURL, dirPath, name, bypassCache, true)
+	}
 
 	// Try to fetch the file content from GitHub first
-	fileContent, err = r.fetchFileContent(githubURL, dirPath, name, bypassCache)
+	fileContent, err = r.fetchFileContent(githubURL, dirPath, name, bypassCache, false)
 	if err == nil {
 		return fileContent, nil
 	}
 
 	// If fetching from GitHub fails, try GitLab
-	fileContent, err = r.fetchFileContent(gitlabURL, dirPath, name, bypassCache)
+	fileContent, err = r.fetchFileContent(gitlabURL, dirPath, name, bypassCache, false)
 	if err == nil {
 		return fileContent, nil
 	}
 
 	return nil, err
+}
+
+func (r *RepoProvider) githubFileURL(filePath, reference string) (string, error) {
+	repositoryURL, err := r.repositoryURL()
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(repositoryURL)
+	if err != nil {
+		return "", err
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/contents/" + url.PathEscape(filePath)
+	query := parsed.Query()
+	query.Set("ref", reference)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 // GetFileInBranch is a wrapper around getFileInDirectory, that fetches a file
@@ -400,7 +490,7 @@ func (r *RepoProvider) GetFileInCommit(filePath, commit string) (fileContent []b
 // GetLatestRelease returns the tag of the latest release published for the
 // given origin.
 func (c *Cpak) GetLatestRelease(origin string) (release string, err error) {
-	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
+	repoProvider, err := c.newRepoProvider(origin)
 	if err != nil {
 		return "", fmt.Errorf("failed to create repo provider: %w", err)
 	}
@@ -409,7 +499,7 @@ func (c *Cpak) GetLatestRelease(origin string) (release string, err error) {
 
 // GetDefaultBranch returns the default branch for an origin.
 func (c *Cpak) GetDefaultBranch(origin string) (string, error) {
-	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
+	repoProvider, err := c.newRepoProvider(origin)
 	if err != nil {
 		return "", err
 	}
@@ -418,4 +508,21 @@ func (c *Cpak) GetDefaultBranch(origin string) (string, error) {
 		return "main", nil
 	}
 	return branch, err
+}
+
+func (c *Cpak) newRepoProvider(origin string) (*RepoProvider, error) {
+	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(repoProvider.Origin, "/")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid git url: %s", repoProvider.Origin)
+	}
+	token, err := registryauth.SourceCredential(c.Ctx, c.Options.RegistryAuthPath, repoProvider.Origin, parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("load repository access for %s: %w", repoProvider.Origin, err)
+	}
+	repoProvider.AccessToken = token
+	return repoProvider, nil
 }

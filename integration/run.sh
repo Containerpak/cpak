@@ -46,16 +46,17 @@ export WAYLAND_DISPLAY=wayland-cpak-integration
 export XDG_CURRENT_DESKTOP=GNOME
 export CPAK_INSTALLATION_PATH="$work/cpak"
 export CPAK_OPTS_FILE="$work/no-config.json"
+export CPAK_REGISTRY_AUTH_FILE="$work/registry-auth.json"
 
 openssl req -x509 -newkey rsa:2048 -nodes \
 	-keyout "$work/server.key" \
 	-out "$work/server.crt" \
 	-days 1 \
 	-subj /CN=cpak.test \
-	-addext "subjectAltName=DNS:cpak.test,DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+	-addext "subjectAltName=DNS:cpak.test,DNS:api.github.com,DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
 sudo install -m 0644 "$work/server.crt" /usr/local/share/ca-certificates/cpak-integration.crt
 sudo update-ca-certificates >/dev/null
-printf '127.0.0.1 cpak.test\n' | sudo tee -a /etc/hosts >/dev/null
+printf '127.0.0.1 cpak.test api.github.com\n' | sudo tee -a /etc/hosts >/dev/null
 cat >"$work/bluez.conf" <<'EOF'
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
@@ -138,6 +139,7 @@ write("bluetooth", "Bluetooth probe", override={"network": True, "bluetooth": Tr
 write("loopback", "Loopback probe", override={"network": True, "hostNetwork": True})
 write("network", "Network probe", override={"network": True})
 write("network-disabled", "Network-disabled probe")
+write("private", "Private package probe", image="private")
 write(
     "guest-environment",
     "Guest environment probe",
@@ -167,7 +169,12 @@ write(
 write("addon-main", "Addon consumer", addons=[f"{manifest_host}/integration/addon"])
 PY
 
-sudo python3 "$root/https_server.py" --cert "$work/server.crt" --key "$work/server.key" --directory "$manifests" --port 443 >"$work/manifests.log" 2>&1 &
+cat >"$CPAK_REGISTRY_AUTH_FILE" <<'EOF'
+{"records":[{"origin":"github.com/integration/private","source_host":"github.com","registry":"localhost:5000","repository":"private","username":"github-user","password":"source-secret"}]}
+EOF
+chmod 0600 "$CPAK_REGISTRY_AUTH_FILE"
+
+sudo python3 "$root/https_server.py" --cert "$work/server.crt" --key "$work/server.key" --directory "$manifests" --port 443 --github-token source-secret --github-manifest "$manifests/integration/private/raw/main/cpak.json" >"$work/manifests.log" 2>&1 &
 service_pids="$service_pids $!"
 python3 -m http.server 18080 --bind 0.0.0.0 --directory "$web" >"$work/http.log" 2>&1 &
 service_pids="$service_pids $!"
@@ -191,6 +198,10 @@ for endpoint in "https://$manifest_host/integration/desktop/raw/main/cpak.json" 
 		sleep 0.1
 	done
 done
+if ! curl -fsS -H 'Authorization: Bearer source-secret' https://api.github.com/repos/integration/private >/dev/null; then
+	echo "private GitHub fixture did not become ready" >&2
+	exit 1
+fi
 for attempt in $(seq 1 100); do
 	if [ -S "$runtime/$WAYLAND_DISPLAY" ] && [ -S "$runtime/$stale_wayland_display" ] && busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.bluez | grep -q 'true'; then
 		break
@@ -263,6 +274,10 @@ wait_no_slirp() {
 	echo "slirp4netns did not stop" >&2
 	return 1
 }
+
+private_origin=github.com/integration/private
+install "$private_origin"
+run_probe "$private_origin" private
 
 install "$manifest_host/integration/desktop"
 run_probe "$manifest_host/integration/desktop" desktop

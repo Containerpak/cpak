@@ -34,6 +34,8 @@ func main() {
 		err = probeDesktop()
 	case "dependency":
 		err = requireFile("/opt/cpak-integration/dependency")
+	case "private":
+		err = requireFile("/opt/cpak-integration/private")
 	case "addon":
 		err = probeAddon()
 	case "loopback":
@@ -260,6 +262,7 @@ func probeNestedMount(expected bool) error {
 		UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Geteuid(), Size: 1}},
 		GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getegid(), Size: 1}},
 		GidMappingsEnableSetgroups: false,
+		Credential:                 &syscall.Credential{Uid: 0, Gid: 0},
 	}
 	output, err := command.CombinedOutput()
 	if expected {

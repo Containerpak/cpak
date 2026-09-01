@@ -46,7 +46,7 @@ func storeSecret(ctx context.Context, record Record, secret string) error {
 		return err
 	}
 	properties := map[string]dbus.Variant{
-		secretItem + ".Label":      dbus.MakeVariant("cpak registry access"),
+		secretItem + ".Label":      dbus.MakeVariant("cpak package access"),
 		secretItem + ".Attributes": dbus.MakeVariant(secretAttributes(record)),
 	}
 	value := secretValue{Session: service.session, Value: []byte(secret), ContentType: "text/plain; charset=utf8"}

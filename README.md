@@ -294,10 +294,28 @@ cpak auth status github.com/example/private-app
 cpak auth logout github.com/example/private-app
 ```
 
+For GHCR, enter a GitHub personal access token as the password and keep the
+GitHub username. `--token` is for a registry-issued bearer token and cannot be
+combined with `--username`.
+
 Desktop sessions store secrets through Secret Service. With `--secret-file`,
 cpak keeps the secret in the user-owned mode `0600` file and stores only its
 absolute path in the binding. A binding is restricted to one package origin,
 registry host and OCI repository path.
+
+## Private GitHub repositories
+
+Use the authenticated GitHub CLI when `cpak.json` is in a private repository:
+
+```sh
+cpak auth login github.com/example/private-app --github
+```
+
+cpak reads the existing `gh auth` session. If no session exists, an interactive
+login opens through `gh`. Access to the source is restricted to the exact
+package origin. When that manifest points to GHCR, the same credential is also
+bound to its exact OCI repository. An image hosted by another registry still
+uses a separate `cpak auth login` command.
 
 ## Package development
 

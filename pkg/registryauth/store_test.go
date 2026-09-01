@@ -68,6 +68,37 @@ func TestProviderUsesInjectedCredentialFile(t *testing.T) {
 	}
 }
 
+func TestInjectedSourceCredentialRequiresExactBinding(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	content := `{"records":[{"origin":"github.com/example/app","source_host":"github.com","registry":"ghcr.io","repository":"example/app","username":"user","password":"secret"}]}`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := sourceCredentialFromFile(path, "github.com/example/app", "github.com")
+	if err != nil || credential != "secret" {
+		t.Fatalf("unexpected source credential: %q %v", credential, err)
+	}
+	for _, scope := range [][2]string{{"github.com/example/other", "github.com"}, {"github.com/example/app", "attacker.example.com"}} {
+		credential, err = sourceCredentialFromFile(path, scope[0], scope[1])
+		if err != nil || credential != "" {
+			t.Fatalf("source credential escaped binding %v: %q %v", scope, credential, err)
+		}
+	}
+}
+
+func TestSourceCredentialUsesInjectedCredentialFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	content := `{"records":[{"origin":"github.com/example/app","source_host":"github.com","registry":"","repository":"","access_token":"source-token"}]}`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CPAK_REGISTRY_AUTH_FILE", path)
+	credential, err := SourceCredential(context.Background(), "unused", "github.com/example/app", "GITHUB.COM")
+	if err != nil || credential != "source-token" {
+		t.Fatalf("unexpected source credential: %q %v", credential, err)
+	}
+}
+
 func TestLoadKeepsBindingsWrittenBeforeHeadlessSupport(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry-auth.json")
 	content := `[{"origin":"github.com/example/app","registry":"ghcr.io","repository":"example/app","username":"account"}]`
@@ -84,15 +115,22 @@ func TestLoadKeepsBindingsWrittenBeforeHeadlessSupport(t *testing.T) {
 }
 
 func TestSecretAttributesIncludeEveryBinding(t *testing.T) {
-	record := Record{Origin: "github.com/example/app", Registry: "ghcr.io", Repository: "example/app", Username: "account", TokenHosts: []string{"Auth.Example.com", "token.example.com"}}
+	record := Record{Origin: "github.com/example/app", SourceHost: "github.com", Registry: "ghcr.io", Repository: "example/app", Username: "account", TokenHosts: []string{"Auth.Example.com", "token.example.com"}}
 	attributes := secretAttributes(record)
-	if attributes["application"] != "cpak" || attributes["origin"] != record.Origin || attributes["registry"] != record.Registry || attributes["repository"] != record.Repository || attributes["username"] != record.Username || attributes["token-hosts"] != "auth.example.com,token.example.com" {
+	if attributes["application"] != "cpak" || attributes["origin"] != record.Origin || attributes["source-host"] != record.SourceHost || attributes["registry"] != record.Registry || attributes["repository"] != record.Repository || attributes["username"] != record.Username || attributes["token-hosts"] != "auth.example.com,token.example.com" {
 		t.Fatalf("unexpected attributes: %+v", attributes)
 	}
 }
 
+func TestLegacySecretAttributesRemainCompatible(t *testing.T) {
+	attributes := secretAttributes(Record{Origin: "github.com/example/app", Registry: "ghcr.io", Repository: "example/app", Username: "account"})
+	if _, exists := attributes["source-host"]; exists {
+		t.Fatalf("legacy secret binding gained a source host: %+v", attributes)
+	}
+}
+
 func TestSecretBindingChangesWithCredentialAuthority(t *testing.T) {
-	base := Record{Origin: "github.com/example/app", Registry: "ghcr.io", Repository: "example/app", Username: "account", TokenHosts: []string{"auth.example.com"}}
+	base := Record{Origin: "github.com/example/app", SourceHost: "github.com", Registry: "ghcr.io", Repository: "example/app", Username: "account", TokenHosts: []string{"auth.example.com"}}
 	reordered := base
 	reordered.TokenHosts = []string{"AUTH.EXAMPLE.COM"}
 	if secretBinding(base) != secretBinding(reordered) {
@@ -102,6 +140,11 @@ func TestSecretBindingChangesWithCredentialAuthority(t *testing.T) {
 	changed.TokenHosts = []string{"attacker.example.com"}
 	if secretBinding(base) == secretBinding(changed) {
 		t.Fatal("token host did not change the binding")
+	}
+	changed = base
+	changed.SourceHost = "attacker.example.com"
+	if secretBinding(base) == secretBinding(changed) {
+		t.Fatal("source host did not change the binding")
 	}
 	changed = base
 	changed.Username = "other"
@@ -119,6 +162,7 @@ func TestHeadlessBindingKeepsTheSecretInItsSourceFile(t *testing.T) {
 	}
 	record := Record{
 		Origin:     "github.com/example/app",
+		SourceHost: "github.com",
 		Registry:   "ghcr.io",
 		Repository: "example/app",
 		SecretFile: secretPath,
@@ -140,6 +184,10 @@ func TestHeadlessBindingKeepsTheSecretInItsSourceFile(t *testing.T) {
 	}
 	if credential.AccessToken != "headless-token" {
 		t.Fatalf("unexpected credential: %+v", credential)
+	}
+	sourceCredential, err := SourceCredential(context.Background(), bindingsPath, record.Origin, record.SourceHost)
+	if err != nil || sourceCredential != "headless-token" {
+		t.Fatalf("unexpected source credential: %q %v", sourceCredential, err)
 	}
 	if err = Remove(context.Background(), bindingsPath, record.Origin); err != nil {
 		t.Fatal(err)

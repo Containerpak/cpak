@@ -43,3 +43,30 @@ func TestRegistryServesResolvableImages(t *testing.T) {
 		t.Fatal("the served layer does not match its descriptor")
 	}
 }
+
+func TestPrivateRegistryRequiresExactCredentials(t *testing.T) {
+	built, err := buildImage([]layerFile{{path: "probe", mode: 0755, data: []byte("probe")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(registry{images: map[string]image{privateRepository: built}})
+	defer server.Close()
+	reference := strings.TrimPrefix(server.URL, "http://") + "/" + privateRepository + ":latest"
+	wrong := oci.Client{Credentials: staticCredential{username: privateUsername, password: "wrong"}}
+	if _, err = wrong.Resolve(context.Background(), reference); err == nil {
+		t.Fatal("private image accepted the wrong credential")
+	}
+	client := oci.Client{Credentials: staticCredential{username: privateUsername, password: privatePassword}}
+	if _, err = client.Resolve(context.Background(), reference); err != nil {
+		t.Fatalf("private image rejected the bound credential: %v", err)
+	}
+}
+
+type staticCredential struct {
+	username string
+	password string
+}
+
+func (c staticCredential) Credential(context.Context, oci.Reference) (oci.Credential, error) {
+	return oci.Credential{Username: c.username, Password: c.password}, nil
+}
