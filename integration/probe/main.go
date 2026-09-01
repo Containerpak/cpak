@@ -302,15 +302,21 @@ func probeNestedMountChild() error {
 
 func nestedMountContext() string {
 	status, _ := os.ReadFile("/proc/self/status")
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 11)
 	for _, line := range strings.Split(string(status), "\n") {
-		for _, prefix := range []string{"Uid:", "Gid:", "CapEff:", "NoNewPrivs:", "Seccomp:"} {
+		for _, prefix := range []string{"Uid:", "Gid:", "CapEff:", "NoNewPrivs:", "Seccomp:", "Seccomp_filters:"} {
 			if strings.HasPrefix(line, prefix) {
 				fields = append(fields, strings.Join(strings.Fields(line), "="))
 			}
 		}
 	}
-	for _, path := range []string{"/proc/self/uid_map", "/proc/self/gid_map"} {
+	for _, path := range []string{
+		"/proc/self/uid_map",
+		"/proc/self/gid_map",
+		"/proc/self/attr/current",
+		"/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
+		"/proc/sys/kernel/unprivileged_userns_clone",
+	} {
 		mapping, err := os.ReadFile(path)
 		if err == nil {
 			fields = append(fields, filepath.Base(path)+"="+strings.Join(strings.Fields(string(mapping)), ":"))

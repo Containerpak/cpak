@@ -285,8 +285,31 @@ func TestSandboxHelper(t *testing.T) {
 			}
 			failSandboxHelper(err)
 		}
-		if _, _, errno := unix.Syscall(unix.SYS_UNSHARE, uintptr(syscall.CLONE_NEWUSER), 0, 0); errno == unix.EPERM || errno == unix.ENOSYS {
-			failSandboxHelper("unshare remained filtered: %v", errno)
+		command := exec.Command(os.Args[0], "-test.run=^TestSandboxHelper$")
+		command.Env = append(os.Environ(), "CPAK_SANDBOX_HELPER=seccomp-userns-child")
+		command.SysProcAttr = &syscall.SysProcAttr{
+			Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+			UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Geteuid(), Size: 1}},
+			GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getegid(), Size: 1}},
+			GidMappingsEnableSetgroups: false,
+			Credential:                 &syscall.Credential{Uid: 0, Gid: 0},
+		}
+		if output, err := command.CombinedOutput(); err != nil {
+			failSandboxHelper("nested mount remained filtered: %v: %s", err, output)
+		}
+		os.Exit(0)
+	case "seccomp-userns-child":
+		temporary, err := os.MkdirTemp("/tmp", "cpak-seccomp-userns-")
+		if err != nil {
+			failSandboxHelper(err)
+		}
+		defer os.RemoveAll(temporary)
+		if err = syscall.Mount("tmpfs", temporary, "tmpfs", syscall.MS_NODEV|syscall.MS_NOSUID, ""); err != nil {
+			failSandboxHelper("mount tmpfs: %v", err)
+		}
+		defer syscall.Unmount(temporary, syscall.MNT_DETACH)
+		if err = syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SLAVE, ""); err != nil {
+			failSandboxHelper("make / slave: %v", err)
 		}
 		os.Exit(0)
 	case "landlock":
