@@ -446,7 +446,7 @@ func TestApplicationCommandsUseTheMountedRuntimeExecutable(t *testing.T) {
 }
 
 func TestRootApplicationCommandsCanUseSystemIdentities(t *testing.T) {
-	command := (&SpawnCmd{AllowRoot: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+	command := (&SpawnCmd{AllowRoot: true, MapSystemIDs: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
 	want := []syscall.SysProcIDMap{
 		{ContainerID: 0, HostID: 0, Size: 1},
 		{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
@@ -459,6 +459,20 @@ func TestRootApplicationCommandsCanUseSystemIdentities(t *testing.T) {
 	}
 	if !command.SysProcAttr.GidMappingsEnableSetgroups {
 		t.Fatal("root application cannot select a mapped supplementary group")
+	}
+}
+
+func TestRootApplicationCommandsUseTheAvailableIdentityByDefault(t *testing.T) {
+	command := (&SpawnCmd{AllowRoot: true}).applicationCommand([]string{"launch", "--", "/bin/true"}, []string{"LANG=C"})
+	want := []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
+	if !reflect.DeepEqual(command.SysProcAttr.UidMappings, want) {
+		t.Fatalf("root application UID map: %v", command.SysProcAttr.UidMappings)
+	}
+	if !reflect.DeepEqual(command.SysProcAttr.GidMappings, want) {
+		t.Fatalf("root application GID map: %v", command.SysProcAttr.GidMappings)
+	}
+	if command.SysProcAttr.GidMappingsEnableSetgroups {
+		t.Fatal("root application enabled setgroups without subordinate IDs")
 	}
 }
 

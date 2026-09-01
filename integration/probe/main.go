@@ -69,6 +69,8 @@ func main() {
 		err = probePersistence(false)
 	case "system-identities":
 		err = probeSystemIdentities()
+	case "root-identity":
+		err = probeRootIdentity()
 	case "user-manager-mock":
 		err = runUserManagerMock(argument(2))
 	default:
@@ -146,6 +148,20 @@ func probeSystemIdentities() error {
 		return fmt.Errorf("remove environment temporary file: %w", err)
 	}
 	return nil
+}
+
+func probeRootIdentity() error {
+	if os.Geteuid() != 0 || os.Getegid() != 0 {
+		return fmt.Errorf("identity is %d:%d", os.Geteuid(), os.Getegid())
+	}
+	temporary, err := os.CreateTemp("/tmp", "cpak-root-identity-")
+	if err != nil {
+		return fmt.Errorf("write temporary directory: %w", err)
+	}
+	if err = temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary file: %w", err)
+	}
+	return os.Remove(temporary.Name())
 }
 
 func runBluezMock() error {

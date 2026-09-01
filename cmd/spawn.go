@@ -100,6 +100,7 @@ type SpawnCmd struct {
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
 	BuildLayer         bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	AllowRoot          bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
+	MapSystemIDs       bool     `cli:"map-system-ids" help:"map subordinate IDs for persistent environments"`
 	RuntimePackage     []string `cli:"runtime-package" help:"install a package in the managed layer"`
 	RuntimeInstaller   []string `cli:"runtime-installer" help:"select the installer for each runtime package"`
 	RuntimeDestination []string `cli:"runtime-destination" help:"select the destination for each runtime package"`
@@ -1870,15 +1871,13 @@ func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {
 	// traversal is refused whichever identity the application was given.
 	command.SysProcAttr.Cloneflags = syscall.CLONE_NEWUSER
 	if c.AllowRoot {
-		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{
-			{ContainerID: 0, HostID: 0, Size: 1},
-			{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
+		mappings := []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 1}}
+		if c.MapSystemIDs {
+			mappings = append(mappings, syscall.SysProcIDMap{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1})
 		}
-		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{
-			{ContainerID: 0, HostID: 0, Size: 1},
-			{ContainerID: 1, HostID: 1, Size: (1 << 16) - 1},
-		}
-		command.SysProcAttr.GidMappingsEnableSetgroups = true
+		command.SysProcAttr.UidMappings = mappings
+		command.SysProcAttr.GidMappings = mappings
+		command.SysProcAttr.GidMappingsEnableSetgroups = c.MapSystemIDs
 	} else {
 		command.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}
 		command.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 1000, HostID: 0, Size: 1}}

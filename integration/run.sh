@@ -494,6 +494,7 @@ fi
 "$cpak" stop "$offline_origin"
 
 install "$manifest_host/integration/environment"
+run_probe "$manifest_host/integration/environment" root-identity
 "$cpak" environment create --name system-identities --origin "$manifest_host/integration/environment"
 "$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- persistence-write
 "$cpak" environment stop --environment system-identities

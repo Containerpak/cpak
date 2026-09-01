@@ -581,6 +581,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	if override.AsRoot {
 		cmds = append(cmds, "--allow-root")
 	}
+	if mapSystemIDs {
+		cmds = append(cmds, "--map-system-ids")
+	}
 	cmds = append(cmds, "--lower-dir", container.FVSLayerMountPath)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
