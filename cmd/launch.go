@@ -19,7 +19,7 @@ import (
 )
 
 type LaunchCmd struct {
-	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces and nested mounts"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside a private process namespace"`
 	RequireSandbox     bool     `cli:"require-sandbox" help:"fail if filesystem or syscall restrictions are unavailable"`
 	LandlockReadOnly   []string `cli:"landlock-read-only" help:"grant read-only filesystem access"`
@@ -39,9 +39,13 @@ func (c *LaunchCmd) Run() error {
 	if len(grants) == 0 {
 		return fmt.Errorf("landlock grants are required: launch runs a command inside an existing sandbox, use cpak run to start a package")
 	}
-	_, landlockErr := sandbox.ApplyLandlock(grants)
-	if err := c.sandboxOutcome(landlockErr, landlockUnavailable(grants)); err != nil {
-		return err
+	// Landlock forbids filesystem topology changes, including mounts. Packages
+	// granted nested sandboxes rely on the container mount namespace instead.
+	if c.useLandlock() {
+		_, landlockErr := sandbox.ApplyLandlock(grants)
+		if err := c.sandboxOutcome(landlockErr, landlockUnavailable(grants)); err != nil {
+			return err
+		}
 	}
 	if err := c.sandboxOutcome(sandbox.ApplySeccomp(c.UserNamespaces, c.AllowPtrace), seccompUnavailable()); err != nil {
 		return err
@@ -51,6 +55,10 @@ func (c *LaunchCmd) Run() error {
 		return err
 	}
 	return syscall.Exec(path, c.ExtraArgs, os.Environ())
+}
+
+func (c *LaunchCmd) useLandlock() bool {
+	return !c.UserNamespaces
 }
 
 // sandboxNotice is what an operator is told when the kernel will not give one

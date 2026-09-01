@@ -96,7 +96,7 @@ type SpawnCmd struct {
 	LoginSession       bool     `cli:"login-session" help:"mount host login session state read-only"`
 	Nvidia             bool     `cli:"nvidia" help:"mount the host NVIDIA userspace driver"`
 	Nameserver         string   `cli:"nameserver" help:"replace resolv.conf with this nameserver"`
-	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces"`
+	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces and nested mounts"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
 	BuildLayer         bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	AllowRoot          bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`

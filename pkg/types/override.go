@@ -61,7 +61,7 @@ type Override struct {
 	Network        bool     `json:"network" jsonschema:"description=Allow network access,default=false" flag:"network,bool"`
 	HostNetwork    bool     `json:"hostNetwork,omitempty" jsonschema:"description=Share the host network namespace including localhost,default=false" flag:"hostNetwork,bool"`
 	Process        bool     `json:"process" jsonschema:"description=Share host process namespace,default=false" flag:"process,bool"`
-	UserNamespaces bool     `json:"userNamespaces" jsonschema:"description=Allow nested user namespaces for application sandboxes,default=false" flag:"userNamespaces,bool"`
+	UserNamespaces bool     `json:"userNamespaces" jsonschema:"description=Allow nested user namespaces and mount setup; disables Landlock for the application,default=false" flag:"userNamespaces,bool"`
 
 	MemoryMaxMB int `json:"memoryMaxMB" jsonschema:"minimum=0,description=Maximum memory in MiB,default=0" flag:"memoryMaxMB,int"`
 	CPUQuota    int `json:"cpuQuota" jsonschema:"minimum=0,maximum=1000,description=CPU quota as a percentage of one core,default=0" flag:"cpuQuota,int"`

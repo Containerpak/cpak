@@ -123,7 +123,7 @@ func SummarizePermissions(override types.Override) []Permission {
 	add(override.Network, "Network", "internet and local network")
 	add(override.HostNetwork, "Host network", "shared network namespace, including localhost services and host ports")
 	add(override.Process, "Host processes", "shared process namespace")
-	add(override.UserNamespaces, "Nested sandboxes", "user namespaces")
+	add(override.UserNamespaces, "Nested sandboxes", "user namespaces and mount setup; disables Landlock")
 	add(override.AsRoot, "Root", "runs as root inside the cpak")
 	for _, action := range override.HostActions {
 		permissions = append(permissions, Permission{

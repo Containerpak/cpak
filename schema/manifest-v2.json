@@ -432,7 +432,7 @@
         },
         "userNamespaces": {
           "type": "boolean",
-          "description": "Allow nested user namespaces for application sandboxes",
+          "description": "Allow nested user namespaces and mount setup; disables Landlock for the application",
           "default": false
         },
         "memoryMaxMB": {

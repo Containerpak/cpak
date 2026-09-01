@@ -42,3 +42,13 @@ func TestPermissionSummaryDisclosesWaylandClipboardAccess(t *testing.T) {
 		t.Fatalf("Wayland permission summary: %+v", permissions[0])
 	}
 }
+
+func TestPermissionSummaryDisclosesNestedMountTradeoff(t *testing.T) {
+	permissions := SummarizePermissions(types.Override{UserNamespaces: true})
+	if len(permissions) != 1 {
+		t.Fatalf("nested sandbox permissions: %+v", permissions)
+	}
+	if permissions[0].Name != "Nested sandboxes" || permissions[0].Detail != "user namespaces and mount setup; disables Landlock" {
+		t.Fatalf("nested sandbox permission summary: %+v", permissions[0])
+	}
+}

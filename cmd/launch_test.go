@@ -32,6 +32,15 @@ func TestLaunchGrantsKeepWriteFilesAccess(t *testing.T) {
 	}
 }
 
+func TestNestedMountsDisableLandlock(t *testing.T) {
+	if !(&LaunchCmd{}).useLandlock() {
+		t.Fatal("ordinary launch disabled Landlock")
+	}
+	if (&LaunchCmd{UserNamespaces: true}).useLandlock() {
+		t.Fatal("nested sandbox launch kept Landlock enabled")
+	}
+}
+
 // captureNotices reads what an operator would have read.
 func captureNotices(t *testing.T) *bytes.Buffer {
 	t.Helper()
