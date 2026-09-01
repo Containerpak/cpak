@@ -16,13 +16,23 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
+	"github.com/godbus/dbus/v5"
 	"golang.org/x/sys/unix"
 )
 
+const (
+	userManagerDestination = "org.freedesktop.systemd1"
+	userManagerPath        = dbus.ObjectPath("/org/freedesktop/systemd1")
+	userManagerInterface   = "org.freedesktop.systemd1.Manager"
+)
+
+var loadUserManagerEnvironment = userManagerEnvironment
+
 type Policy struct {
-	AllowNotify           bool                  `json:"allow_notify,omitempty"`
-	AllowOpenURI          bool                  `json:"allow_open_uri,omitempty"`
+	AllowNotify  bool `json:"allow_notify,omitempty"`
+	AllowOpenURI bool `json:"allow_open_uri,omitempty"`
 	// Kept so old policy files remain readable. The broker does not trust a
 	// container policy to select the host desktop used for URI handlers.
 	DesktopEnvironment    []string              `json:"desktop_environment,omitempty"`
@@ -127,10 +137,42 @@ func RemovePolicy(directory, token string) error {
 }
 
 func ServeCatalog(ctx context.Context, socketPath, directory string) error {
-	desktopEnvironment := CaptureDesktopEnvironment(os.Environ(), "")
+	fallbackDesktopEnvironment := CaptureDesktopEnvironment(os.Environ(), "")
 	return serve(ctx, socketPath, authorizePeer, func(request Request) (Options, error) {
-		return resolveCatalogPolicy(socketPath, directory, desktopEnvironment, request)
+		return resolveCatalogPolicy(socketPath, directory, currentDesktopEnvironment(fallbackDesktopEnvironment), request)
 	})
+}
+
+func currentDesktopEnvironment(fallback []string) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 350*time.Millisecond)
+	defer cancel()
+	environment, err := loadUserManagerEnvironment(ctx)
+	if err != nil {
+		return fallback
+	}
+	desktopEnvironment := CaptureDesktopEnvironment(environment, "")
+	if len(desktopEnvironment) == 0 {
+		return fallback
+	}
+	return desktopEnvironment
+}
+
+func userManagerEnvironment(ctx context.Context) ([]string, error) {
+	connection, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	object := connection.Object(userManagerDestination, userManagerPath)
+	var value dbus.Variant
+	if err = object.CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, userManagerInterface, "Environment").Store(&value); err != nil {
+		return nil, err
+	}
+	environment, ok := value.Value().([]string)
+	if !ok {
+		return nil, errors.New("user manager desktop environment is invalid")
+	}
+	return environment, nil
 }
 
 func resolveCatalogPolicy(socketPath, directory string, desktopEnvironment []string, request Request) (Options, error) {

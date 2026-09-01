@@ -51,6 +51,8 @@ func main() {
 		err = probePersistence(false)
 	case "system-identities":
 		err = probeSystemIdentities()
+	case "user-manager-mock":
+		err = runUserManagerMock(argument(2))
 	default:
 		err = fmt.Errorf("unknown probe %q", os.Args[1])
 	}
@@ -58,6 +60,38 @@ func main() {
 		fail(err.Error())
 	}
 	fmt.Printf("%s probe passed\n", os.Args[1])
+}
+
+type userManagerProperties struct {
+	environment []string
+}
+
+func (p userManagerProperties) Get(interfaceName, property string) (dbus.Variant, *dbus.Error) {
+	if interfaceName != "org.freedesktop.systemd1.Manager" || property != "Environment" {
+		return dbus.Variant{}, dbus.MakeFailedError(fmt.Errorf("unknown user manager property"))
+	}
+	return dbus.MakeVariant(p.environment), nil
+}
+
+func runUserManagerMock(waylandDisplay string) error {
+	connection, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	if err = connection.Export(userManagerProperties{
+		environment: []string{"WAYLAND_DISPLAY=" + waylandDisplay, "DISPLAY=:0"},
+	}, "/org/freedesktop/systemd1", "org.freedesktop.DBus.Properties"); err != nil {
+		return err
+	}
+	result, err := connection.RequestName("org.freedesktop.systemd1", dbus.NameFlagDoNotQueue)
+	if err != nil {
+		return err
+	}
+	if result != dbus.RequestNameReplyPrimaryOwner {
+		return fmt.Errorf("org.freedesktop.systemd1 is already owned")
+	}
+	select {}
 }
 
 func argument(index int) string {

@@ -100,4 +100,4 @@ ssh $ssh_options ubuntu@127.0.0.1 'cloud-init status --wait'
 
 tar -C "$root/integration" -cf "$work/integration.tar" run.sh https_server.py out
 scp $scp_options "$work/integration.tar" ubuntu@127.0.0.1:/home/ubuntu/integration.tar
-ssh $ssh_options ubuntu@127.0.0.1 'mkdir integration && tar -C integration -xf integration.tar && chmod 0755 integration/run.sh integration/out/* && integration/run.sh'
+ssh $ssh_options ubuntu@127.0.0.1 'mkdir integration && tar -C integration -xf integration.tar && chmod 0755 integration/run.sh integration/out/* && dbus-run-session -- integration/run.sh'

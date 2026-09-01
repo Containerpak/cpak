@@ -5,8 +5,11 @@
 package systembroker
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -93,6 +96,35 @@ func TestCatalogUsesTheBrokerDesktopEnvironment(t *testing.T) {
 		if options.DesktopEnvironment[index] != desktopEnvironment[index] {
 			t.Fatalf("desktop environment: %v", options.DesktopEnvironment)
 		}
+	}
+}
+
+func TestCatalogUsesTheCurrentUserManagerDesktopEnvironment(t *testing.T) {
+	original := loadUserManagerEnvironment
+	t.Cleanup(func() { loadUserManagerEnvironment = original })
+	current := []string{"WAYLAND_DISPLAY=wayland-current", "DISPLAY=:0"}
+	loadUserManagerEnvironment = func(context.Context) ([]string, error) {
+		return current, nil
+	}
+	fallback := []string{"WAYLAND_DISPLAY=wayland-stale", "DISPLAY=:1"}
+	if got := currentDesktopEnvironment(fallback); !slices.Equal(got, current) {
+		t.Fatalf("desktop environment: %v", got)
+	}
+	current = []string{"WAYLAND_DISPLAY=wayland-next", "DISPLAY=:2"}
+	if got := currentDesktopEnvironment(fallback); !slices.Equal(got, current) {
+		t.Fatalf("refreshed desktop environment: %v", got)
+	}
+}
+
+func TestCatalogFallsBackWhenTheUserManagerIsUnavailable(t *testing.T) {
+	original := loadUserManagerEnvironment
+	t.Cleanup(func() { loadUserManagerEnvironment = original })
+	loadUserManagerEnvironment = func(context.Context) ([]string, error) {
+		return nil, errors.New("unavailable")
+	}
+	fallback := []string{"WAYLAND_DISPLAY=wayland-fallback", "DISPLAY=:0"}
+	if got := currentDesktopEnvironment(fallback); !slices.Equal(got, fallback) {
+		t.Fatalf("desktop environment: %v", got)
 	}
 }
 

@@ -22,11 +22,14 @@ cleanup() {
 	fi
 	if [ -n "${cpak:-}" ]; then
 		for origin in ${installed_origins:-}; do
-			"$cpak" stop "$origin" >/dev/null 2>&1 || true
+			timeout -k 2s 5s "$cpak" stop "$origin" >/dev/null 2>&1 || true
 		done
 	fi
 	if [ -n "${browser_client_pid:-}" ]; then
 		kill "$browser_client_pid" 2>/dev/null || true
+	fi
+	if [ -n "${uri_client_pid:-}" ]; then
+		kill "$uri_client_pid" 2>/dev/null || true
 	fi
 	for pid in ${service_pids:-}; do
 		kill "$pid" 2>/dev/null || true
@@ -192,7 +195,21 @@ for attempt in $(seq 1 100); do
 done
 
 cpak="$root/out/cpak"
-"$cpak" service >"$work/cpak-service.log" 2>&1 &
+"$root/out/cpak-integration-probe" user-manager-mock "$WAYLAND_DISPLAY" >"$work/user-manager.log" 2>&1 &
+service_pids="$service_pids $!"
+for attempt in $(seq 1 100); do
+	if dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply \
+		/org/freedesktop/DBus org.freedesktop.DBus.NameHasOwner \
+		string:org.freedesktop.systemd1 | grep -q true; then
+		break
+	fi
+	if [ "$attempt" -eq 100 ]; then
+		echo "user manager fixture did not become ready" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
+WAYLAND_DISPLAY="$stale_wayland_display" "$cpak" service >"$work/cpak-service.log" 2>&1 &
 service_pids="$service_pids $!"
 install() {
 	"$cpak" install --yes "$1"
@@ -292,7 +309,42 @@ sed 's/^{/{"desktop_environment":["WAYLAND_DISPLAY=wayland-cpak-stale"],/' "$uri
 chmod 0600 "$uri_policy.tmp"
 mv "$uri_policy.tmp" "$uri_policy"
 legacy_url="https://example.com/cpak-legacy-display"
-WAYLAND_DISPLAY="$stale_wayland_display" "$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$legacy_url"
+legacy_client_log="$work/legacy-uri.log"
+WAYLAND_DISPLAY="$stale_wayland_display" timeout -k 5s 15s "$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$legacy_url" >"$legacy_client_log" 2>&1 &
+uri_client_pid=$!
+for attempt in $(seq 1 400); do
+	browser_process_state=$(awk '{print $3}' "/proc/$browser_client_pid/stat" 2>/dev/null || true)
+	if [ -z "$browser_process_state" ] || [ "$browser_process_state" = Z ]; then
+		cat "$legacy_client_log" >&2
+		echo "legacy URI policy replaced the running browser container" >&2
+		exit 1
+	fi
+	uri_process_state=$(awk '{print $3}' "/proc/$uri_client_pid/stat" 2>/dev/null || true)
+	if [ -z "$uri_process_state" ] || [ "$uri_process_state" = Z ]; then
+		if ! wait "$uri_client_pid"; then
+			cat "$legacy_client_log" >&2
+			echo "legacy URI handoff did not return" >&2
+			exit 1
+		fi
+		uri_client_pid=
+		break
+	fi
+	if [ "$attempt" -eq 400 ]; then
+		cat "$legacy_client_log" >&2
+		echo "legacy URI handoff did not return" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
+for attempt in $(seq 1 40); do
+	browser_process_state=$(awk '{print $3}' "/proc/$browser_client_pid/stat" 2>/dev/null || true)
+	if [ -z "$browser_process_state" ] || [ "$browser_process_state" = Z ]; then
+		cat "$legacy_client_log" >&2
+		echo "legacy URI policy replaced the running browser container" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
 wait_browser_url "$browser_origin" "$legacy_url"
 legacy_browser_state=$(run_command "$browser_origin" browser-read)
 if [ "$(printf '%s\n' "$legacy_browser_state" | sed -n 's/^server=//p' | head -n 1)" != "$browser_marker" ]; then
@@ -302,17 +354,27 @@ fi
 xdg_url="https://example.com/cpak-xdg-open"
 gio_url="https://example.com/cpak-gio-open"
 warm_url="https://example.com/cpak-xdg-open-warm"
-"$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$xdg_url"
+if ! timeout -k 5s 15s "$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$xdg_url"; then
+	echo "xdg-open URI handoff did not return" >&2
+	exit 1
+fi
 wait_browser_url "$browser_origin" "$xdg_url"
-"$cpak" run "$uri_origin" @/usr/local/bin/gio -- open "$gio_url"
+if ! timeout -k 5s 15s "$cpak" run "$uri_origin" @/usr/local/bin/gio -- open "$gio_url"; then
+	echo "gio URI handoff did not return" >&2
+	exit 1
+fi
 wait_browser_url "$browser_origin" "$gio_url"
-"$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$warm_url"
+if ! timeout -k 5s 15s "$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$warm_url"; then
+	echo "warm URI handoff did not return" >&2
+	exit 1
+fi
 wait_browser_url "$browser_origin" "$warm_url"
 browser_state=$(run_command "$browser_origin" browser-read)
 if [ "$(printf '%s\n' "$browser_state" | sed -n 's/^server=//p' | head -n 1)" != "$browser_marker" ]; then
 	echo "URI handoff replaced the running browser container" >&2
 	exit 1
 fi
+echo "URI handoff probe passed"
 "$cpak" stop "$uri_origin"
 "$cpak" stop "$browser_origin"
 wait "$browser_client_pid" 2>/dev/null || true
