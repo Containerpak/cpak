@@ -32,11 +32,28 @@ const (
 	maxRequestSize = 16 << 10
 )
 
+var desktopEnvironmentNames = []string{
+	"WAYLAND_DISPLAY",
+	"DISPLAY",
+	"XAUTHORITY",
+	"XDG_RUNTIME_DIR",
+	"DBUS_SESSION_BUS_ADDRESS",
+	"XDG_CURRENT_DESKTOP",
+	"XDG_SESSION_DESKTOP",
+	"XDG_SESSION_TYPE",
+	"DESKTOP_SESSION",
+	"XDG_CONFIG_HOME",
+	"XDG_DATA_HOME",
+	"XDG_CONFIG_DIRS",
+	"XDG_DATA_DIRS",
+}
+
 type Options struct {
 	SocketPath            string
 	Token                 string
 	AllowNotify           bool
 	AllowOpenURI          bool
+	DesktopEnvironment    []string
 	AllowHostApplications bool
 	OpenURICommand        string
 	Applications          map[string]string
@@ -67,6 +84,9 @@ func (o Options) validate() error {
 	}
 	if len(o.Token) < 32 {
 		return errors.New("system broker token is too short")
+	}
+	if err := validateDesktopEnvironment(o.DesktopEnvironment); err != nil {
+		return err
 	}
 	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && len(o.CpakCapabilities) == 0 && !o.FilePicker.Enabled() {
 		return errors.New("system broker has no enabled operations")
@@ -261,6 +281,11 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 			return 0, fmt.Errorf("system integration backend is unavailable: %s", options.openURICommand())
 		}
 		command := exec.Command(path, openURI.URI)
+		environment := append([]string{}, options.DesktopEnvironment...)
+		if openURI.ActivationToken != "" {
+			environment = append(environment, "XDG_ACTIVATION_TOKEN="+openURI.ActivationToken)
+		}
+		command.Env = mergeEnvironment(os.Environ(), environment)
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := command.Start(); err != nil {
 			return 0, fmt.Errorf("system integration backend failed: %s", options.openURICommand())
@@ -523,8 +548,49 @@ func mergeEnvironment(base, overrides []string) []string {
 	return append(result, overrides...)
 }
 
+func CaptureDesktopEnvironment(environment []string, waylandDisplay string) []string {
+	values := map[string]string{}
+	for _, entry := range environment {
+		name, value, found := strings.Cut(entry, "=")
+		if found {
+			values[name] = value
+		}
+	}
+	if waylandDisplay != "" {
+		values["WAYLAND_DISPLAY"] = waylandDisplay
+	}
+	result := make([]string, 0, len(desktopEnvironmentNames))
+	for _, name := range desktopEnvironmentNames {
+		if value := values[name]; value != "" {
+			result = append(result, name+"="+value)
+		}
+	}
+	return result
+}
+
+func validateDesktopEnvironment(environment []string) error {
+	allowed := make(map[string]bool, len(desktopEnvironmentNames))
+	for _, name := range desktopEnvironmentNames {
+		allowed[name] = true
+	}
+	seen := map[string]bool{}
+	total := 0
+	for _, entry := range environment {
+		total += len(entry)
+		name, value, found := strings.Cut(entry, "=")
+		if !found || !allowed[name] || seen[name] || value == "" || len(value) > 4096 || strings.ContainsAny(value, "\x00\r\n") {
+			return errors.New("system broker desktop environment is invalid")
+		}
+		seen[name] = true
+	}
+	if total > 32<<10 {
+		return errors.New("system broker desktop environment is invalid")
+	}
+	return nil
+}
+
 func validateOpenURI(request OpenURIRequest) error {
-	if len(request.URI) > 4096 || strings.ContainsRune(request.URI, '\x00') {
+	if len(request.URI) > 4096 || strings.ContainsRune(request.URI, '\x00') || len(request.ActivationToken) > 4096 || strings.ContainsAny(request.ActivationToken, "\x00\r\n") {
 		return errors.New("invalid URI request")
 	}
 	parsed, err := url.ParseRequestURI(request.URI)

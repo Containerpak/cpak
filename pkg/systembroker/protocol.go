@@ -49,7 +49,8 @@ type NotificationRequest struct {
 }
 
 type OpenURIRequest struct {
-	URI string `json:"uri"`
+	URI             string `json:"uri"`
+	ActivationToken string `json:"activation_token,omitempty"`
 }
 
 type LaunchApplicationRequest struct {

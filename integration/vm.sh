@@ -42,15 +42,19 @@ ssh_authorized_keys:
   - $public_key
 package_update: true
 packages:
+  - busybox-static
   - ca-certificates
   - curl
   - dbus
+  - desktop-file-utils
   - fuse3
   - fuse-overlayfs
+  - libglib2.0-bin
   - openssl
   - slirp4netns
   - uidmap
   - weston
+  - xdg-utils
 runcmd:
   - [sh, -c, 'sysctl -w kernel.unprivileged_userns_clone=1 || true']
   - [sh, -c, 'sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true']

@@ -20,6 +20,14 @@ cleanup() {
 			fi
 		done
 	fi
+	if [ -n "${cpak:-}" ]; then
+		for origin in ${installed_origins:-}; do
+			"$cpak" stop "$origin" >/dev/null 2>&1 || true
+		done
+	fi
+	if [ -n "${browser_client_pid:-}" ]; then
+		kill "$browser_client_pid" 2>/dev/null || true
+	fi
 	for pid in ${service_pids:-}; do
 		kill "$pid" 2>/dev/null || true
 	done
@@ -32,6 +40,7 @@ trap cleanup EXIT INT TERM
 
 export XDG_RUNTIME_DIR="$runtime"
 export WAYLAND_DISPLAY=wayland-cpak-integration
+export XDG_CURRENT_DESKTOP=GNOME
 export CPAK_INSTALLATION_PATH="$work/cpak"
 export CPAK_OPTS_FILE="$work/no-config.json"
 
@@ -58,7 +67,7 @@ sudo busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedes
 
 printf 'ready\n' > "$web/ready"
 metadata="$work/images.json"
-"$root/out/cpak-integration-registry" --probe "$root/out/cpak-integration-probe" --metadata "$metadata" >"$work/registry.log" 2>&1 &
+"$root/out/cpak-integration-registry" --probe "$root/out/cpak-integration-probe" --shell /bin/busybox --metadata "$metadata" >"$work/registry.log" 2>&1 &
 service_pids="$!"
 for attempt in $(seq 1 100); do
 	if curl -fsS http://127.0.0.1:5000/v2/ >/dev/null; then
@@ -82,7 +91,7 @@ digests = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
 schema = "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json"
 
 
-def write(name, title, image="probe", override=None, dependencies=None, addons=None, provider=None):
+def write(name, title, image="probe", override=None, dependencies=None, addons=None, provider=None, desktop_entries=None):
     policy = {
         "filesystem": [],
         "network": False,
@@ -100,7 +109,7 @@ def write(name, title, image="probe", override=None, dependencies=None, addons=N
         "version": "1.0.0",
         "image": f"localhost:5000/{image}@{digests[image]}",
         "binaries": ["/usr/local/bin/cpak-integration-probe"],
-        "desktop_entries": ["/usr/share/applications/cpak-integration.desktop"] if name == "desktop" else [],
+        "desktop_entries": desktop_entries or [],
         "dependencies": dependencies or [],
         "addons": addons or [],
         "idle_time": 0,
@@ -113,9 +122,19 @@ def write(name, title, image="probe", override=None, dependencies=None, addons=N
     (path / "cpak.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-write("desktop", "Desktop probe", override={"socketWayland": True})
+write("desktop", "Desktop probe", override={"socketWayland": True}, desktop_entries=["/usr/share/applications/cpak-integration.desktop"])
+write(
+    "browser",
+    "Browser probe",
+    image="browser",
+    override={"socketWayland": True},
+    desktop_entries=["/usr/share/applications/cpak-integration-browser.desktop"],
+)
+write("uri", "URI probe", override={"socketWayland": True, "openURI": True})
 write("bluetooth", "Bluetooth probe", override={"network": True, "bluetooth": True})
 write("loopback", "Loopback probe", override={"network": True, "hostNetwork": True})
+write("network", "Network probe", override={"network": True})
+write("network-disabled", "Network-disabled probe")
 write("environment", "Environment probe", override={"asRoot": True})
 write("dependency", "Dependency probe", image="dependency")
 write(
@@ -139,7 +158,7 @@ PY
 
 sudo python3 "$root/https_server.py" --cert "$work/server.crt" --key "$work/server.key" --directory "$manifests" --port 443 >"$work/manifests.log" 2>&1 &
 service_pids="$service_pids $!"
-python3 -m http.server 18080 --bind 127.0.0.1 --directory "$web" >"$work/http.log" 2>&1 &
+python3 -m http.server 18080 --bind 0.0.0.0 --directory "$web" >"$work/http.log" 2>&1 &
 service_pids="$service_pids $!"
 weston --backend=headless-backend.so --socket="$WAYLAND_DISPLAY" --idle-time=0 >"$work/weston.log" 2>&1 &
 service_pids="$service_pids $!"
@@ -170,27 +189,168 @@ for attempt in $(seq 1 100); do
 done
 
 cpak="$root/out/cpak"
+WAYLAND_DISPLAY=wayland-cpak-stale "$cpak" service >"$work/cpak-service.log" 2>&1 &
+service_pids="$service_pids $!"
 install() {
 	"$cpak" install --yes "$1"
+	installed_origins="${installed_origins:-} $1"
+}
+run_command() {
+	origin=$1
+	shift
+	"$cpak" run "$origin" -- /usr/local/bin/cpak-integration-probe "$@"
 }
 run_probe() {
 	origin=$1
-	probe=$2
-	"$cpak" run "$origin" -- /usr/local/bin/cpak-integration-probe "$probe"
+	shift
+	run_command "$origin" "$@"
 	"$cpak" stop "$origin"
+}
+
+wait_browser_url() {
+	origin=$1
+	url=$2
+	for attempt in $(seq 1 100); do
+		browser_state=$(run_command "$origin" browser-read 2>/dev/null || true)
+		if printf '%s\n' "$browser_state" | grep -F "$url" >/dev/null; then
+			return 0
+		fi
+		sleep 0.05
+	done
+	echo "browser did not receive $url" >&2
+	return 1
+}
+
+slirp_pid() {
+	pgrep -n -x slirp4netns 2>/dev/null || true
+}
+
+wait_no_slirp() {
+	for attempt in $(seq 1 100); do
+		if [ -z "$(slirp_pid)" ]; then
+			return 0
+		fi
+		sleep 0.05
+	done
+	echo "slirp4netns did not stop" >&2
+	return 1
 }
 
 install "$manifest_host/integration/desktop"
 run_probe "$manifest_host/integration/desktop" desktop
 
+browser_origin="$manifest_host/integration/browser"
+uri_origin="$manifest_host/integration/uri"
+install "$browser_origin"
+install "$uri_origin"
+desktop_file="$HOME/.local/share/applications/cpak-integration-browser.desktop"
+if [ ! -f "$desktop_file" ]; then
+	echo "browser desktop entry was not exported" >&2
+	exit 1
+fi
+update-desktop-database "$HOME/.local/share/applications"
+xdg-mime default cpak-integration-browser.desktop x-scheme-handler/http
+xdg-mime default cpak-integration-browser.desktop x-scheme-handler/https
+if [ "$(xdg-mime query default x-scheme-handler/https)" != "cpak-integration-browser.desktop" ]; then
+	echo "browser desktop entry is not the HTTPS handler" >&2
+	exit 1
+fi
+run_command "$browser_origin" browser-server >"$work/browser-container.log" 2>&1 &
+browser_client_pid=$!
+for attempt in $(seq 1 600); do
+	browser_marker=$(sed -n 's/^server=//p' "$work/browser-container.log" | head -n 1)
+	if [ -n "$browser_marker" ]; then
+		break
+	fi
+	if ! kill -0 "$browser_client_pid" 2>/dev/null; then
+		echo "browser fixture exited before readiness" >&2
+		exit 1
+	fi
+	if [ "$attempt" -eq 600 ]; then
+		echo "browser fixture did not become ready" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
+xdg_url="https://example.com/cpak-xdg-open"
+gio_url="https://example.com/cpak-gio-open"
+warm_url="https://example.com/cpak-xdg-open-warm"
+"$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$xdg_url"
+wait_browser_url "$browser_origin" "$xdg_url"
+"$cpak" run "$uri_origin" @/usr/local/bin/gio -- open "$gio_url"
+wait_browser_url "$browser_origin" "$gio_url"
+"$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$warm_url"
+wait_browser_url "$browser_origin" "$warm_url"
+browser_state=$(run_command "$browser_origin" browser-read)
+if [ "$(printf '%s\n' "$browser_state" | sed -n 's/^server=//p' | head -n 1)" != "$browser_marker" ]; then
+	echo "URI handoff replaced the running browser container" >&2
+	exit 1
+fi
+"$cpak" stop "$uri_origin"
+"$cpak" stop "$browser_origin"
+wait "$browser_client_pid" 2>/dev/null || true
+browser_client_pid=
+
 install "$manifest_host/integration/bluetooth"
 run_probe "$manifest_host/integration/bluetooth" bluetooth
+wait_no_slirp
 
 install "$manifest_host/integration/loopback"
 run_probe "$manifest_host/integration/loopback" loopback
 
+host_interface=$(ip -4 route show default | awk 'NR == 1 {print $5}')
+if [ -z "$host_interface" ]; then
+	echo "host network interface is unavailable" >&2
+	exit 1
+fi
+network_fixture_ip=192.0.2.1
+sudo ip address add "$network_fixture_ip/32" dev "$host_interface"
+network_origin="$manifest_host/integration/network"
+network_url="http://$network_fixture_ip:18080/ready"
+install "$network_origin"
+run_command "$network_origin" network "$network_url"
+network_helper=$(slirp_pid)
+if [ -z "$network_helper" ] || ! kill -0 "$network_helper" 2>/dev/null; then
+	echo "isolated network helper is not alive" >&2
+	exit 1
+fi
+for iteration in 1 2 3; do
+	run_command "$network_origin" network "$network_url"
+	if [ "$(slirp_pid)" != "$network_helper" ]; then
+		echo "warm network invocation replaced its helper" >&2
+		exit 1
+	fi
+done
+kill "$network_helper"
+for attempt in $(seq 1 100); do
+	if ! kill -0 "$network_helper" 2>/dev/null; then
+		break
+	fi
+	sleep 0.05
+done
+run_command "$network_origin" network "$network_url"
+replacement_helper=$(slirp_pid)
+if [ -z "$replacement_helper" ] || [ "$replacement_helper" = "$network_helper" ] || ! kill -0 "$replacement_helper" 2>/dev/null; then
+	echo "dead network helper did not rebuild the container" >&2
+	exit 1
+fi
+"$cpak" stop "$network_origin"
+wait_no_slirp
+
+offline_origin="$manifest_host/integration/network-disabled"
+install "$offline_origin"
+run_command "$offline_origin" network-disabled "$network_url"
+if [ -n "$(slirp_pid)" ]; then
+	echo "network-disabled package started slirp4netns" >&2
+	exit 1
+fi
+"$cpak" stop "$offline_origin"
+
 install "$manifest_host/integration/environment"
 "$cpak" environment create --name system-identities --origin "$manifest_host/integration/environment"
+"$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- persistence-write
+"$cpak" environment stop --environment system-identities
+"$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- persistence-read
 "$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- system-identities
 "$cpak" environment stop --environment system-identities
 "$cpak" environment delete --environment system-identities

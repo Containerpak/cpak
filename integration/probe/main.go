@@ -18,8 +18,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fail("one probe name is required")
+	if len(os.Args) < 2 {
+		fail("a probe name is required")
 	}
 	var err error
 	switch os.Args[1] {
@@ -35,6 +35,20 @@ func main() {
 		err = probeAddon()
 	case "loopback":
 		err = probeLoopback()
+	case "network":
+		err = probeNetwork(argument(2), true)
+	case "network-disabled":
+		err = probeNetwork(argument(2), false)
+	case "browser-server":
+		err = runBrowserServer()
+	case "browser-open":
+		err = openBrowser(argument(2))
+	case "browser-read":
+		err = readBrowserLog()
+	case "persistence-write":
+		err = probePersistence(true)
+	case "persistence-read":
+		err = probePersistence(false)
 	case "system-identities":
 		err = probeSystemIdentities()
 	default:
@@ -44,6 +58,13 @@ func main() {
 		fail(err.Error())
 	}
 	fmt.Printf("%s probe passed\n", os.Args[1])
+}
+
+func argument(index int) string {
+	if len(os.Args) <= index || os.Args[index] == "" {
+		fail("probe argument is required")
+	}
+	return os.Args[index]
 }
 
 func probeSystemIdentities() error {
@@ -134,10 +155,35 @@ func probeDesktop() error {
 }
 
 func probeLoopback() error {
-	response, err := http.Get("http://127.0.0.1:18080/ready")
+	return fetchReady("http://127.0.0.1:18080/ready")
+}
+
+func probeNetwork(endpoint string, expected bool) error {
+	client := http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get(endpoint)
+	if !expected {
+		if err == nil {
+			response.Body.Close()
+			return fmt.Errorf("network-disabled package reached %s", endpoint)
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}
+	return checkReady(response)
+}
+
+func fetchReady(endpoint string) error {
+	client := http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get(endpoint)
+	if err != nil {
+		return err
+	}
+	return checkReady(response)
+}
+
+func checkReady(response *http.Response) error {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("host server returned %s", response.Status)
@@ -148,6 +194,94 @@ func probeLoopback() error {
 	}
 	if string(body) != "ready\n" {
 		return fmt.Errorf("host server returned %q", body)
+	}
+	return nil
+}
+
+const browserSocket = "/tmp/cpak-integration-browser.sock"
+const browserLog = "/tmp/cpak-integration-browser.log"
+
+func runBrowserServer() error {
+	_ = os.Remove(browserSocket)
+	listener, err := net.Listen("unix", browserSocket)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	marker := fmt.Sprintf("server=%d\n", os.Getpid())
+	if err = os.WriteFile(browserLog, []byte(marker), 0644); err != nil {
+		return err
+	}
+	if _, err = os.Stdout.WriteString(marker); err != nil {
+		return err
+	}
+	for {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return acceptErr
+		}
+		data, readErr := io.ReadAll(io.LimitReader(connection, 4097))
+		closeErr := connection.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		uri := string(data)
+		if uri == "" || len(uri) > 4096 || uri[len(uri)-1] != '\n' {
+			return fmt.Errorf("invalid browser request")
+		}
+		file, openErr := os.OpenFile(browserLog, os.O_WRONLY|os.O_APPEND, 0644)
+		if openErr != nil {
+			return openErr
+		}
+		_, writeErr := file.WriteString(uri)
+		closeErr = file.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+}
+
+func openBrowser(uri string) error {
+	if len(uri) > 4096 || uri == "" || filepath.IsAbs(uri) {
+		return fmt.Errorf("invalid browser URI")
+	}
+	connection, err := net.DialTimeout("unix", browserSocket, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	if _, err = io.WriteString(connection, uri+"\n"); err != nil {
+		connection.Close()
+		return err
+	}
+	return connection.Close()
+}
+
+func readBrowserLog() error {
+	content, err := os.ReadFile(browserLog)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(content)
+	return err
+}
+
+func probePersistence(write bool) error {
+	path := filepath.Join(os.Getenv("HOME"), ".cpak-integration-persistence")
+	if write {
+		return os.WriteFile(path, []byte("present\n"), 0644)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if string(content) != "present\n" {
+		return fmt.Errorf("persistent home returned %q", content)
 	}
 	return nil
 }

@@ -28,12 +28,14 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 		if err != nil {
 			return err
 		}
+		request.ActivationToken = environment["XDG_ACTIVATION_TOKEN"]
 		return client.OpenURI(ctx, request)
 	case "gio":
 		request, err := parseGIOOpen(args)
 		if err != nil {
 			return err
 		}
+		request.ActivationToken = environment["XDG_ACTIVATION_TOKEN"]
 		return client.OpenURI(ctx, request)
 	case "cpak-launch-app":
 		request, err := parseApplication(args, environment)

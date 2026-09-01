@@ -60,20 +60,36 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:5000", "registry address")
 	metadata := flag.String("metadata", "", "path for image digest metadata")
 	probe := flag.String("probe", "", "path to the integration probe")
+	shell := flag.String("shell", "", "path to a static POSIX shell")
 	flag.Parse()
 	if !filepath.IsAbs(*probe) {
 		log.Fatal("--probe must be an absolute path")
+	}
+	if !filepath.IsAbs(*shell) {
+		log.Fatal("--shell must be an absolute path")
 	}
 	probeData, err := os.ReadFile(*probe)
 	if err != nil {
 		log.Fatal(err)
 	}
+	shellData, err := os.ReadFile(*shell)
+	if err != nil {
+		log.Fatal(err)
+	}
 	base := []layerFile{
+		{path: "bin/sh", mode: 0755, data: shellData},
 		{path: "usr/local/bin/cpak-integration-probe", mode: 0755, data: probeData},
 		{path: "usr/share/applications/cpak-integration.desktop", mode: 0644, data: []byte("[Desktop Entry]\nType=Application\nName=cpak integration\nExec=/usr/local/bin/cpak-integration-probe desktop\n")},
 	}
+	browser := append([]layerFile{}, base...)
+	browser = append(browser, layerFile{
+		path: "usr/share/applications/cpak-integration-browser.desktop",
+		mode: 0644,
+		data: []byte("[Desktop Entry]\nType=Application\nName=cpak integration browser\nExec=/usr/local/bin/cpak-integration-probe browser-open %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\n"),
+	})
 	files := map[string][]layerFile{
 		"probe":      base,
+		"browser":    browser,
 		"dependency": append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/dependency", mode: 0644, data: []byte("present\n")}),
 		"addon":      append(append([]layerFile{}, base...), layerFile{path: "opt/cpak-integration/addon", mode: 0644, data: []byte("present\n")}),
 	}

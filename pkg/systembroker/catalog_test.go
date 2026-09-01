@@ -74,6 +74,22 @@ func TestCatalogPreservesFilePickerApplication(t *testing.T) {
 	}
 }
 
+func TestCatalogPreservesDesktopEnvironment(t *testing.T) {
+	directory := t.TempDir()
+	token := strings.Repeat("i", 64)
+	policy := Policy{AllowOpenURI: true, DesktopEnvironment: []string{"WAYLAND_DISPLAY=wayland-0"}}
+	if err := WritePolicy(directory, token, policy); err != nil {
+		t.Fatal(err)
+	}
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, Request{Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options.DesktopEnvironment) != 1 || options.DesktopEnvironment[0] != policy.DesktopEnvironment[0] {
+		t.Fatalf("desktop environment: %v", options.DesktopEnvironment)
+	}
+}
+
 func TestCatalogPreservesCpakCapabilities(t *testing.T) {
 	directory := t.TempDir()
 	token := strings.Repeat("h", 64)

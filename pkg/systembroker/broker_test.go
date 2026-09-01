@@ -96,6 +96,63 @@ func TestOpenURIReturnsAfterStartingTheDesktopBackend(t *testing.T) {
 	}
 }
 
+func TestOpenURIUsesThePolicyDesktopEnvironment(t *testing.T) {
+	directory := t.TempDir()
+	output := filepath.Join(directory, "environment")
+	backend := filepath.Join(directory, "open-uri")
+	content := "#!/bin/sh\nenv > \"" + output + "\"\n"
+	if err := os.WriteFile(backend, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WAYLAND_DISPLAY", "wayland-99")
+	t.Setenv("DISPLAY", ":99")
+	options := testOptions(t)
+	options.OpenURICommand = backend
+	options.DesktopEnvironment = []string{"WAYLAND_DISPLAY=wayland-0", "DISPLAY=:0"}
+	startBroker(t, options)
+	if err := testClient(options).OpenURI(context.Background(), OpenURIRequest{URI: "https://usecpak.org", ActivationToken: "activation-token"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	var environment string
+	for {
+		content, err := os.ReadFile(output)
+		if err == nil && len(content) > 0 {
+			environment = string(content)
+			if strings.Contains(environment, "WAYLAND_DISPLAY=wayland-0\n") && strings.Contains(environment, "DISPLAY=:0\n") && strings.Contains(environment, "XDG_ACTIVATION_TOKEN=activation-token\n") {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("URI backend did not record its desktop environment:\n%s", environment)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestCaptureDesktopEnvironmentKeepsOnlyHostSessionValues(t *testing.T) {
+	environment := CaptureDesktopEnvironment([]string{
+		"WAYLAND_DISPLAY=wayland-99",
+		"DISPLAY=:0",
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+		"LD_PRELOAD=/tmp/injected.so",
+	}, "wayland-0")
+	for _, want := range []string{
+		"WAYLAND_DISPLAY=wayland-0",
+		"DISPLAY=:0",
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+	} {
+		if !containsString(environment, want) {
+			t.Fatalf("desktop environment is missing %q: %v", want, environment)
+		}
+	}
+	for _, value := range environment {
+		if strings.HasPrefix(value, "LD_PRELOAD=") {
+			t.Fatalf("unsafe environment variable survived: %v", environment)
+		}
+	}
+}
+
 func TestCallRejectsWrongToken(t *testing.T) {
 	options := testOptions(t)
 	startBroker(t, options)
@@ -288,6 +345,9 @@ func TestValidateURIArgs(t *testing.T) {
 			t.Fatalf("invalid URI %q was accepted", value)
 		}
 	}
+	if err := validateOpenURI(OpenURIRequest{URI: "https://example.com", ActivationToken: "bad\ntoken"}); err == nil {
+		t.Fatal("invalid activation token was accepted")
+	}
 }
 
 func TestParseGIOOpen(t *testing.T) {
@@ -325,6 +385,18 @@ func TestOptionsRejectUnknownContainerCapability(t *testing.T) {
 	options.ContainerCapabilities = map[string]bool{"host-exec": true}
 	if err := options.validate(); err == nil {
 		t.Fatal("unknown container capability was accepted")
+	}
+}
+
+func TestOptionsRejectDesktopEnvironmentOutsideAllowlist(t *testing.T) {
+	options := testOptions(t)
+	options.DesktopEnvironment = []string{"LD_PRELOAD=/tmp/injected.so"}
+	if err := options.validate(); err == nil {
+		t.Fatal("unsafe desktop environment was accepted")
+	}
+	options.DesktopEnvironment = []string{"DISPLAY=:0", "DISPLAY=:1"}
+	if err := options.validate(); err == nil {
+		t.Fatal("duplicate desktop environment was accepted")
 	}
 }
 

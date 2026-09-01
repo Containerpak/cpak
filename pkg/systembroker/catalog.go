@@ -23,6 +23,7 @@ import (
 type Policy struct {
 	AllowNotify           bool                  `json:"allow_notify,omitempty"`
 	AllowOpenURI          bool                  `json:"allow_open_uri,omitempty"`
+	DesktopEnvironment    []string              `json:"desktop_environment,omitempty"`
 	AllowHostApplications bool                  `json:"allow_host_applications,omitempty"`
 	Applications          map[string]string     `json:"applications,omitempty"`
 	RuntimeDirectory      string                `json:"runtime_directory,omitempty"`
@@ -139,6 +140,7 @@ func resolveCatalogPolicy(socketPath, directory string, request Request) (Option
 		Token:                 request.Token,
 		AllowNotify:           policy.AllowNotify,
 		AllowOpenURI:          policy.AllowOpenURI,
+		DesktopEnvironment:    policy.DesktopEnvironment,
 		AllowHostApplications: policy.AllowHostApplications,
 		Applications:          policy.Applications,
 		RuntimeDirectory:      policy.RuntimeDirectory,
