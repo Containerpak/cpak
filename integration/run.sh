@@ -233,7 +233,7 @@ service_pids="$service_pids $!"
 mkdir -p "$work/init"
 (
 	cd "$work/init"
-	"$cpak" init --name integration --package-version 1.0.0 --description integration --image example.invalid/integration:latest --binary /usr/local/bin/cpak-integration-probe
+	"$cpak" init --name integration --package-version 1.0.0 --description integration --image example.invalid/integration@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --binary /usr/local/bin/cpak-integration-probe
 )
 grep -F '"version": "1.0.0"' "$work/init/cpak.json" >/dev/null
 install() {
