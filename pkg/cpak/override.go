@@ -19,10 +19,14 @@ import (
 // Mounts returns the list of paths to be mounted on the new namespace
 // to achieve the desired override.
 func GetOverrideMounts(o types.Override) (mounts, shims []string) {
+	return getOverrideMounts(o, currentWaylandEndpoint(o).SocketPath)
+}
+
+func getOverrideMounts(o types.Override, waylandSocket string) (mounts, shims []string) {
 	curUid := fmt.Sprintf("%d", os.Getuid())
 
-	if o.SocketWayland {
-		mounts = append(mounts, waylandSocketMounts(waylandSocketPath(curUid))...)
+	if o.SocketWayland && waylandSocket != "" {
+		mounts = append(mounts, waylandSocketMounts(waylandSocket)...)
 	}
 
 	if o.SocketPulseAudio {
@@ -153,6 +157,52 @@ func GetOverrideMounts(o types.Override) (mounts, shims []string) {
 	// mounts = append(mounts, foundMounts...)
 
 	return uniqueStrings(mounts), uniqueStrings(shims)
+}
+
+type waylandEndpoint struct {
+	Display    string `json:"display,omitempty"`
+	SocketPath string `json:"socket_path"`
+	Device     uint64 `json:"device,omitempty"`
+	Inode      uint64 `json:"inode,omitempty"`
+	Mode       uint32 `json:"mode,omitempty"`
+}
+
+func currentWaylandEndpoint(o types.Override) waylandEndpoint {
+	if !o.SocketWayland {
+		return waylandEndpoint{}
+	}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	display := ""
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		display = waylandDisplay(uid)
+	}
+	endpoint := waylandEndpoint{
+		Display:    display,
+		SocketPath: waylandSocketPath(uid),
+	}
+	info, err := os.Stat(endpoint.SocketPath)
+	if err != nil {
+		return endpoint
+	}
+	endpoint.Mode = uint32(info.Mode())
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		endpoint.Device = uint64(stat.Dev)
+		endpoint.Inode = stat.Ino
+	}
+	return endpoint
+}
+
+func containerWaylandEndpoint(container types.Container, o types.Override) waylandEndpoint {
+	if !o.SocketWayland {
+		return waylandEndpoint{}
+	}
+	if container.WaylandSocketPath == "" {
+		return currentWaylandEndpoint(o)
+	}
+	return waylandEndpoint{
+		Display:    container.WaylandDisplay,
+		SocketPath: container.WaylandSocketPath,
+	}
 }
 
 func waylandSocketPath(uid string) string {

@@ -82,6 +82,14 @@ func TestWaylandUsesActiveDisplay(t *testing.T) {
 	}
 }
 
+func TestWaylandMountsTheContainerEndpoint(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "wayland-stored")
+	mounts, _ := getOverrideMounts(types.Override{SocketWayland: true}, socket)
+	if !slicesContain(mounts, socket) {
+		t.Fatalf("Wayland mounts %v do not contain the stored endpoint %s", mounts, socket)
+	}
+}
+
 func TestWaylandMountsDisplayLock(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "wayland-3")
 	if err := os.WriteFile(socket+".lock", nil, 0600); err != nil {

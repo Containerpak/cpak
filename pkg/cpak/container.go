@@ -131,7 +131,8 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 	if err != nil {
 		return types.Container{}, err
 	}
-	policyHash, err := containerLaunchPolicyHash(containerRuntimeVersion(instance), identity.LaunchRoot, override, components, addons)
+	wayland := currentWaylandEndpoint(override)
+	policyHash, err := containerLaunchPolicyHashWithWayland(containerRuntimeVersion(instance), identity.LaunchRoot, override, components, addons, wayland)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -201,6 +202,8 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		LogPath:           filepath.Join(statePath, "application.log"),
 		PolicyHash:        policyHash,
 		CreateTimestamp:   time.Now(),
+		WaylandDisplay:    wayland.Display,
+		WaylandSocketPath: wayland.SocketPath,
 	}
 	if persistent != nil {
 		container.WritableLayerPath = persistent.upperDir
@@ -442,16 +445,26 @@ func containerPolicyHashVersion(runtimeVersion int, override types.Override, com
 // there was one, which is what keeps the containers of an unenrolled
 // application from being rebuilt for nothing.
 func containerLaunchPolicyHash(runtimeVersion int, launchRoot string, override types.Override, components, addons []types.Application) (string, error) {
+	return containerLaunchPolicyHashWithWayland(runtimeVersion, launchRoot, override, components, addons, currentWaylandEndpoint(override))
+}
+
+func containerLaunchPolicyHashWithWayland(runtimeVersion int, launchRoot string, override types.Override, components, addons []types.Application, wayland waylandEndpoint) (string, error) {
+	var waylandIdentity *waylandEndpoint
+	if override.SocketWayland {
+		waylandIdentity = &wayland
+	}
 	policy := struct {
 		Runtime    int                   `json:"runtime"`
 		LaunchRoot string                `json:"launch_root,omitempty"`
 		Override   types.Override        `json:"override"`
+		Wayland    *waylandEndpoint      `json:"wayland,omitempty"`
 		Components []addonPolicyIdentity `json:"components,omitempty"`
 		Addons     []addonPolicyIdentity `json:"addons,omitempty"`
 	}{
 		Runtime:    runtimeVersion,
 		LaunchRoot: launchRoot,
 		Override:   override,
+		Wayland:    waylandIdentity,
 		Components: addonPolicyIdentities(components),
 		Addons:     addonPolicyIdentities(addons),
 	}
@@ -496,7 +509,8 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	}
 
 	rootfs = c.GetInStoreDir("containers", container.CpakId, "rootfs")
-	overrideMounts, _ := GetOverrideMounts(override)
+	wayland := containerWaylandEndpoint(container, override)
+	overrideMounts, _ := getOverrideMounts(override, wayland.SocketPath)
 	if container.DesktopBusSocketPath != "" {
 		overrideMounts = withoutMount(overrideMounts, hostSessionBusPath())
 	}
@@ -647,12 +661,7 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 			containerEnv = append(containerEnv, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
 		}
 	}
-	uid := strconv.Itoa(os.Getuid())
-	display := ""
-	if override.SocketWayland && os.Getenv("WAYLAND_DISPLAY") != "" {
-		display = waylandDisplay(uid)
-	}
-	containerEnv = configureWaylandDisplay(containerEnv, display, waylandSocketPath(uid))
+	containerEnv = configureWaylandDisplay(containerEnv, wayland.Display, wayland.SocketPath)
 	if container.DesktopBusSocketPath != "" {
 		containerEnv = setEnvironmentValue(containerEnv, "DBUS_SESSION_BUS_ADDRESS", "unix:path="+hostSessionBusPath())
 		containerEnv = setEnvironmentValue(containerEnv, "GTK_USE_PORTAL", "1")
@@ -1159,12 +1168,8 @@ func containerEnvironment(app types.Application, override types.Override, contai
 			envVars = append(envVars, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
 		}
 	}
-	uid := strconv.Itoa(os.Getuid())
-	display := ""
-	if override.SocketWayland && os.Getenv("WAYLAND_DISPLAY") != "" {
-		display = waylandDisplay(uid)
-	}
-	envVars = configureWaylandDisplay(envVars, display, waylandSocketPath(uid))
+	wayland := containerWaylandEndpoint(container, override)
+	envVars = configureWaylandDisplay(envVars, wayland.Display, wayland.SocketPath)
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	if container.SystemBrokerSocketPath != "" {
 		envVars = append(envVars, "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)

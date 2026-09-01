@@ -461,6 +461,43 @@ func TestContainerPolicyHashChangesWithRuntime(t *testing.T) {
 	}
 }
 
+func TestContainerPolicyHashChangesWithWaylandEndpoint(t *testing.T) {
+	override := types.Override{SocketWayland: true}
+	first, err := containerLaunchPolicyHashWithWayland(containerRuntimePolicyVersion, "", override, nil, nil, waylandEndpoint{
+		Display:    "wayland-0",
+		SocketPath: "/run/user/1000/wayland-0",
+		Device:     1,
+		Inode:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := containerLaunchPolicyHashWithWayland(containerRuntimePolicyVersion, "", override, nil, nil, waylandEndpoint{
+		Display:    "wayland-0",
+		SocketPath: "/run/user/1000/wayland-0",
+		Device:     1,
+		Inode:      3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("replaced Wayland sockets produced the same policy hash")
+	}
+	third, err := containerLaunchPolicyHashWithWayland(containerRuntimePolicyVersion, "", override, nil, nil, waylandEndpoint{
+		Display:    "wayland-1",
+		SocketPath: "/run/user/1000/wayland-1",
+		Device:     1,
+		Inode:      3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("different Wayland displays produced the same policy hash")
+	}
+}
+
 func TestContainerEnvironmentIncludesSystemBrokerOnlyWhenAvailable(t *testing.T) {
 	app := types.Application{Config: `{"config":{}}`}
 	container := types.Container{
@@ -546,6 +583,30 @@ func TestConfigureWaylandDisplayRequiresALiveSocket(t *testing.T) {
 	}
 	if !slicesContain(configured, "WAYLAND_DISPLAY=") {
 		t.Fatalf("inactive Wayland session did not override the inherited display: %v", configured)
+	}
+}
+
+func TestContainerEnvironmentKeepsTheMountedWaylandEndpoint(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "wayland-stored")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv("WAYLAND_DISPLAY", "wayland-current")
+
+	app := types.Application{Config: `{"config":{}}`}
+	container := types.Container{
+		CpakId:            "container-id",
+		WaylandDisplay:    "wayland-stored",
+		WaylandSocketPath: socket,
+	}
+	environment, err := containerEnvironment(app, types.Override{SocketWayland: true}, container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := environmentValue(environment, "WAYLAND_DISPLAY"); got != "wayland-stored" {
+		t.Fatalf("Wayland display: got %q, want wayland-stored", got)
 	}
 }
 

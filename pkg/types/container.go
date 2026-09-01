@@ -90,6 +90,11 @@ type Container struct {
 	// X11AuthorityPath authenticates the container to its nested server.
 	X11AuthorityPath string `json:"x11_authority_path"`
 
+	// WaylandDisplay and WaylandSocketPath identify the compositor endpoint
+	// mounted when the container was created.
+	WaylandDisplay    string `json:"wayland_display,omitempty"`
+	WaylandSocketPath string `json:"wayland_socket_path,omitempty"`
+
 	// ExecSocketPath is the host path used to submit commands to the container init.
 	ExecSocketPath string `json:"exec_socket_path"`
 
