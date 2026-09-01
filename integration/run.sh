@@ -285,8 +285,14 @@ private_origin=github.com/integration/private
 install "$private_origin"
 run_probe "$private_origin" private
 
-install "$manifest_host/integration/desktop"
-run_probe "$manifest_host/integration/desktop" desktop
+desktop_origin="$manifest_host/integration/desktop"
+install "$desktop_origin"
+run_command "$desktop_origin" desktop
+for attempt in $(seq 1 32); do
+	run_command "$desktop_origin" seccomp >/dev/null
+done
+"$cpak" stop "$desktop_origin"
+echo "thread-pinned seccomp probe passed"
 
 guest_origin="$manifest_host/integration/guest-environment"
 LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share install "$guest_origin"

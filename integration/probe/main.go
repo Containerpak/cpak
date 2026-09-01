@@ -51,6 +51,8 @@ func main() {
 		err = probeNetwork(argument(2), false)
 	case "guest-environment":
 		err = probeGuestEnvironment()
+	case "seccomp":
+		err = probeSeccomp()
 	case "nested-mount":
 		err = probeNestedMount(true)
 	case "blocked-mount":
@@ -80,6 +82,24 @@ func main() {
 		fail(err.Error())
 	}
 	fmt.Printf("%s probe passed\n", os.Args[1])
+}
+
+func probeSeccomp() error {
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return err
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 {
+			values[fields[0]] = fields[1]
+		}
+	}
+	if values["NoNewPrivs:"] != "1" || values["Seccomp:"] != "2" {
+		return fmt.Errorf("sandbox status: NoNewPrivs=%s Seccomp=%s", values["NoNewPrivs:"], values["Seccomp:"])
+	}
+	return nil
 }
 
 type userManagerProperties struct {

@@ -58,6 +58,7 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 		}
 	}
 
+	pinSandboxThread()
 	if err = enableNoNewPrivileges(); err != nil {
 		return 0, err
 	}
@@ -91,6 +92,7 @@ func ApplySeccomp(allowUserNamespaces, allowPtrace bool) error {
 	if !supported {
 		return ErrUnavailable
 	}
+	pinSandboxThread()
 	if err := enableNoNewPrivileges(); err != nil {
 		return err
 	}
@@ -103,6 +105,13 @@ func ApplySeccomp(allowUserNamespaces, allowPtrace bool) error {
 		return fmt.Errorf("install seccomp filter: %w", err)
 	}
 	return nil
+}
+
+// Sandbox restrictions belong to the thread that installs them. The caller
+// executes or starts the restricted workload next, so this thread must never
+// return to the scheduler without those restrictions.
+func pinSandboxThread() {
+	runtime.LockOSThread()
 }
 
 func enableNoNewPrivileges() error {
