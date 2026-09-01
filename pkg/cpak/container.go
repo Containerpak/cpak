@@ -91,6 +91,14 @@ type persistentContainerState struct {
 // enrolled with and builds the container from the policy it actually runs
 // under, which is the same one unless something narrowed this launch.
 func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scope, instance string, store *Store, persistent *persistentContainerState) (container types.Container, err error) {
+	// Never wait for the container lock while holding the store lock: the
+	// current owner may need to reopen the store before releasing its lock.
+	if store != nil {
+		if err = store.Close(); err != nil {
+			return types.Container{}, err
+		}
+		store = nil
+	}
 	unlock, err := c.lockContainerScope(scope)
 	if err != nil {
 		return types.Container{}, err
