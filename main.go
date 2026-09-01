@@ -33,6 +33,7 @@ type CLI struct {
 	Logs               cmd.LogsCmd               `cmd:"logs" help:"Show output from a running application"`
 	Orchestrate        cmd.OrchestrateCmd        `cmd:"orchestrate" help:"Run multiple cpak applications"`
 	Spawn              cmd.SpawnCmd              `cmd:"spawn" help:"Spawn a container for a package"`
+	NetworkHelper      cmd.NetworkHelperCmd      `cmd:"network-helper" help:"Supervise userspace container networking"`
 	Launch             cmd.LaunchCmd             `cmd:"launch" help:"Run a command inside an existing container sandbox"`
 	ChromiumLaunch     cmd.ChromiumLaunchCmd     `cmd:"chromium-launch" help:"Launch or forward a Chromium command"`
 	Service            cmd.ServiceCmd            `cmd:"service" help:"Manage cpak services"`
@@ -146,7 +147,7 @@ func skipUpdateCheck(args []string) bool {
 		return true
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "network-helper" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" {
 			return true
 		}
 	}

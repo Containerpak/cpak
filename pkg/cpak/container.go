@@ -802,7 +802,7 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 			_ = cmd.Process.Kill()
 			return "", 0, "", fmt.Errorf("create network readiness pipe: %w", pipeErr)
 		}
-		helper := network.command(namespacePID, helperReadyWriter, networkExitReader)
+		helper := network.supervisorCommand(cpakBinary, namespacePID, helperReadyWriter, networkExitReader)
 		helper.Stdout = os.Stdout
 		helper.Stderr = os.Stderr
 		if err = helper.Start(); err != nil {

@@ -47,6 +47,7 @@ packages:
   - curl
   - dbus
   - desktop-file-utils
+  - dnsmasq-base
   - fuse3
   - fuse-overlayfs
   - libglib2.0-bin

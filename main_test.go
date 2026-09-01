@@ -10,7 +10,7 @@ func TestInternalCommandsSkipUpdateCheck(t *testing.T) {
 	previous := version
 	version = "v2.0.0"
 	defer func() { version = previous }()
-	for _, command := range []string{"spawn", "launch", "dedup", "host-action", "system-broker-server", "system-authority", "self-update"} {
+	for _, command := range []string{"spawn", "network-helper", "launch", "dedup", "host-action", "system-broker-server", "system-authority", "self-update"} {
 		if !skipUpdateCheck([]string{"cpak", command}) {
 			t.Fatalf("internal command %s performs an update check", command)
 		}

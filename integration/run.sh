@@ -31,9 +31,15 @@ cleanup() {
 	if [ -n "${uri_client_pid:-}" ]; then
 		kill "$uri_client_pid" 2>/dev/null || true
 	fi
+	if [ -n "${dns_pid:-}" ]; then
+		sudo kill "$dns_pid" 2>/dev/null || true
+	fi
 	for pid in ${service_pids:-}; do
 		kill "$pid" 2>/dev/null || true
 	done
+	if [ "${resolver_mount_active:-false}" = true ]; then
+		sudo umount /etc/resolv.conf 2>/dev/null || true
+	fi
 	if [ "$status" -eq 0 ]; then
 		rm -rf "$work"
 	fi
@@ -270,6 +276,10 @@ slirp_pid() {
 	pgrep -n -x slirp4netns 2>/dev/null || true
 }
 
+network_supervisor_pid() {
+	ps -eo pid=,args= | awk '$0 ~ /cpak [n]etwork-helper/ {print $1}' | tail -n 1
+}
+
 wait_no_slirp() {
 	for attempt in $(seq 1 100); do
 		if [ -z "$(slirp_pid)" ]; then
@@ -453,6 +463,24 @@ sudo ip address add "$network_fixture_ip/32" dev "$host_interface"
 network_origin="$manifest_host/integration/network"
 network_url="http://$network_fixture_ip:18080/ready"
 install "$network_origin"
+printf 'nameserver 192.0.2.254\n' >"$work/resolver-old"
+printf 'nameserver 127.0.0.1\n' >"$work/resolver-new"
+sudo dnsmasq --keep-in-foreground --no-resolv --no-hosts --bind-interfaces \
+	--listen-address=127.0.0.1 --address="/cpak-switch.test/$network_fixture_ip" >"$work/dns.log" 2>&1 &
+dns_pid=$!
+service_pids="$service_pids $dns_pid"
+for attempt in $(seq 1 100); do
+	if sudo ss -lunp | grep -F '127.0.0.1:53' >/dev/null; then
+		break
+	fi
+	if [ "$attempt" -eq 100 ]; then
+		echo "DNS fixture did not become ready" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
+sudo mount --bind "$work/resolver-old" /etc/resolv.conf
+resolver_mount_active=true
 run_command "$network_origin" network-slow "$network_url" >"$work/network-concurrent-1.log" 2>&1 &
 network_client_1=$!
 run_command "$network_origin" network-slow "$network_url" >"$work/network-concurrent-2.log" 2>&1 &
@@ -473,6 +501,42 @@ if [ -z "$network_helper" ] || ! kill -0 "$network_helper" 2>/dev/null; then
 	echo "isolated network helper is not alive" >&2
 	exit 1
 fi
+network_supervisor=$(network_supervisor_pid)
+if [ -z "$network_supervisor" ] || ! kill -0 "$network_supervisor" 2>/dev/null; then
+	echo "network supervisor is not alive" >&2
+	exit 1
+fi
+if run_command "$network_origin" network "http://cpak-switch.test:18080/ready" >/dev/null 2>&1; then
+	echo "stale resolver unexpectedly reached the DNS fixture" >&2
+	exit 1
+fi
+sudo umount /etc/resolv.conf
+resolver_mount_active=false
+sudo mount --bind "$work/resolver-new" /etc/resolv.conf
+resolver_mount_active=true
+for attempt in $(seq 1 200); do
+	refreshed_helper=$(slirp_pid)
+	if [ -n "$refreshed_helper" ] && [ "$refreshed_helper" != "$network_helper" ]; then
+		break
+	fi
+	if [ "$attempt" -eq 200 ]; then
+		echo "resolver change did not refresh slirp4netns" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
+if [ "$(network_supervisor_pid)" != "$network_supervisor" ]; then
+	echo "resolver refresh replaced the network supervisor" >&2
+	exit 1
+fi
+run_command "$network_origin" network "http://cpak-switch.test:18080/ready"
+if run_command "$network_origin" network "http://10.0.2.2:18080/ready" >/dev/null 2>&1; then
+	echo "ordinary network access exposed the host gateway" >&2
+	exit 1
+fi
+sudo umount /etc/resolv.conf
+resolver_mount_active=false
+network_helper=$refreshed_helper
 for iteration in 1 2 3; do
 	run_command "$network_origin" network "$network_url"
 	if [ "$(slirp_pid)" != "$network_helper" ]; then
