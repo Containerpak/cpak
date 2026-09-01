@@ -241,7 +241,7 @@ func TestSummarizePermissions(t *testing.T) {
 		Network: true,
 	}
 	want := []bootstrap.Permission{
-		{Name: "Display", Detail: "X11 (no input or screen isolation), Wayland"},
+		{Name: "Display", Detail: "X11 (no input or screen isolation), Wayland display and compositor-mediated clipboard"},
 		{Name: "Audio", Detail: "PulseAudio"},
 		{Name: "Devices", Detail: "all devices"},
 		{Name: "Notifications", Detail: "desktop notifications"},
