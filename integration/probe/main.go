@@ -56,7 +56,7 @@ func main() {
 	case "blocked-mount":
 		err = probeNestedMount(false)
 	case "nested-mount-child":
-		err = syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SLAVE, "")
+		err = probeNestedMountChild()
 	case "browser-server":
 		err = runBrowserServer()
 	case "browser-open":
@@ -278,6 +278,45 @@ func probeNestedMount(expected bool) error {
 		return fmt.Errorf("nested user namespace returned %w: %s, want EPERM", err, output)
 	}
 	return nil
+}
+
+func probeNestedMountChild() error {
+	temporary, err := os.MkdirTemp("/tmp", "cpak-nested-mount-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(temporary)
+
+	tmpfsErr := syscall.Mount("tmpfs", temporary, "tmpfs", syscall.MS_NODEV|syscall.MS_NOSUID, "")
+	if tmpfsErr == nil {
+		defer syscall.Unmount(temporary, syscall.MNT_DETACH)
+	}
+	if err = syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SLAVE, ""); err != nil {
+		return fmt.Errorf("make / slave: %w; tmpfs mount: %v; %s", err, tmpfsErr, nestedMountContext())
+	}
+	if tmpfsErr != nil {
+		return fmt.Errorf("mount tmpfs: %w; %s", tmpfsErr, nestedMountContext())
+	}
+	return nil
+}
+
+func nestedMountContext() string {
+	status, _ := os.ReadFile("/proc/self/status")
+	fields := make([]string, 0, 7)
+	for _, line := range strings.Split(string(status), "\n") {
+		for _, prefix := range []string{"Uid:", "Gid:", "CapEff:", "NoNewPrivs:", "Seccomp:"} {
+			if strings.HasPrefix(line, prefix) {
+				fields = append(fields, strings.Join(strings.Fields(line), "="))
+			}
+		}
+	}
+	for _, path := range []string{"/proc/self/uid_map", "/proc/self/gid_map"} {
+		mapping, err := os.ReadFile(path)
+		if err == nil {
+			fields = append(fields, filepath.Base(path)+"="+strings.Join(strings.Fields(string(mapping)), ":"))
+		}
+	}
+	return strings.Join(fields, ", ")
 }
 
 func fetchReady(endpoint string) error {
