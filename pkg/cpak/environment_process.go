@@ -53,15 +53,15 @@ func (c *Cpak) EnvironmentProcesses(value string) ([]types.EnvironmentProcess, e
 	}
 	result := []types.EnvironmentProcess{}
 	for _, entry := range entries {
-		pid, parseErr := strconv.Atoi(entry.Name())
-		if parseErr != nil {
+		pid, processID, ok := parseProcessID(entry.Name())
+		if !ok {
 			continue
 		}
 		candidateDevice, candidateInode, statErr := processNamespace(pid)
 		if statErr != nil || candidateDevice != device || candidateInode != inode {
 			continue
 		}
-		current, processErr := process.NewProcess(int32(pid))
+		current, processErr := process.NewProcess(processID)
 		if processErr != nil {
 			continue
 		}
@@ -75,10 +75,18 @@ func (c *Cpak) EnvironmentProcesses(value string) ([]types.EnvironmentProcess, e
 		if info, memoryErr := current.MemoryInfo(); memoryErr == nil && info != nil {
 			memory = info.RSS
 		}
-		result = append(result, types.EnvironmentProcess{PID: int32(pid), Command: command, CPU: cpu, Memory: memory, CanSignal: pid != container.Pid && status != "Z"})
+		result = append(result, types.EnvironmentProcess{PID: processID, Command: command, CPU: cpu, Memory: memory, CanSignal: pid != container.Pid && status != "Z"})
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].PID < result[right].PID })
 	return result, nil
+}
+
+func parseProcessID(value string) (int, int32, bool) {
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || parsed <= 0 {
+		return 0, 0, false
+	}
+	return int(parsed), int32(parsed), true
 }
 
 var environmentSignals = map[string]unix.Signal{
