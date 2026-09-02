@@ -139,6 +139,38 @@ jobs:
       - name: Run cpak in QEMU
         run: integration/vm.sh
 
+  x11:
+    name: Isolated X11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+
+      - name: Install X11 test servers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openbox x11-utils xserver-xephyr xvfb
+
+      - name: Test the isolated X11 desktop
+        run: |
+          unset DBUS_SESSION_BUS_ADDRESS DBUS_SYSTEM_BUS_ADDRESS WAYLAND_DISPLAY XAUTHORITY
+          Xvfb :90 -ac -nolisten tcp -screen 0 1280x800x24 >/tmp/cpak-xvfb.log 2>&1 &
+          xvfb_pid=$!
+          for attempt in $(seq 1 50); do
+            if DISPLAY=:90 xprop -root >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.1
+          done
+          DISPLAY=:90 openbox --sm-disable >/tmp/cpak-openbox.log 2>&1 &
+          openbox_pid=$!
+          trap 'kill "${openbox_pid}" "${xvfb_pid}" 2>/dev/null || true' EXIT
+          DISPLAY=:90 go test -race ./pkg/cpak -run 'TestX11(BrokerIntegratesXephyrWithTheHostDesktop|BridgeStartsAReachableDisplayOnX11)' -count=1 -v
+
   nixos:
     name: NixOS
     runs-on: ubuntu-24.04
@@ -281,7 +313,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [assemble, compliance, integration, nixos]
+    needs: [assemble, compliance, integration, nixos, x11]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

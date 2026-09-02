@@ -210,6 +210,17 @@ func TestRestrictsIsolatedDesktopCapabilities(t *testing.T) {
 	}
 }
 
+func TestRestrictsClipboardDirections(t *testing.T) {
+	wide := types.Override{DisplayX11: true, Clipboard: types.ClipboardGrant{HostToApp: true, AppToHost: true}}
+	narrow := types.Override{DisplayX11: true, Clipboard: types.ClipboardGrant{HostToApp: true}}
+	if !Restricts(wide, narrow) {
+		t.Fatal("dropping a clipboard direction was not recognized as a restriction")
+	}
+	if Restricts(narrow, wide) {
+		t.Fatal("adding a clipboard direction was accepted as a restriction")
+	}
+}
+
 func TestRestrictsHostNetworkAccess(t *testing.T) {
 	wide := types.Override{Network: true, HostNetwork: true}
 	narrow := types.Override{Network: true}
@@ -248,7 +259,7 @@ func TestPolicyRootReadsTheSchemaBeforeSerialDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != "2d4b6c81b3d9b1dc76acc3ad274833c12917e33815fb26ac0f9aca2b61f3bc35" {
+	if current != "99e9c62bdd8b9e50495b7a33de53804b21782d8be57e5f3ca0f0474e021482e4" {
 		t.Fatalf("current policy root changed to %s", current)
 	}
 }

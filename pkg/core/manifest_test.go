@@ -142,6 +142,22 @@ func TestVersionThreeAcceptsIsolatedDesktopCapabilities(t *testing.T) {
 	}
 }
 
+func TestVersionThreeRequiresDisplayX11ForClipboardMediation(t *testing.T) {
+	manifest, err := DecodeManifest([]byte(strings.Replace(exampleManifest,
+		`"override": {"socketWayland": true}`,
+		`"override": {"clipboard": {"hostToApp": true}}`, 1)))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if err = ValidateManifest(manifest); err == nil {
+		t.Fatal("clipboard mediation was accepted without displayX11")
+	}
+	manifest.Override.DisplayX11 = true
+	if err = ValidateManifest(manifest); err != nil {
+		t.Fatalf("clipboard mediation with displayX11 was refused: %v", err)
+	}
+}
+
 func TestAnUnknownFieldIsRefused(t *testing.T) {
 	if _, err := DecodeManifest([]byte(strings.Replace(exampleManifest, `"name": "Example",`, `"name": "Example", "nmae": "Example",`, 1))); err == nil {
 		t.Fatal("a misspelled field was accepted, which loses whatever it meant")

@@ -43,6 +43,19 @@ func TestPermissionSummaryDisclosesWaylandClipboardAccess(t *testing.T) {
 	}
 }
 
+func TestPermissionSummaryDisclosesClipboardDirections(t *testing.T) {
+	permissions := SummarizePermissions(types.Override{
+		DisplayX11: true,
+		Clipboard:  types.ClipboardGrant{HostToApp: true, AppToHost: true},
+	})
+	if len(permissions) != 2 {
+		t.Fatalf("clipboard permissions: %+v", permissions)
+	}
+	if permissions[1].Name != "Clipboard" || permissions[1].Detail != "read host clipboard, write host clipboard" {
+		t.Fatalf("clipboard permission summary: %+v", permissions[1])
+	}
+}
+
 func TestPermissionSummaryDisclosesNestedMountTradeoff(t *testing.T) {
 	permissions := SummarizePermissions(types.Override{UserNamespaces: true})
 	if len(permissions) != 1 {

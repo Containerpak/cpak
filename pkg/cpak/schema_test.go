@@ -23,7 +23,7 @@ func TestManifestV2SchemaExcludesLegacyFilesystemFields(t *testing.T) {
 	if !ok {
 		t.Fatal("override definition is missing")
 	}
-	for _, field := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus", "displayX11", "bluetooth"} {
+	for _, field := range []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus", "displayX11", "clipboard", "bluetooth"} {
 		if _, exists := override.Properties.Get(field); exists {
 			t.Fatalf("legacy field %s is present in v2 schema", field)
 		}
@@ -53,7 +53,7 @@ func TestManifestV3SchemaExcludesRawHostSockets(t *testing.T) {
 	if _, exists := override.Properties.Get("sessionBus"); !exists {
 		t.Fatal("filtered session bus policy is missing from v3 schema")
 	}
-	for _, field := range []string{"displayX11", "bluetooth"} {
+	for _, field := range []string{"displayX11", "clipboard", "bluetooth"} {
 		if _, exists := override.Properties.Get(field); !exists {
 			t.Fatalf("isolated desktop capability %s is missing from v3 schema", field)
 		}

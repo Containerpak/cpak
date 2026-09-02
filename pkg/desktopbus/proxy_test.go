@@ -559,8 +559,8 @@ func TestBluetoothProxyForwardsBluezOnly(t *testing.T) {
 	if err = connection.BusObject().Call("org.freedesktop.DBus.ListNames", 0).Err; err == nil || !strings.Contains(err.Error(), "not permitted") {
 		t.Fatalf("system bus enumeration was not denied: %v", err)
 	}
-	if err = connection.Object("org.freedesktop.login1", "/org/freedesktop/login1").Call("org.freedesktop.login1.Manager.PowerOff", 0, false).Err; err == nil || !strings.Contains(err.Error(), "not permitted") {
-		t.Fatalf("unrelated system service was not denied: %v", err)
+	if err = connection.Object("org.freedesktop.login1", "/org/freedesktop/login1").Call("org.freedesktop.login1.Manager.PowerOff", 0, false).Err; err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("unrelated system service did not appear absent: %v", err)
 	}
 
 	signals := make(chan *dbus.Signal, 1)
@@ -962,6 +962,9 @@ func TestProxyRestrictsSessionBusWithoutPermission(t *testing.T) {
 	defer connection.Close()
 	if err = connection.BusObject().Call("org.freedesktop.DBus.ListNames", 0).Err; err == nil || !strings.Contains(err.Error(), "not permitted") {
 		t.Fatalf("unrestricted session bus call: %v", err)
+	}
+	if err = connection.Object("org.example.Unavailable", "/org/example/Unavailable").Call("org.example.Unavailable.Ping", 0).Err; err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("undeclared session service did not appear absent: %v", err)
 	}
 	options := map[string]dbus.Variant{"handle_token": dbus.MakeVariant("restricted_picker")}
 	var handle dbus.ObjectPath

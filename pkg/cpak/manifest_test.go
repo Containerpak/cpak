@@ -183,6 +183,20 @@ func TestIsolatedDesktopCapabilitiesRequireManifestVersionThree(t *testing.T) {
 	}
 }
 
+func TestClipboardMediationRequiresDisplayX11(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.ManifestVersion = "3.0"
+	manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+	manifest.Override.Clipboard = types.ClipboardGrant{HostToApp: true}
+	if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+		t.Fatal("clipboard mediation was accepted without displayX11")
+	}
+	manifest.Override.DisplayX11 = true
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatalf("clipboard mediation with displayX11 was refused: %v", err)
+	}
+}
+
 func TestSessionDesktopCapabilitiesRequireManifestVersionThree(t *testing.T) {
 	for _, enable := range []func(*types.Override){
 		func(override *types.Override) { override.DisplayX11 = true },

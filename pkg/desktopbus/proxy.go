@@ -348,7 +348,11 @@ func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *co
 	if policyBusCallAllowed(p.options.Policy, destination, path, interfaceName, member, message.Body) {
 		return false
 	}
-	_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "session bus access is not permitted"))
+	if destination != "" && destination != "org.freedesktop.DBus" {
+		_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.ServiceUnknown", "service is not available in this cpak"))
+	} else {
+		_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "session bus access is not permitted"))
+	}
 	return true
 }
 
@@ -380,7 +384,11 @@ func (p *Proxy) interceptBluetooth(client *serializedConn, state *connectionStat
 	if bluetoothBusCallAllowed(destination, path, interfaceName, member, message.Body, p.currentBluezSender()) {
 		return false
 	}
-	_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "Bluetooth bus access is not permitted"))
+	if destination != "" && destination != "org.freedesktop.DBus" {
+		_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.ServiceUnknown", "service is not available in this cpak"))
+	} else {
+		_ = client.writeSyntheticMessage(methodError(message, "org.freedesktop.DBus.Error.AccessDenied", "Bluetooth bus access is not permitted"))
+	}
 	return true
 }
 

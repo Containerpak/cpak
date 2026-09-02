@@ -339,7 +339,25 @@ filters. Leaving it out means that support was not declared.
 Set `displayX11` when an application needs X11 compatibility. cpak starts one
 nested display for the container and mounts only its socket and authority file.
 It uses Xwayland on a Wayland session or Xephyr on an X11 session. The host X11
-display is not exposed.
+display is not exposed. cpak keeps the application window sized with the nested
+display, forwards its title, icon and fullscreen state to the Xephyr window, and
+stops the instance after its last application window closes.
+
+Clipboard access through `displayX11` is explicit and directional:
+
+```json
+"clipboard": {
+  "hostToApp": true,
+  "appToHost": true
+}
+```
+
+On X11, cpak copies approved text and image targets between the host and nested
+displays. File and URI list targets are not copied. A transfer is limited to 16
+MiB. The application still receives only the nested X11 socket and its private
+cookie. The broker is part of the cpak binary, so the image needs no clipboard
+tool or desktop service. Xwayland exposes both clipboard directions through the
+Wayland compositor, so a Wayland launch requires both directions to be declared.
 
 Set `socketWayland` to share the Wayland display. The compositor also mediates
 clipboard access through that socket, so the install prompt discloses both.
@@ -347,9 +365,10 @@ clipboard access through that socket, so the install prompt discloses both.
 Set `bluetooth` to expose the BlueZ service through a private system bus proxy.
 The permission covers general BlueZ use, including discovery, pairing, GATT,
 agents, profiles and file descriptor passing. Calls to other system services
-and raw HCI access remain blocked. This needs BlueZ and its existing system bus
-on hosts where the permission is used, but cpak does not invoke `dbus-daemon` or
-an external D-Bus proxy.
+and raw HCI access remain blocked. If BlueZ or the host system bus is absent,
+the application starts without Bluetooth. cpak does not invoke `dbus-daemon`
+or an external D-Bus proxy. Services outside the declared policy appear
+unavailable instead of exposing the host bus.
 
 `runtime_sources` adds checksum-pinned artifacts to a managed runtime layer.
 Use the `dpkg` or `rpm` installer for native packages. Use `deb-extract` when a

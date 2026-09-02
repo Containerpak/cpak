@@ -164,6 +164,9 @@ func validateManifestBusPolicy(version, scope string, override types.Override) e
 	if (override.DisplayX11 || override.Bluetooth) && version != "3.0" {
 		return fmt.Errorf("%s isolated desktop capabilities require manifest version 3.0", scope)
 	}
+	if err := types.ValidateClipboardGrant(override.Clipboard, override.DisplayX11); err != nil {
+		return fmt.Errorf("%s clipboard policy: %w", scope, err)
+	}
 	for _, permission := range []struct {
 		enabled bool
 		name    string

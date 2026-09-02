@@ -76,6 +76,16 @@ func SummarizePermissions(override types.Override) []Permission {
 	add(override.Notification, "Notifications", "desktop notifications")
 	add(override.OpenURI, "External links", "open URIs on the host")
 	add(override.HostApplications, "Host applications", "desktop catalog and launch broker")
+	clipboard := []string{}
+	if override.Clipboard.HostToApp {
+		clipboard = append(clipboard, "read host clipboard")
+	}
+	if override.Clipboard.AppToHost {
+		clipboard = append(clipboard, "write host clipboard")
+	}
+	if len(clipboard) > 0 {
+		permissions = append(permissions, Permission{Name: "Clipboard", Detail: strings.Join(clipboard, ", ")})
+	}
 	picker := []string{}
 	if override.FilePicker.OpenFile {
 		picker = append(picker, "open files")

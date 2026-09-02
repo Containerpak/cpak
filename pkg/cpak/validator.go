@@ -98,7 +98,7 @@ func ManifestV3Schema() *jsonschema.Schema {
 }
 
 func manifestV2RemovedOverrideFields() []string {
-	return []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus", "displayX11", "bluetooth"}
+	return []string{"fsHost", "fsHostEtc", "fsHostHome", "fsExtra", "sessionBus", "displayX11", "clipboard", "bluetooth"}
 }
 
 func manifestV3RemovedOverrideFields() []string {

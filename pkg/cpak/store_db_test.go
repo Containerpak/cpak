@@ -52,7 +52,7 @@ func TestSetContainerRuntimeStoresTheNetworkHelperIdentity(t *testing.T) {
 	if err = store.NewContainer(container); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.SetContainerRuntime(container.CpakId, 101, 202, "/cgroup", 303, 404); err != nil {
+	if err = store.SetContainerRuntime(container.CpakId, 101, 202, "/cgroup", 303, 404, 505, 606); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Containers.Get(t.Context(), container.CpakId)
@@ -64,6 +64,9 @@ func TestSetContainerRuntimeStoresTheNetworkHelperIdentity(t *testing.T) {
 	}
 	if got.NetworkHelperPid != 303 || got.NetworkHelperStartTime != 404 {
 		t.Fatalf("network runtime was not stored: %+v", got)
+	}
+	if got.X11BrokerPid != 505 || got.X11BrokerStartTime != 606 {
+		t.Fatalf("X11 broker runtime was not stored: %+v", got)
 	}
 }
 

@@ -317,19 +317,23 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			os.RemoveAll(container.StatePath)
 			return types.Container{}, err
 		}
-		container.BluetoothBusProxyStartTime, err = processStartTime(container.BluetoothBusProxyPid)
-		if err != nil {
-			_ = syscall.Kill(container.BluetoothBusProxyPid, syscall.SIGTERM)
-			cleanupBluetoothBusProxy(container)
-			cleanupDesktopBusProxy(container)
-			cleanupSystemBrokerRuntime(container)
-			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
-			os.RemoveAll(container.StatePath)
-			return types.Container{}, fmt.Errorf("identify Bluetooth bus proxy: %w", err)
+		if container.BluetoothBusProxyPid == 0 {
+			container.BluetoothBusSocketPath = ""
+		} else {
+			container.BluetoothBusProxyStartTime, err = processStartTime(container.BluetoothBusProxyPid)
+			if err != nil {
+				_ = syscall.Kill(container.BluetoothBusProxyPid, syscall.SIGTERM)
+				cleanupBluetoothBusProxy(container)
+				cleanupDesktopBusProxy(container)
+				cleanupSystemBrokerRuntime(container)
+				os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
+				os.RemoveAll(container.StatePath)
+				return types.Container{}, fmt.Errorf("identify Bluetooth bus proxy: %w", err)
+			}
 		}
 	}
 	if override.DisplayX11 {
-		container, err = startX11Bridge(container)
+		container, err = startX11Bridge(container, override.Clipboard)
 		if err != nil {
 			cleanupX11Bridge(container)
 			cleanupBluetoothBusProxy(container)
@@ -378,6 +382,14 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		c.CleanupContainer(container)
 		return types.Container{}, fmt.Errorf("identify container process: %w", err)
 	}
+	if container.X11SocketPath != "" {
+		container, err = startX11Broker(container, override.Clipboard)
+		if err != nil {
+			terminateContainerProcess(container)
+			c.CleanupContainer(container)
+			return types.Container{}, err
+		}
+	}
 	if override.FilePicker.Enabled() {
 		err = c.mountPersistentFileGrants(app.Origin, container)
 	}
@@ -390,7 +402,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
-	if err = store.SetContainerRuntime(container.CpakId, container.Pid, container.ProcessStartTime, container.CgroupPath, container.NetworkHelperPid, container.NetworkHelperStartTime); err != nil {
+	if err = store.SetContainerRuntime(container.CpakId, container.Pid, container.ProcessStartTime, container.CgroupPath, container.NetworkHelperPid, container.NetworkHelperStartTime, container.X11BrokerPid, container.X11BrokerStartTime); err != nil {
 		c.CleanupContainer(container)
 		return types.Container{}, err
 	}
@@ -1700,9 +1712,9 @@ func bluetoothProxyRequested(override types.Override) bool {
 }
 
 func startBluetoothBusProxy(container types.Container) (int, error) {
-	info, err := os.Stat(hostSystemBusPath())
-	if err != nil || info.Mode()&os.ModeSocket == 0 {
-		return 0, errors.New("Bluetooth requires a host system bus")
+	if !socketIsLive(hostSystemBusPath()) {
+		logger.Println("Bluetooth is unavailable because the host has no system bus")
+		return 0, nil
 	}
 	arguments := []string{
 		"desktop-bus-proxy",

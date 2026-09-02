@@ -72,6 +72,27 @@ func TestOverrideAdditionsReportsSessionBusWidening(t *testing.T) {
 	}
 }
 
+func TestOverrideAdditionsReportsClipboardDirections(t *testing.T) {
+	before := Override{DisplayX11: true, Clipboard: ClipboardGrant{HostToApp: true}}
+	after := before
+	after.Clipboard.AppToHost = true
+	if additions := before.Additions(after); !reflect.DeepEqual(additions, []string{"clipboard"}) {
+		t.Fatalf("clipboard additions: %v", additions)
+	}
+	if additions := after.Additions(before); len(additions) != 0 {
+		t.Fatalf("clipboard restriction was reported as an addition: %v", additions)
+	}
+}
+
+func TestClipboardRequiresAnIsolatedX11Display(t *testing.T) {
+	if err := ValidateClipboardGrant(ClipboardGrant{HostToApp: true}, false); err == nil {
+		t.Fatal("clipboard mediation was accepted without displayX11")
+	}
+	if err := ValidateClipboardGrant(ClipboardGrant{HostToApp: true, AppToHost: true}, true); err != nil {
+		t.Fatalf("clipboard mediation with displayX11 was refused: %v", err)
+	}
+}
+
 func TestDecodeFilePickerGrantJSON(t *testing.T) {
 	grant, err := DecodeFilePickerGrantJSON([]byte(`{"openFile":true,"openFolder":true,"saveFile":true,"persistent":true,"containingFolder":true}`))
 	if err != nil {

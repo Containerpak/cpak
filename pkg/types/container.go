@@ -84,6 +84,14 @@ type Container struct {
 	X11BridgePid       int    `json:"x11_bridge_pid"`
 	X11BridgeStartTime uint64 `json:"x11_bridge_start_time"`
 
+	// X11BrokerPid is the PID of cpak's clipboard, window and lifecycle broker.
+	X11BrokerPid       int    `json:"x11_broker_pid,omitempty"`
+	X11BrokerStartTime uint64 `json:"x11_broker_start_time,omitempty"`
+	X11BrokerRequired  bool   `json:"x11_broker_required,omitempty"`
+
+	// X11HostWindowName identifies the Xephyr window without relying on its title.
+	X11HostWindowName string `json:"x11_host_window_name,omitempty"`
+
 	// X11Display is the private display name used inside the container.
 	X11Display string `json:"x11_display"`
 

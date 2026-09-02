@@ -19,7 +19,8 @@ const (
 	PolicySchemaWithoutSerial              = 1
 	PolicySchemaWithoutSessionBus          = 2
 	PolicySchemaWithoutDesktopCapabilities = 3
-	CurrentPolicySchema                    = 4
+	PolicySchemaWithoutClipboard           = 4
+	CurrentPolicySchema                    = 5
 )
 
 // PolicyRoot hashes what an application is allowed to do. Lists whose order
@@ -37,6 +38,9 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 	case PolicySchemaWithoutSerial:
 		if canonical.DeviceSerial {
 			return "", errors.New("serial devices are not part of this policy schema")
+		}
+		if canonical.Clipboard.Enabled() {
+			return "", errors.New("clipboard mediation is not part of this policy schema")
 		}
 		if canonical.SessionBus.Enabled() {
 			return "", errors.New("session bus rules are not part of this policy schema")
@@ -57,8 +61,15 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return digestJSON("policy", withoutDesktopCapabilities), nil
+		withoutClipboard, err := removeClipboardField(withoutDesktopCapabilities)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutClipboard), nil
 	case PolicySchemaWithoutSessionBus:
+		if canonical.Clipboard.Enabled() {
+			return "", errors.New("clipboard mediation is not part of this policy schema")
+		}
 		if canonical.SessionBus.Enabled() {
 			return "", errors.New("session bus rules are not part of this policy schema")
 		}
@@ -74,8 +85,15 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return digestJSON("policy", withoutDesktopCapabilities), nil
+		withoutClipboard, err := removeClipboardField(withoutDesktopCapabilities)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutClipboard), nil
 	case PolicySchemaWithoutDesktopCapabilities:
+		if canonical.Clipboard.Enabled() {
+			return "", errors.New("clipboard mediation is not part of this policy schema")
+		}
 		if canonical.DisplayX11 || canonical.Bluetooth {
 			return "", errors.New("desktop capabilities are not part of this policy schema")
 		}
@@ -87,12 +105,37 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return digestJSON("policy", withoutDesktopCapabilities), nil
+		withoutClipboard, err := removeClipboardField(withoutDesktopCapabilities)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutClipboard), nil
+	case PolicySchemaWithoutClipboard:
+		if canonical.Clipboard.Enabled() {
+			return "", errors.New("clipboard mediation is not part of this policy schema")
+		}
+		encoded, err := json.Marshal(canonical)
+		if err != nil {
+			return "", err
+		}
+		withoutClipboard, err := removeClipboardField(encoded)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", withoutClipboard), nil
 	case CurrentPolicySchema:
 		return digest("policy", canonical)
 	default:
 		return "", fmt.Errorf("unsupported policy schema %d", schema)
 	}
+}
+
+func removeClipboardField(encoded []byte) ([]byte, error) {
+	withoutClipboard := bytes.Replace(encoded, []byte(`,"clipboard":{}`), nil, 1)
+	if len(withoutClipboard) == len(encoded) {
+		return nil, errors.New("clipboard field is missing from the current policy schema")
+	}
+	return withoutClipboard, nil
 }
 
 func removeDesktopCapabilityFields(encoded []byte) ([]byte, error) {
@@ -173,6 +216,8 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.FilePicker.SaveFile, current.FilePicker.SaveFile},
 		{candidate.FilePicker.Persistent, current.FilePicker.Persistent},
 		{candidate.FilePicker.ContainingFolder, current.FilePicker.ContainingFolder},
+		{candidate.Clipboard.HostToApp, current.Clipboard.HostToApp},
+		{candidate.Clipboard.AppToHost, current.Clipboard.AppToHost},
 	} {
 		if pair[0] && !pair[1] {
 			return false

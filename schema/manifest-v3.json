@@ -104,6 +104,22 @@
         "binary"
       ]
     },
+    "ClipboardGrant": {
+      "properties": {
+        "hostToApp": {
+          "type": "boolean",
+          "description": "Allow the application to read host clipboard content",
+          "default": false
+        },
+        "appToHost": {
+          "type": "boolean",
+          "description": "Allow the application to write host clipboard content",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "DBusCallGrant": {
       "properties": {
         "name": {
@@ -404,6 +420,10 @@
         "filePicker": {
           "$ref": "#/$defs/FilePickerGrant",
           "description": "Native file chooser capabilities"
+        },
+        "clipboard": {
+          "$ref": "#/$defs/ClipboardGrant",
+          "description": "Mediated clipboard directions for an isolated X11 display"
         },
         "sessionBus": {
           "$ref": "#/$defs/DBusPolicy",

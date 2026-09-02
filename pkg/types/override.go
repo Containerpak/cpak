@@ -48,6 +48,7 @@ type Override struct {
 	HostApplications bool              `json:"hostApplications" jsonschema:"description=Expose and launch host desktop applications,default=false" flag:"hostApplications,bool"`
 	HostActions      []HostActionGrant `json:"hostActions,omitempty" jsonschema:"description=Typed host service capabilities"`
 	FilePicker       FilePickerGrant   `json:"filePicker,omitempty" jsonschema:"description=Native file chooser capabilities"`
+	Clipboard        ClipboardGrant    `json:"clipboard,omitempty" jsonschema:"description=Mediated clipboard directions for an isolated X11 display"`
 	SessionBus       DBusPolicy        `json:"sessionBus,omitempty" jsonschema:"description=Filtered session bus policy"`
 
 	Filesystem []FilesystemPermission `json:"filesystem,omitempty" jsonschema:"description=Host filesystem permissions"`
@@ -78,6 +79,22 @@ type FilePickerGrant struct {
 	SaveFile         bool `json:"saveFile,omitempty" jsonschema:"description=Select a host destination for a new file,default=false"`
 	Persistent       bool `json:"persistent,omitempty" jsonschema:"description=Offer persistent grants,default=false"`
 	ContainingFolder bool `json:"containingFolder,omitempty" jsonschema:"description=Offer the containing folder as context,default=false"`
+}
+
+type ClipboardGrant struct {
+	HostToApp bool `json:"hostToApp,omitempty" jsonschema:"description=Allow the application to read host clipboard content,default=false"`
+	AppToHost bool `json:"appToHost,omitempty" jsonschema:"description=Allow the application to write host clipboard content,default=false"`
+}
+
+func (g ClipboardGrant) Enabled() bool {
+	return g.HostToApp || g.AppToHost
+}
+
+func ValidateClipboardGrant(grant ClipboardGrant, displayX11 bool) error {
+	if grant.Enabled() && !displayX11 {
+		return errors.New("clipboard mediation requires displayX11")
+	}
+	return nil
 }
 
 func (g FilePickerGrant) Enabled() bool {
@@ -127,6 +144,7 @@ func NewOverride() Override {
 		DeviceShm:           false,
 		DeviceAll:           false,
 		HostApplications:    false,
+		Clipboard:           ClipboardGrant{},
 		Filesystem:          []FilesystemPermission{},
 		FsHost:              false,
 		FsHostEtc:           false,
@@ -298,12 +316,19 @@ func (o Override) Additions(next Override) []string {
 			if key == "filePicker" && filePickerHasAdditions(o.FilePicker, next.FilePicker) {
 				changes = append(changes, key)
 			}
+			if key == "clipboard" && clipboardHasAdditions(o.Clipboard, next.Clipboard) {
+				changes = append(changes, key)
+			}
 			if key == "sessionBus" && !DBusPolicyRestricts(o.SessionBus, next.SessionBus) {
 				changes = append(changes, key)
 			}
 		}
 	}
 	return changes
+}
+
+func clipboardHasAdditions(current, next ClipboardGrant) bool {
+	return !current.HostToApp && next.HostToApp || !current.AppToHost && next.AppToHost
 }
 
 func filePickerHasAdditions(current, next FilePickerGrant) bool {

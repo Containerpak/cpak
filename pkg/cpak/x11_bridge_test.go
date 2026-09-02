@@ -16,9 +16,12 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jezek/xgb"
+	"github.com/jezek/xgb/xproto"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -93,13 +96,28 @@ func TestX11ServerFallsBackToXephyrOnX11(t *testing.T) {
 		return "", errors.New("not found")
 	}
 	t.Cleanup(func() { findX11Server = original })
-	server, err := x11ServerCommand("/tmp/authority")
+	server, err := x11ServerCommand("/tmp/authority", "cpak-test", types.ClipboardGrant{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/Xephyr", "-auth", "/tmp/authority", "-nolisten", "tcp", "-screen", "1280x800"}
+	want := []string{"/usr/bin/Xephyr", "-auth", "/tmp/authority", "-nolisten", "tcp", "-screen", "1280x800", "-resizeable", "-name", "cpak-test"}
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xephyr arguments: got %v, want %v", server.command.Args, want)
+	}
+}
+
+func TestXwaylandRefusesAnUndisclosedClipboardDirection(t *testing.T) {
+	if os.Getenv("WAYLAND_DISPLAY") == "" || !socketIsLive(waylandSocketPath(strconv.Itoa(os.Getuid()))) {
+		t.Skip("no Wayland display")
+	}
+	for _, clipboard := range []types.ClipboardGrant{
+		{},
+		{HostToApp: true},
+		{AppToHost: true},
+	} {
+		if _, err := x11ServerCommand("/tmp/authority", "cpak-test", clipboard); err == nil {
+			t.Fatalf("Xwayland accepted an undisclosed clipboard direction: %+v", clipboard)
+		}
 	}
 }
 
@@ -135,7 +153,7 @@ func TestX11BridgeStartsAReachablePrivateDisplay(t *testing.T) {
 		t.Skip("Xwayland is not installed")
 	}
 	state := t.TempDir()
-	container, err := startX11Bridge(types.Container{StatePath: state, LogPath: filepath.Join(state, "x11.log")})
+	container, err := startX11Bridge(types.Container{StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
 	if err != nil {
 		log, _ := os.ReadFile(filepath.Join(state, "x11.log"))
 		t.Fatalf("%v\n%s", err, log)
@@ -156,6 +174,122 @@ func TestX11BridgeStartsAReachablePrivateDisplay(t *testing.T) {
 	}
 }
 
+func TestX11BrokerStopsTheContainerAfterItsLastWindowCloses(t *testing.T) {
+	if os.Getenv("WAYLAND_DISPLAY") == "" || !socketIsLive(waylandSocketPath(strconv.Itoa(os.Getuid()))) {
+		t.Skip("no Wayland display")
+	}
+	if _, err := exec.LookPath("Xwayland"); err != nil {
+		t.Skip("Xwayland is not installed")
+	}
+	state := t.TempDir()
+	container, err := startX11Bridge(types.Container{CpakId: "broker-test", StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cleanupX11Bridge(container) })
+	process := exec.Command("sleep", "30")
+	process.Env = append(os.Environ(), "CPAK_CONTAINER_ID="+container.CpakId)
+	if err = process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	processExited := make(chan error, 1)
+	go func() { processExited <- process.Wait() }()
+	t.Cleanup(func() {
+		if process.Process != nil {
+			_ = process.Process.Kill()
+		}
+	})
+	container.Pid = process.Process.Pid
+	container.ProcessStartTime, err = processStartTime(container.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyReader, readyWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- RunX11Broker(X11BrokerOptions{
+			NestedDisplay: x11BrokerDisplay(container), NestedAuthority: container.X11AuthorityPath,
+			ServerPid: container.X11BridgePid, ServerStartTime: container.X11BridgeStartTime,
+			ContainerPid: container.Pid, ContainerStartTime: container.ProcessStartTime,
+			ContainerID: container.CpakId, ReadyFD: int(readyWriter.Fd()),
+		})
+	}()
+	ready := []byte{0}
+	if _, err = io.ReadFull(readyReader, ready); err != nil || ready[0] != 1 {
+		t.Fatalf("broker readiness: %v, %v", ready, err)
+	}
+	readyReader.Close()
+	previousAuthority, hadAuthority := os.LookupEnv("XAUTHORITY")
+	t.Setenv("XAUTHORITY", container.X11AuthorityPath)
+	connection, err := xgb.NewConnDisplay(x11BrokerDisplay(container))
+	if hadAuthority {
+		_ = os.Setenv("XAUTHORITY", previousAuthority)
+	} else {
+		_ = os.Unsetenv("XAUTHORITY")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	screen := xproto.Setup(connection).DefaultScreen(connection)
+	tiny, err := xproto.NewWindowId(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(connection, screen.RootDepth, tiny, screen.Root, 0, 0, 8, 8, 0, xproto.WindowClassInputOutput, screen.RootVisual, 0, nil).Check(); err != nil {
+		t.Fatal(err)
+	}
+	xproto.MapWindow(connection, tiny)
+	connection.Sync()
+	time.Sleep(2300 * time.Millisecond)
+	if !sameContainerProcess(container, container.Pid) {
+		t.Fatal("a technical startup window stopped the container")
+	}
+	xproto.DestroyWindow(connection, tiny)
+	connection.Sync()
+	window, err := xproto.NewWindowId(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(connection, screen.RootDepth, window, screen.Root, 0, 0, 640, 480, 0, xproto.WindowClassInputOutput, screen.RootVisual, 0, nil).Check(); err != nil {
+		t.Fatal(err)
+	}
+	xproto.MapWindow(connection, window)
+	connection.Sync()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		attributes, attributesErr := xproto.GetWindowAttributes(connection, window).Reply()
+		if attributesErr == nil && attributes.MapState == xproto.MapStateViewable {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	xproto.DestroyWindow(connection, window)
+	connection.Sync()
+	select {
+	case waitErr := <-processExited:
+		if waitErr == nil {
+			t.Fatal("container process exited without the expected termination signal")
+		}
+		if exit, ok := waitErr.(*exec.ExitError); !ok || exit.ProcessState.Sys().(syscall.WaitStatus).Signal() != syscall.SIGTERM {
+			t.Fatalf("container process exit: %v", waitErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("container process survived the last X11 window")
+	}
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("broker exit: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("X11 broker survived its display")
+	}
+}
+
 func TestX11BridgeStartsAReachableDisplayOnX11(t *testing.T) {
 	if os.Getenv("DISPLAY") == "" {
 		t.Skip("no X11 display")
@@ -165,7 +299,7 @@ func TestX11BridgeStartsAReachableDisplayOnX11(t *testing.T) {
 	}
 	t.Setenv("WAYLAND_DISPLAY", "")
 	state := t.TempDir()
-	container, err := startX11Bridge(types.Container{StatePath: state, LogPath: filepath.Join(state, "x11.log")})
+	container, err := startX11Bridge(types.Container{StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{})
 	if err != nil {
 		log, _ := os.ReadFile(filepath.Join(state, "x11.log"))
 		t.Fatalf("%v\n%s", err, log)

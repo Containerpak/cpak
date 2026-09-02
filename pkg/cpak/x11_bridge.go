@@ -30,14 +30,16 @@ var findX11Server = exec.LookPath
 type x11Server struct {
 	command       *exec.Cmd
 	privateSocket bool
+	hostWindow    bool
 }
 
-func startX11Bridge(container types.Container) (types.Container, error) {
+func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (types.Container, error) {
 	authorityPath := filepath.Join(container.StatePath, "xauthority")
 	if err := writeX11Authority(authorityPath); err != nil {
 		return container, err
 	}
-	server, err := x11ServerCommand(authorityPath)
+	hostWindowName := "cpak-" + container.CpakId
+	server, err := x11ServerCommand(authorityPath, hostWindowName, clipboard)
 	if err != nil {
 		_ = os.Remove(authorityPath)
 		return container, err
@@ -149,13 +151,29 @@ func startX11Bridge(container types.Container) (types.Container, error) {
 	container.X11SocketPath = socketPath
 	container.X11SocketTarget = socketTarget
 	container.X11AuthorityPath = authorityPath
+	if server.hostWindow {
+		container.X11HostWindowName = hostWindowName
+	}
+	alias := x11BrokerDisplay(container)
+	if err = os.Symlink(socketPath, alias); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		_ = os.Remove(authorityPath)
+		if server.privateSocket {
+			_ = os.Remove(socketPath)
+		}
+		return container, fmt.Errorf("create private X11 broker endpoint: %w", err)
+	}
 	_ = command.Process.Release()
 	return container, nil
 }
 
-func x11ServerCommand(authorityPath string) (x11Server, error) {
+func x11ServerCommand(authorityPath, hostWindowName string, clipboard types.ClipboardGrant) (x11Server, error) {
 	uid := strconv.Itoa(os.Getuid())
 	if os.Getenv("WAYLAND_DISPLAY") != "" && socketIsLive(waylandSocketPath(uid)) {
+		if !clipboard.HostToApp || !clipboard.AppToHost {
+			return x11Server{}, errors.New("displayX11 on Wayland requires clipboard.hostToApp and clipboard.appToHost because Xwayland mediates both directions")
+		}
 		server, err := findX11Server("Xwayland")
 		if err == nil {
 			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-geometry", "1280x800"), privateSocket: true}, nil
@@ -164,7 +182,10 @@ func x11ServerCommand(authorityPath string) (x11Server, error) {
 	if os.Getenv("DISPLAY") != "" {
 		server, err := findX11Server("Xephyr")
 		if err == nil {
-			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-screen", "1280x800")}, nil
+			return x11Server{
+				command:    exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-screen", "1280x800", "-resizeable", "-name", hostWindowName),
+				hostWindow: true,
+			}, nil
 		}
 	}
 	return x11Server{}, errors.New("displayX11 requires Xwayland on Wayland or Xephyr on X11")
@@ -240,6 +261,9 @@ func writeX11AuthorityRecord(writer io.Writer, family uint16, address, display s
 }
 
 func cleanupX11Bridge(container types.Container) {
+	if sameRecordedProcess(container.X11BrokerPid, container.X11BrokerStartTime) {
+		_ = syscall.Kill(container.X11BrokerPid, syscall.SIGTERM)
+	}
 	if sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) {
 		_ = syscall.Kill(container.X11BridgePid, syscall.SIGTERM)
 	}
@@ -248,6 +272,9 @@ func cleanupX11Bridge(container types.Container) {
 	}
 	if strings.HasPrefix(filepath.Clean(container.X11SocketPath), filepath.Clean(container.StatePath)+string(filepath.Separator)) {
 		_ = os.Remove(container.X11SocketPath)
+	}
+	if container.X11Display != "" {
+		_ = os.Remove(x11BrokerDisplay(container))
 	}
 }
 
@@ -272,5 +299,12 @@ func containerX11BridgeAlive(container types.Container) bool {
 	if container.X11SocketPath == "" {
 		return true
 	}
-	return sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) && validateSocketOwner(container.X11SocketPath) == nil
+	if !sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) || validateSocketOwner(container.X11SocketPath) != nil {
+		return false
+	}
+	return !container.X11BrokerRequired || sameRecordedProcess(container.X11BrokerPid, container.X11BrokerStartTime)
+}
+
+func x11BrokerDisplay(container types.Container) string {
+	return filepath.Join(container.StatePath, "xgb") + container.X11Display
 }

@@ -801,6 +801,7 @@ func matchingPolicySchema(policy *types.Override, root string, declared int, sub
 	if declared == 0 {
 		schemas = []int{
 			integrity.CurrentPolicySchema,
+			integrity.PolicySchemaWithoutClipboard,
 			integrity.PolicySchemaWithoutDesktopCapabilities,
 			integrity.PolicySchemaWithoutSessionBus,
 			integrity.PolicySchemaWithoutSerial,
