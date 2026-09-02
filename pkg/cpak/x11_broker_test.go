@@ -215,6 +215,7 @@ func startTestX11Broker(t *testing.T, host, nested types.Container, hostToApp, a
 		process.Process.Kill()
 		t.Fatal(err)
 	}
+	readyFD := duplicateTestFileDescriptor(t, readyWriter)
 	previousAuthority, hadAuthority := os.LookupEnv("XAUTHORITY")
 	if err = os.Setenv("XAUTHORITY", host.X11AuthorityPath); err != nil {
 		t.Fatal(err)
@@ -226,7 +227,7 @@ func startTestX11Broker(t *testing.T, host, nested types.Container, hostToApp, a
 			HostDisplay: x11BrokerDisplay(host), HostWindow: "missing-test-window",
 			ServerPid: nested.X11BridgePid, ServerStartTime: nested.X11BridgeStartTime,
 			ContainerPid: process.Process.Pid, ContainerStartTime: started, ContainerID: nested.CpakId,
-			ReadyFD: int(readyWriter.Fd()), HostToApp: hostToApp, AppToHost: appToHost,
+			ReadyFD: readyFD, HostToApp: hostToApp, AppToHost: appToHost,
 		})
 	}()
 	ready := []byte{0}

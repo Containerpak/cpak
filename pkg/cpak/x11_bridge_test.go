@@ -208,13 +208,14 @@ func TestX11BrokerStopsTheContainerAfterItsLastWindowCloses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	readyFD := duplicateTestFileDescriptor(t, readyWriter)
 	done := make(chan error, 1)
 	go func() {
 		done <- RunX11Broker(X11BrokerOptions{
 			NestedDisplay: x11BrokerDisplay(container), NestedAuthority: container.X11AuthorityPath,
 			ServerPid: container.X11BridgePid, ServerStartTime: container.X11BridgeStartTime,
 			ContainerPid: container.Pid, ContainerStartTime: container.ProcessStartTime,
-			ContainerID: container.CpakId, ReadyFD: int(readyWriter.Fd()),
+			ContainerID: container.CpakId, ReadyFD: readyFD,
 		})
 	}()
 	ready := []byte{0}
@@ -288,6 +289,19 @@ func TestX11BrokerStopsTheContainerAfterItsLastWindowCloses(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("X11 broker survived its display")
 	}
+}
+
+func duplicateTestFileDescriptor(t *testing.T, file *os.File) int {
+	t.Helper()
+	fd, err := syscall.Dup(int(file.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		_ = syscall.Close(fd)
+		t.Fatal(err)
+	}
+	return fd
 }
 
 func TestX11BridgeStartsAReachableDisplayOnX11(t *testing.T) {

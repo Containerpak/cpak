@@ -46,6 +46,7 @@ func TestX11BrokerIntegratesXephyrWithTheHostDesktop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	readyFD := duplicateTestFileDescriptor(t, readyWriter)
 	done := make(chan error, 1)
 	go func() {
 		done <- RunX11Broker(X11BrokerOptions{
@@ -53,7 +54,7 @@ func TestX11BrokerIntegratesXephyrWithTheHostDesktop(t *testing.T) {
 			HostDisplay: os.Getenv("DISPLAY"), HostWindow: container.X11HostWindowName,
 			ServerPid: container.X11BridgePid, ServerStartTime: container.X11BridgeStartTime,
 			ContainerPid: container.Pid, ContainerStartTime: container.ProcessStartTime,
-			ContainerID: container.CpakId, ReadyFD: int(readyWriter.Fd()), HostToApp: true, AppToHost: true,
+			ContainerID: container.CpakId, ReadyFD: readyFD, HostToApp: true, AppToHost: true,
 		})
 	}()
 	ready := []byte{0}
