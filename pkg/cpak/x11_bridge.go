@@ -164,7 +164,7 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 		}
 		return container, fmt.Errorf("create private X11 broker endpoint: %w", err)
 	}
-	_ = command.Process.Release()
+	go func() { _ = command.Wait() }()
 	return container, nil
 }
 
