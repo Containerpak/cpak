@@ -142,6 +142,7 @@ write(
     desktop_entries=["/usr/share/applications/cpak-integration-browser.desktop"],
 )
 write("uri", "URI probe", override={"socketWayland": True, "openURI": True})
+write("session-bus", "Session bus probe", override={"sessionBus": {"own": ["org.example.CpakIntegration"]}})
 write("bluetooth", "Bluetooth probe", override={"network": True, "bluetooth": True})
 write("loopback", "Loopback probe", override={"network": True, "hostNetwork": True})
 write("network", "Network probe", override={"network": True})
@@ -308,6 +309,9 @@ echo "thread-pinned seccomp probe passed"
 guest_origin="$manifest_host/integration/guest-environment"
 LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share install "$guest_origin"
 LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop/share:/run/current-system/sw/share run_probe "$guest_origin" guest-environment
+
+install "$manifest_host/integration/session-bus"
+run_probe "$manifest_host/integration/session-bus" session-bus-own
 
 nested_host_log="$work/nested-host.log"
 if "$root/out/cpak-integration-probe" nested-mount >"$nested_host_log" 2>&1; then

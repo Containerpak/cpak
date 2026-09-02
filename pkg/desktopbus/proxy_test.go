@@ -731,10 +731,13 @@ func TestProxyForwardsBusAndInterceptsFileChooser(t *testing.T) {
 			SocketPath:      proxyPath,
 			UpstreamAddress: "unix:path=" + upstreamPath,
 			FilePicker:      true,
-			Policy: types.DBusPolicy{Talk: []types.DBusCallGrant{
-				{Name: "org.example.CpakDesktopBus", Path: "/org/example/CpakDesktopBus", Interface: "org.example.CpakDesktopBus", Members: []string{"StartTransientUnit"}},
-				{Name: "org.freedesktop.DBus", Path: "/org/freedesktop/DBus", Interface: "org.freedesktop.DBus", Members: []string{"ListNames"}},
-			}},
+			Policy: types.DBusPolicy{
+				Talk: []types.DBusCallGrant{
+					{Name: "org.example.CpakDesktopBus", Path: "/org/example/CpakDesktopBus", Interface: "org.example.CpakDesktopBus", Members: []string{"StartTransientUnit"}},
+					{Name: "org.freedesktop.DBus", Path: "/org/freedesktop/DBus", Interface: "org.freedesktop.DBus", Members: []string{"ListNames"}},
+				},
+				Own: []string{"org.example.CpakClient"},
+			},
 			PickFile: func(_ context.Context, request systembroker.FilePickerRequest) (systembroker.FilePickerResult, error) {
 				selected <- request
 				return systembroker.FilePickerResult{
@@ -754,6 +757,12 @@ func TestProxyForwardsBusAndInterceptsFileChooser(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
+	if reply, requestErr := connection.RequestName("org.example.CpakClient", dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("request declared client name: %d, %v", reply, requestErr)
+	}
+	if _, requestErr := connection.RequestName("org.example.CpakUndeclared", dbus.NameFlagDoNotQueue); requestErr == nil || !strings.Contains(requestErr.Error(), "not permitted") {
+		t.Fatalf("undeclared client name was not denied: %v", requestErr)
+	}
 	properties := []transientProperty{{Name: "PIDs", Value: dbus.MakeVariant([]uint32{uint32(os.Getpid())})}}
 	if err = connection.Object("org.example.CpakDesktopBus", "/org/example/CpakDesktopBus").Call("org.example.CpakDesktopBus.StartTransientUnit", 0, "app-test.scope", "replace", properties, []transientAuxiliary{}).Err; err != nil {
 		t.Fatalf("forward empty typed array: %v", err)

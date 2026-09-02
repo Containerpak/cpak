@@ -73,6 +73,8 @@ func main() {
 		err = probeSystemIdentities()
 	case "root-identity":
 		err = probeRootIdentity()
+	case "session-bus-own":
+		err = probeSessionBusOwn()
 	case "user-manager-mock":
 		err = runUserManagerMock(argument(2))
 	default:
@@ -198,6 +200,25 @@ func runBluezMock() error {
 		return fmt.Errorf("org.bluez is already owned")
 	}
 	select {}
+}
+
+func probeSessionBusOwn() error {
+	connection, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	result, err := connection.RequestName("org.example.CpakIntegration", dbus.NameFlagDoNotQueue)
+	if err != nil {
+		return fmt.Errorf("request declared name: %w", err)
+	}
+	if result != dbus.RequestNameReplyPrimaryOwner {
+		return fmt.Errorf("declared name returned %d", result)
+	}
+	if _, err = connection.RequestName("org.example.CpakUndeclared", dbus.NameFlagDoNotQueue); err == nil || !strings.Contains(err.Error(), "not permitted") {
+		return fmt.Errorf("undeclared name was not denied: %v", err)
+	}
+	return nil
 }
 
 func probeBluetooth() error {
