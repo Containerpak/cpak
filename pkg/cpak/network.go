@@ -24,6 +24,8 @@ const (
 	networkStartupTimeout = 20 * time.Second
 )
 
+var defaultSlirpPath string
+
 type userNetworkPlan struct {
 	path string
 }
@@ -38,7 +40,11 @@ func resolveUserNetwork(enabled, hostNetwork bool) (*userNetworkPlan, error) {
 	if !enabled {
 		return nil, nil
 	}
-	path, err := exec.LookPath("slirp4netns")
+	path := defaultSlirpPath
+	if path == "" {
+		path = "slirp4netns"
+	}
+	path, err := exec.LookPath(path)
 	if err != nil {
 		return nil, fmt.Errorf("network access requires slirp4netns: %w", err)
 	}

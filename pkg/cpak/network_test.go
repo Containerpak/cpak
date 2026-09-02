@@ -37,6 +37,26 @@ func TestNetworkHelperIsOptional(t *testing.T) {
 	}
 }
 
+func TestNetworkHelperUsesPackagedPath(t *testing.T) {
+	directory := t.TempDir()
+	helper := filepath.Join(directory, "slirp4netns")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := defaultSlirpPath
+	defaultSlirpPath = helper
+	t.Cleanup(func() { defaultSlirpPath = original })
+	t.Setenv("PATH", "")
+
+	plan, err := resolveUserNetwork(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.path != helper {
+		t.Fatalf("network helper: got %q, want %q", plan.path, helper)
+	}
+}
+
 func TestHostNetworkPermissionSharesOnlyWhenExplicit(t *testing.T) {
 	private := containerNamespaceOptions(types.Override{Network: true})
 	if !private.IsolateNetwork {

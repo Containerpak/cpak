@@ -468,6 +468,17 @@ sudo ip address add "$network_fixture_ip/32" dev "$host_interface"
 network_origin="$manifest_host/integration/network"
 network_url="http://$network_fixture_ip:18080/ready"
 install "$network_origin"
+mkdir -p "$work/empty-path"
+if PATH="$work/empty-path" "$cpak" run "$network_origin" -- /usr/local/bin/cpak-integration-probe network "$network_url" >"$work/network-preflight.log" 2>&1; then
+	echo "network launch succeeded without slirp4netns" >&2
+	exit 1
+fi
+grep -F 'network access requires slirp4netns' "$work/network-preflight.log" >/dev/null
+if grep -F 'Container created:' "$work/network-preflight.log" >/dev/null; then
+	echo "network helper validation happened after container allocation" >&2
+	exit 1
+fi
+echo "network helper preflight probe passed"
 printf 'nameserver 192.0.2.254\n' >"$work/resolver-old"
 printf 'nameserver 127.0.0.1\n' >"$work/resolver-new"
 sudo dnsmasq --keep-in-foreground --no-resolv --no-hosts --bind-interfaces \

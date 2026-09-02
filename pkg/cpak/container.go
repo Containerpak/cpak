@@ -190,6 +190,9 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			return
 		}
 	}
+	if _, err = resolveUserNetwork(override.Network, override.HostNetwork); err != nil {
+		return types.Container{}, err
+	}
 
 	// If no container exists, create a new one and store it
 	// Note: the container's pid is not set here, it will be set when the

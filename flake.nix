@@ -47,6 +47,7 @@
               "-X=main.version=v${version}"
               "-X=main.selfUpdateMode=disabled"
               "-X=github.com/mirkobrombin/cpak/pkg/desktopui.defaultBackend=auto"
+              "-X=github.com/mirkobrombin/cpak/pkg/cpak.defaultSlirpPath=${pkgs.slirp4netns}/bin/slirp4netns"
             ];
 
             postInstall = ''
@@ -145,6 +146,7 @@
               testScript = ''
                 machine.wait_for_unit("multi-user.target")
                 machine.succeed("cpak --version | grep -Fx v${version}")
+                machine.succeed("grep -aF '${pkgs.slirp4netns}/bin/slirp4netns' /run/current-system/sw/bin/cpak")
                 machine.succeed("cpak system status")
                 machine.succeed("cpak system setup")
                 machine.succeed("busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus StartServiceByName su it.cpak.SystemAuthority1 0")
