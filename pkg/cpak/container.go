@@ -140,7 +140,11 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		return types.Container{}, err
 	}
 	wayland := currentWaylandEndpoint(override)
-	policyHash, err := containerLaunchPolicyHashWithWayland(containerRuntimeVersion(instance), identity.LaunchRoot, override, components, addons, wayland)
+	runtimeIdentity, err := c.runtimeIdentity()
+	if err != nil {
+		return types.Container{}, err
+	}
+	policyHash, err := containerLaunchPolicyHashWithRuntime(containerRuntimeVersion(instance), identity.LaunchRoot, override, components, addons, wayland, runtimeIdentity)
 	if err != nil {
 		return types.Container{}, err
 	}
@@ -460,24 +464,30 @@ func containerLaunchPolicyHash(runtimeVersion int, launchRoot string, override t
 }
 
 func containerLaunchPolicyHashWithWayland(runtimeVersion int, launchRoot string, override types.Override, components, addons []types.Application, wayland waylandEndpoint) (string, error) {
+	return containerLaunchPolicyHashWithRuntime(runtimeVersion, launchRoot, override, components, addons, wayland, "")
+}
+
+func containerLaunchPolicyHashWithRuntime(runtimeVersion int, launchRoot string, override types.Override, components, addons []types.Application, wayland waylandEndpoint, runtimeIdentity string) (string, error) {
 	var waylandIdentity *waylandEndpoint
 	if override.SocketWayland {
 		waylandIdentity = &wayland
 	}
 	policy := struct {
-		Runtime    int                   `json:"runtime"`
-		LaunchRoot string                `json:"launch_root,omitempty"`
-		Override   types.Override        `json:"override"`
-		Wayland    *waylandEndpoint      `json:"wayland,omitempty"`
-		Components []addonPolicyIdentity `json:"components,omitempty"`
-		Addons     []addonPolicyIdentity `json:"addons,omitempty"`
+		Runtime       int                   `json:"runtime"`
+		LaunchRoot    string                `json:"launch_root,omitempty"`
+		Override      types.Override        `json:"override"`
+		Wayland       *waylandEndpoint      `json:"wayland,omitempty"`
+		Components    []addonPolicyIdentity `json:"components,omitempty"`
+		Addons        []addonPolicyIdentity `json:"addons,omitempty"`
+		RuntimeConfig string                `json:"runtime_config,omitempty"`
 	}{
-		Runtime:    runtimeVersion,
-		LaunchRoot: launchRoot,
-		Override:   override,
-		Wayland:    waylandIdentity,
-		Components: addonPolicyIdentities(components),
-		Addons:     addonPolicyIdentities(addons),
+		Runtime:       runtimeVersion,
+		LaunchRoot:    launchRoot,
+		Override:      override,
+		Wayland:       waylandIdentity,
+		Components:    addonPolicyIdentities(components),
+		Addons:        addonPolicyIdentities(addons),
+		RuntimeConfig: runtimeIdentity,
 	}
 	encoded, err := json.Marshal(policy)
 	if err != nil {
@@ -641,6 +651,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	for _, link := range dependencyLinks {
 		cmds = append(cmds, "--extra-links", link)
 	}
+	for _, secret := range c.runtimeSecrets {
+		cmds = append(cmds, "--secret", secret.Name+"="+secret.Source)
+	}
 
 	if container.SystemBrokerSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
@@ -700,6 +713,7 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		containerEnv = setEnvironmentValue(containerEnv, "XAUTHORITY", x11AuthorityTarget)
 	}
 	containerEnv = setEnvironmentValue(containerEnv, "PATH", buildContainerPath(containerEnv))
+	containerEnv = applyRuntimeEnvironment(containerEnv, c.runtimeEnvironment)
 	for _, envVar := range containerEnv {
 		cmds = append(cmds, "--env", envVar)
 	}
@@ -1024,6 +1038,7 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 	if err != nil {
 		return err
 	}
+	envVars = applyRuntimeEnvironment(envVars, c.runtimeEnvironment)
 
 	execSocketPath := container.ExecSocketPath
 	if execSocketPath == "" {

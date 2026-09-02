@@ -73,6 +73,9 @@ type Application struct {
 	// ParsedBinaries is the list of exported binaries of the application.
 	ParsedBinaries []string `json:"parsed_binaries"`
 
+	// ParsedServices are named persistent application commands.
+	ParsedServices map[string]ApplicationService `json:"parsed_services,omitempty"`
+
 	// ParsedDesktopEntries is the list of exported desktop entries of the application.
 	ParsedDesktopEntries []string `json:"parsed_desktop_entries"`
 

@@ -83,6 +83,27 @@
         "mode"
       ]
     },
+    "ApplicationService": {
+      "properties": {
+        "binary": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Exported binary used by the service"
+        },
+        "arguments": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Default binary arguments"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "binary"
+      ]
+    },
     "DBusCallGrant": {
       "properties": {
         "name": {
@@ -655,6 +676,13 @@
       "type": "array",
       "minItems": 1,
       "description": "Absolute paths to binaries"
+    },
+    "services": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ApplicationService"
+      },
+      "type": "object",
+      "description": "Named application services"
     },
     "desktop_entries": {
       "items": {

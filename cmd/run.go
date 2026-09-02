@@ -21,14 +21,18 @@ type RunCmd struct {
 	Binary string   `arg:"binary" help:"Binary to launch"`
 	Extra  []string `arg:"extra" help:"Extra arguments for the binary"`
 
-	Verbose         bool   `cli:"verbose,v" help:"Enable verbose output"`
-	DesktopLaunch   bool   `cli:"desktop-launch" help:"Grant files opened through a desktop launcher"`
-	DesktopFileSpan string `cli:"desktop-file-span" help:"How many launcher arguments precede and follow the selected files"`
-	Instance        string `cli:"instance,i" help:"Application instance"`
-	Branch          string `cli:"branch,b" help:"Specify a branch"`
-	Commit          string `cli:"commit,c" help:"Specify a commit"`
-	Release         string `cli:"release,r" help:"Specify a release"`
-	NestedRequest   string `cli:"nested-request" help:"Run an encoded request from the cpak service"`
+	Verbose         bool     `cli:"verbose,v" help:"Enable verbose output"`
+	DesktopLaunch   bool     `cli:"desktop-launch" help:"Grant files opened through a desktop launcher"`
+	DesktopFileSpan string   `cli:"desktop-file-span" help:"How many launcher arguments precede and follow the selected files"`
+	Instance        string   `cli:"instance,i" help:"Application instance"`
+	Branch          string   `cli:"branch,b" help:"Specify a branch"`
+	Commit          string   `cli:"commit,c" help:"Specify a commit"`
+	Release         string   `cli:"release,r" help:"Specify a release"`
+	Service         string   `cli:"service" help:"Run a service declared by the package"`
+	Env             []string `cli:"env" help:"Set an environment entry in NAME=value form"`
+	EnvFile         []string `cli:"env-file" help:"Load environment entries from an absolute path"`
+	Secret          []string `cli:"secret" help:"Mount a private file at /run/secrets/NAME"`
+	NestedRequest   string   `cli:"nested-request" help:"Run an encoded request from the cpak service"`
 	icon            []byte
 
 	cli.Base
@@ -50,6 +54,15 @@ func (c *RunCmd) Run() error {
 		return c.runError(cp.RunAuthorized(params, c.Verbose))
 	}
 	c.configureStorageMigration(&cp)
+	if c.Service != "" && c.Binary != "" {
+		return c.runError(fmt.Errorf("service and binary are mutually exclusive"))
+	}
+	if err := cp.ConfigureRuntime(c.Env, c.EnvFile, c.Secret); err != nil {
+		return c.runError(err)
+	}
+	if err := cp.SetApplicationService(c.Service); err != nil {
+		return c.runError(err)
+	}
 	cp.SetDesktopLaunch(c.DesktopLaunch)
 	if err := cp.SetDesktopFileSpan(c.DesktopFileSpan); err != nil {
 		return c.runError(err)

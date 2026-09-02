@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/mirkobrombin/cpak/pkg/appservice"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -172,6 +173,11 @@ func (c *Cpak) RunInstance(origin string, version string, branch string, commit 
 		_ = store.Close()
 		return fmt.Errorf("no application found for origin %s and version/criteria %s: %w", origin, version, err)
 	}
+	binary, extraArgs, err = applicationServiceCommand(app, c.applicationService, binary, extraArgs)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
 
 	// A package the user never named is held to what the packages that pulled
 	// it in may do. Reading the store can fail, and then the launch fails with
@@ -183,6 +189,28 @@ func (c *Cpak) RunInstance(origin string, version string, branch string, commit 
 	}
 
 	return c.runApplicationInstanceWithStore(app, policy, instance, binary, verbose, false, store, extraArgs...)
+}
+
+func applicationServiceCommand(app types.Application, name, binary string, arguments []string) (string, []string, error) {
+	if name == "" {
+		return binary, arguments, nil
+	}
+	if binary != "" {
+		return "", nil, errors.New("application service and binary are mutually exclusive")
+	}
+	service, found := app.ParsedServices[name]
+	if !found {
+		return "", nil, fmt.Errorf("application service %s is not declared by %s", name, app.Name)
+	}
+	return service.Binary, append(append([]string{}, service.Arguments...), arguments...), nil
+}
+
+func (c *Cpak) SetApplicationService(name string) error {
+	if name != "" && (!serviceNamePattern.MatchString(name) || len(name) > 64) {
+		return fmt.Errorf("invalid application service name %q", name)
+	}
+	c.applicationService = name
+	return nil
 }
 
 func (c *Cpak) RunAuthorized(params types.RequestParams, verbose bool) error {
@@ -293,6 +321,7 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	if err != nil {
 		return err
 	}
+	managerPath := appservice.ManagerSocketPath(servicePath)
 	serviceReady, err := socketIsReady(servicePath)
 	if err != nil {
 		return err
@@ -301,7 +330,11 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	if err != nil {
 		return err
 	}
-	if serviceReady && brokerReady {
+	managerReady, err := socketIsReady(managerPath)
+	if err != nil {
+		return err
+	}
+	if serviceReady && brokerReady && managerReady {
 		return
 	}
 
@@ -320,6 +353,7 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	c.servicePID = cmd.Process.Pid
 	c.serviceSocketOwned = !serviceReady
 	c.brokerSocketOwned = !brokerReady
+	c.managerSocketOwned = !managerReady
 	err = cmd.Process.Release()
 	if err != nil {
 		return fmt.Errorf("cannot detach the cpak service: %w", err)
@@ -327,7 +361,14 @@ func (c *Cpak) prepareSocketListener() (err error) {
 	if err = waitForSocket(servicePath, socketWaitTimeout); err != nil {
 		return err
 	}
-	return waitForSocket(brokerPath, socketWaitTimeout)
+	if err = waitForSocket(brokerPath, socketWaitTimeout); err != nil {
+		return err
+	}
+	return waitForSocket(managerPath, socketWaitTimeout)
+}
+
+func (c *Cpak) EnsureService() error {
+	return c.prepareSocketListener()
 }
 
 // StopOwnedService stops the service started by this Cpak instance.
@@ -357,6 +398,13 @@ func (c *Cpak) StopOwnedService() error {
 		}
 		paths = append(paths, brokerPath)
 	}
+	if c.managerSocketOwned {
+		servicePath, pathErr := HostServiceSocketPath()
+		if pathErr != nil {
+			return pathErr
+		}
+		paths = append(paths, appservice.ManagerSocketPath(servicePath))
+	}
 	deadline := time.Now().Add(socketWaitTimeout)
 	for _, path := range paths {
 		for socketIsLive(path) && time.Now().Before(deadline) {
@@ -372,6 +420,7 @@ func (c *Cpak) StopOwnedService() error {
 	c.servicePID = 0
 	c.serviceSocketOwned = false
 	c.brokerSocketOwned = false
+	c.managerSocketOwned = false
 	return nil
 }
 
@@ -454,6 +503,12 @@ func clearStaleSocket(path string) error {
 }
 
 func (c *Cpak) StartSocketListener() (err error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return c.StartSocketListenerContext(ctx)
+}
+
+func (c *Cpak) StartSocketListenerContext(ctx context.Context) (err error) {
 	servicePath, err := HostServiceSocketPath()
 	if err != nil {
 		return err
@@ -479,8 +534,6 @@ func (c *Cpak) StartSocketListener() (err error) {
 	if !serveNested && !serveBroker {
 		return nil
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	results := make(chan error, 2)
 	running := 0
 	if serveNested {
@@ -493,7 +546,6 @@ func (c *Cpak) StartSocketListener() (err error) {
 	}
 	for running > 0 {
 		if serviceErr := <-results; serviceErr != nil {
-			stop()
 			return serviceErr
 		}
 		running--

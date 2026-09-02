@@ -84,6 +84,7 @@ type SpawnCmd struct {
 	MountOverrides     []string `cli:"mount-overrides,m" help:"set the mount overrides"`
 	SystemShims        []string `cli:"system-shims" help:"set the system integration shims"`
 	ExtraLinks         []string `cli:"extra-links,x" help:"set the extra links"`
+	Secrets            []string `cli:"secret" help:"mount a private file under /run/secrets"`
 	DesktopRuntime     string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
 	ReadyFd            int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
 	HostPidFd          int      `cli:"host-pid-fd" help:"write the outer process ID to this file descriptor"`
@@ -190,6 +191,11 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	grants = append(grants, linkGrants...)
+	secretGrants, err := c.setupSecrets(c.Rootfs, c.Secrets)
+	if err != nil {
+		return err
+	}
+	grants = append(grants, secretGrants...)
 	if c.DesktopRuntime != "" {
 		desktopRuntimeGrant, err := c.setupDesktopRuntime(c.Rootfs, c.DesktopRuntime)
 		if err != nil {
@@ -1149,6 +1155,66 @@ func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) ([]sandbo
 		grants = append(grants, sandbox.PathGrant{Path: linkParts[1], ReadOnly: true})
 	}
 	return grants, nil
+}
+
+var runtimeSecretNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (c *SpawnCmd) setupSecrets(rootFs string, entries []string) ([]sandbox.PathGrant, error) {
+	grants := make([]sandbox.PathGrant, 0, len(entries))
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		name, source, found := strings.Cut(entry, "=")
+		if !found || !runtimeSecretNamePattern.MatchString(name) || seen[name] {
+			return nil, errors.New("invalid runtime secret")
+		}
+		if !filepath.IsAbs(source) || filepath.Clean(source) != source {
+			return nil, errors.New("runtime secret source must be an absolute path")
+		}
+		file, err := openRuntimeSecretFile(source)
+		if err != nil {
+			return nil, fmt.Errorf("inspect runtime secret %s: %w", name, err)
+		}
+		target := filepath.Join("/run/secrets", name)
+		destination, err := prepareRootfsFile(rootFs, target)
+		if err != nil {
+			file.Close()
+			return nil, fmt.Errorf("prepare runtime secret %s: %w", name, err)
+		}
+		descriptorPath := filepath.Join("/proc/self/fd", strconv.FormatUint(uint64(file.Fd()), 10))
+		err = tools.MountBindReadOnlyPrepared(descriptorPath, destination, false)
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, fmt.Errorf("mount runtime secret %s: %w", name, err)
+		}
+		seen[name] = true
+		grants = append(grants, sandbox.PathGrant{Path: target, ReadOnly: true})
+	}
+	return grants, nil
+}
+
+func openRuntimeSecretFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		file.Close()
+		return nil, errors.New("source is not a private regular file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		file.Close()
+		return nil, errors.New("source has an unexpected owner")
+	}
+	return file, nil
 }
 
 func (c *SpawnCmd) setupDesktopRuntime(rootFs, source string) (sandbox.PathGrant, error) {

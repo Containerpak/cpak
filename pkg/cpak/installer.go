@@ -261,6 +261,7 @@ func (c *Cpak) InstallCpakWithOptions(origin string, manifest *types.CpakManifes
 		Commit:               commit,
 		InstallTimestamp:     time.Now(),
 		ParsedBinaries:       manifest.Binaries,
+		ParsedServices:       manifest.Services,
 		ParsedDesktopEntries: manifest.DesktopEntries,
 		ParsedSessions:       manifest.Sessions,
 		ParsedDependencies:   parsedManifestDependencies,

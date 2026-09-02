@@ -359,6 +359,7 @@ func (c *Cpak) updateApplication(app types.Application, deps updateDeps, approve
 		UpdatedAt:            time.Now(),
 		InstallTimestamp:     time.Now(),
 		ParsedBinaries:       manifest.Binaries,
+		ParsedServices:       manifest.Services,
 		ParsedDesktopEntries: manifest.DesktopEntries,
 		ParsedSessions:       manifest.Sessions,
 		ParsedDependencies:   dependencies,
@@ -560,6 +561,9 @@ func sameInstallation(app types.Application, updated types.Application) bool {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedBinaries, updated.ParsedBinaries) {
+		return false
+	}
+	if !reflect.DeepEqual(app.ParsedServices, updated.ParsedServices) {
 		return false
 	}
 	if !reflect.DeepEqual(app.ParsedDesktopEntries, updated.ParsedDesktopEntries) {

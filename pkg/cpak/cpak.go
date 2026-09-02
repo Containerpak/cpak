@@ -28,12 +28,16 @@ type Cpak struct {
 	servicePID         int
 	serviceSocketOwned bool
 	brokerSocketOwned  bool
+	managerSocketOwned bool
 	storageMigration   StorageMigrationHandler
 	storagePreparation StoragePreparationHandler
 	storageDriver      storage.Handler
 	desktopLaunch      bool
 	terminalSession    bool
 	fileSpan           *desktopFileSpan
+	runtimeEnvironment []string
+	runtimeSecrets     []types.RuntimeSecret
+	applicationService string
 }
 
 // SetDesktopLaunch enables file grants for exported desktop entries.

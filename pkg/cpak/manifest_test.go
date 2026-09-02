@@ -54,6 +54,29 @@ func TestValidateManifestAcceptsFilesystemPermissions(t *testing.T) {
 	}
 }
 
+func TestValidateManifestAcceptsApplicationServices(t *testing.T) {
+	manifest := validManifestForTest()
+	manifest.Services = map[string]types.ApplicationService{
+		"server": {Binary: manifest.Binaries[0], Arguments: []string{"serve", "--port", "3000"}},
+	}
+	if err := (&Cpak{}).ValidateManifest(manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateManifestRejectsInvalidApplicationServices(t *testing.T) {
+	for name, service := range map[string]types.ApplicationService{
+		"Bad Name": {Binary: "/usr/bin/demo"},
+		"server":   {Binary: "/usr/bin/not-exported"},
+	} {
+		manifest := validManifestForTest()
+		manifest.Services = map[string]types.ApplicationService{name: service}
+		if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+			t.Fatalf("invalid application service was accepted: %s", name)
+		}
+	}
+}
+
 func TestManifestVersionThreeAcceptsOnlyFilteredSessionBusCalls(t *testing.T) {
 	manifest := validManifestForTest()
 	manifest.ManifestVersion = "3.0"

@@ -28,6 +28,10 @@ type CLI struct {
 	Rollback           cmd.RollbackCmd           `cmd:"rollback" help:"Restore the previous installed version of a package"`
 	Remove             cmd.RemoveCmd             `cmd:"remove" help:"Remove a package from the local store"`
 	List               cmd.ListCmd               `cmd:"list" help:"List all the packages in the local store"`
+	Ps                 cmd.PsCmd                 `cmd:"ps" help:"List application runtime state"`
+	Status             cmd.StatusCmd             `cmd:"status" help:"Show application runtime state"`
+	Inspect            cmd.InspectCmd            `cmd:"inspect" help:"Inspect application runtime state"`
+	Health             cmd.HealthCmd             `cmd:"health" help:"Check application service health"`
 	Shell              cmd.ShellCmd              `cmd:"shell" help:"Spawn a shell inside a container"`
 	Run                cmd.RunCmd                `cmd:"run" help:"Run a package from a remote Git repository"`
 	Logs               cmd.LogsCmd               `cmd:"logs" help:"Show output from a running application"`
@@ -146,8 +150,13 @@ func skipUpdateCheck(args []string) bool {
 	if len(args) < 2 || strings.HasPrefix(version, "0.0.0-") || version == "0.0.1" || version == "dev" {
 		return true
 	}
+	for index := 1; index+1 < len(args); index++ {
+		if args[index] == "--instance" && strings.HasPrefix(args[index+1], "service-") {
+			return true
+		}
+	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "network-helper" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "network-helper" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" {
 			return true
 		}
 	}

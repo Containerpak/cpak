@@ -134,6 +134,14 @@ func (s *Store) GetApplications() (apps []types.Application, err error) {
 	return apps, err
 }
 
+func (s *Store) GetContainers() (containers []types.Container, err error) {
+	err = s.Containers.Engine().ForEach(func(key string, value types.Container) error {
+		containers = append(containers, value)
+		return nil
+	})
+	return containers, err
+}
+
 func (s *Store) GetApplicationByCpakId(cpakId string) (app types.Application, err error) {
 	app, err = s.Apps.Get(context.Background(), cpakId)
 	return app, err

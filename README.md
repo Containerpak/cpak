@@ -111,6 +111,7 @@ cpak self-update --check
 cpak stop github.com/bottlesdevs/bottles
 cpak audit
 cpak audit --repair
+cpak ps
 ```
 
 `cpak remove` uses the source selector of the sole installed copy. When more
@@ -183,6 +184,95 @@ cpak environment policy --environment arch --policy policy.json
 Updating the installed package moves the environment to the new package version
 while retaining its writable state.
 
+## Application services
+
+A package can name a default application command in its manifest:
+
+```json
+"services": {
+  "server": {
+    "binary": "/usr/bin/example",
+    "arguments": ["serve", "--port", "3000"]
+  }
+}
+```
+
+The binary must also appear in `binaries`. Run the command once with:
+
+```sh
+cpak run --service server github.com/example/server
+```
+
+Register a persistent service with the same command:
+
+```sh
+cpak service enable api github.com/example/server \
+  --service server \
+  --restart always \
+  --health 'example health' \
+  --health-interval 30
+```
+
+The service manager restores enabled services, starts dependencies first,
+stops dependants in reverse order and applies the selected restart policy.
+`never`, `on-failure` and `always` are supported. A health command runs inside
+the application container. A service becomes ready after that command
+succeeds.
+
+Runtime configuration uses repeatable flags:
+
+```sh
+cpak service enable api github.com/example/server \
+  --service server \
+  --env MODE=production \
+  --env-file /srv/example/server.env \
+  --secret API_TOKEN=/srv/example/api-token
+```
+
+Environment files use literal `NAME=value` lines. Empty lines and lines that
+start with `#` are ignored. Values passed with `--env` replace values loaded
+from files. URL and DSN values may contain colons.
+
+A secret source must be an absolute, regular file owned by the current user
+and inaccessible to group and other users. It is mounted read-only at
+`/run/secrets/NAME`. cpak stores the source path, not the file contents, and
+does not include secret contents in logs, status or inspection output.
+
+Use the lifecycle commands directly:
+
+```sh
+cpak service list
+cpak service status api
+cpak service restart api
+cpak service stop api
+cpak service start api
+cpak service logs api
+cpak service disable api
+cpak service remove api
+```
+
+`cpak service setup` installs boot activation and reports the selected adapter.
+cpak uses a user systemd unit with lingering when available, otherwise it uses
+the user crontab. Graphical-login activation is used when neither option is
+available. A manual init hook is always written to
+`~/.config/cpak/service-start`. The next application launch also starts the
+manager and restores enabled services. The service manager itself does not
+require systemd or D-Bus.
+
+Runtime inspection keeps container and application process state separate:
+
+```sh
+cpak ps
+cpak status github.com/example/server
+cpak inspect --instance api github.com/example/server
+cpak health --instance api github.com/example/server
+```
+
+`cpak health` exits with status 1 when the selected process is stopped,
+starting or unhealthy. Network is reported as `none`, `isolated` or `host`.
+Listening TCP ports owned by the application processes are appended to the
+network mode, for example `host:3000`.
+
 ## Addons and SDKs
 
 An application declares which optional packages it supports. Enabled addons are
@@ -213,6 +303,12 @@ and declared features that cpak cannot apply are rejected.
   "version": "1.0.0",
   "image": "ghcr.io/example/example@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "binaries": ["/usr/bin/example"],
+  "services": {
+    "server": {
+      "binary": "/usr/bin/example",
+      "arguments": ["serve", "--port", "3000"]
+    }
+  },
   "desktop_entries": ["/usr/share/applications/example.desktop"],
   "form_factors": ["desktop"],
   "dependencies": [],

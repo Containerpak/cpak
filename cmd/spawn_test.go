@@ -763,3 +763,33 @@ func TestAStaleCpakStateGrantStillDecodesAtLaunch(t *testing.T) {
 		t.Fatalf("decoded grants: %v", permissions)
 	}
 }
+
+func TestOpenRuntimeSecretFileRejectsLinksAndPublicFiles(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(root, "secret")
+	if err := os.WriteFile(secret, []byte("value"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openRuntimeSecretFile(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err = os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	if file, err = openRuntimeSecretFile(link); err == nil {
+		file.Close()
+		t.Fatal("a symbolic link was accepted as a runtime secret")
+	}
+	if err = os.Chmod(secret, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if file, err = openRuntimeSecretFile(secret); err == nil {
+		file.Close()
+		t.Fatal("a public file was accepted as a runtime secret")
+	}
+}

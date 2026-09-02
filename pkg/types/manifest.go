@@ -38,6 +38,9 @@ type CpakManifest struct {
 	// Binaries is the list of exported binaries of the application.
 	Binaries []string `json:"binaries" jsonschema:"minItems=1,description=Absolute paths to binaries"`
 
+	// Services are named application commands intended for persistent operation.
+	Services map[string]ApplicationService `json:"services,omitempty" jsonschema:"description=Named application services"`
+
 	// DesktopEntries is the list of exported desktop entries of the application.
 	DesktopEntries []string `json:"desktop_entries,omitempty" jsonschema:"description=.desktop entry files"`
 
@@ -72,6 +75,11 @@ type CpakManifest struct {
 	legacyFilesystemFields  []string
 	filesystemDeclared      bool
 	manifestV3RemovedFields []string
+}
+
+type ApplicationService struct {
+	Binary    string   `json:"binary" jsonschema:"pattern=^/,description=Exported binary used by the service"`
+	Arguments []string `json:"arguments,omitempty" jsonschema:"description=Default binary arguments"`
 }
 
 func (m *CpakManifest) SetLegacyFilesystemFields(fields []string) {

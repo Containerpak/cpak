@@ -23,6 +23,7 @@ import (
 var (
 	sessionIDPattern     = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
 	addonNamePattern     = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
+	serviceNamePattern   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 	addonEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
@@ -71,6 +72,9 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 	}
 	if len(manifest.Binaries) == 0 {
 		return errors.New("binaries is mandatory and must be populated")
+	}
+	if err = validateApplicationServices(manifest); err != nil {
+		return err
 	}
 	for _, entry := range manifest.DesktopEntries {
 		if _, err = desktopEntryExportName(entry); err != nil {
@@ -133,6 +137,27 @@ func (c *Cpak) ValidateManifest(manifest *types.CpakManifest) (err error) {
 		}
 	}
 	return ValidateManifest(manifest)
+}
+
+func validateApplicationServices(manifest *types.CpakManifest) error {
+	binaries := make(map[string]bool, len(manifest.Binaries))
+	for _, binary := range manifest.Binaries {
+		binaries[binary] = true
+	}
+	for name, service := range manifest.Services {
+		if !serviceNamePattern.MatchString(name) || len(name) > 64 {
+			return fmt.Errorf("invalid service name: %q", name)
+		}
+		if !binaries[service.Binary] {
+			return fmt.Errorf("service %s binary is not exported: %s", name, service.Binary)
+		}
+		for _, argument := range service.Arguments {
+			if err := validateManifestLine(argument); err != nil {
+				return fmt.Errorf("service %s has an invalid argument", name)
+			}
+		}
+	}
+	return nil
 }
 
 func validateManifestBusPolicy(version, scope string, override types.Override) error {
@@ -335,6 +360,19 @@ func validateManifestText(manifest *types.CpakManifest) error {
 	for _, binary := range manifest.Binaries {
 		if err := validateManifestLine(binary); err != nil {
 			return errors.New("a binary path contains a control character or is too long")
+		}
+	}
+	for name, service := range manifest.Services {
+		if err := validateManifestLine(name); err != nil {
+			return errors.New("a service name contains a control character or is too long")
+		}
+		if err := validateManifestLine(service.Binary); err != nil {
+			return errors.New("a service binary contains a control character or is too long")
+		}
+		for _, argument := range service.Arguments {
+			if err := validateManifestLine(argument); err != nil {
+				return errors.New("a service argument contains a control character or is too long")
+			}
 		}
 	}
 	for _, entry := range manifest.DesktopEntries {
