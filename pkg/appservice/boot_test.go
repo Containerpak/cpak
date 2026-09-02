@@ -63,9 +63,13 @@ func TestBootFallsBackToCronWhenSystemdCannotStartBeforeLogin(t *testing.T) {
 			return "", errors.New("missing")
 		}
 	}
-	options.Run = func(_ context.Context, name string, _ []string, _ []byte) ([]byte, error) {
+	systemdDisabled := false
+	options.Run = func(_ context.Context, name string, arguments []string, _ []byte) ([]byte, error) {
 		if name == "loginctl" {
 			return []byte("not permitted"), errors.New("exit")
+		}
+		if name == "systemctl" && len(arguments) > 1 && arguments[1] == "disable" {
+			systemdDisabled = true
 		}
 		return nil, nil
 	}
@@ -75,6 +79,72 @@ func TestBootFallsBackToCronWhenSystemdCannotStartBeforeLogin(t *testing.T) {
 	}
 	if record.Adapter != "cron" || !record.StartsBeforeLogin {
 		t.Fatalf("boot record: %#v", record)
+	}
+	if !systemdDisabled {
+		t.Fatal("systemd remained enabled beside the cron adapter")
+	}
+}
+
+func TestBootTreatsAMissingCrontabAsEmpty(t *testing.T) {
+	options := bootOptions(t)
+	options.LookPath = func(name string) (string, error) {
+		if name == "crontab" {
+			return "/usr/bin/crontab", nil
+		}
+		return "", errors.New("missing")
+	}
+	var installed string
+	options.Run = func(_ context.Context, name string, arguments []string, input []byte) ([]byte, error) {
+		if name != "/usr/bin/crontab" {
+			return nil, nil
+		}
+		if len(arguments) == 1 && arguments[0] == "-l" {
+			return []byte("no crontab for user\n"), errors.New("exit status 1")
+		}
+		installed = string(input)
+		return nil, nil
+	}
+	record, err := ensureBoot(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Adapter != "cron" || strings.Contains(installed, "no crontab") {
+		t.Fatalf("boot record: %#v, crontab: %q", record, installed)
+	}
+}
+
+func TestBootRestoresSystemdWhenCronCannotBeInstalled(t *testing.T) {
+	options := bootOptions(t)
+	if err := os.MkdirAll(options.SystemdRuntime, 0700); err != nil {
+		t.Fatal(err)
+	}
+	options.LookPath = func(name string) (string, error) {
+		switch name {
+		case "systemctl", "loginctl", "crontab":
+			return "/usr/bin/" + name, nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	enabled := 0
+	options.Run = func(_ context.Context, name string, arguments []string, _ []byte) ([]byte, error) {
+		if name == "loginctl" {
+			return []byte("not permitted"), errors.New("exit")
+		}
+		if name == "/usr/bin/crontab" {
+			return []byte("permission denied"), errors.New("exit")
+		}
+		if name == "systemctl" && len(arguments) > 1 && arguments[1] == "enable" {
+			enabled++
+		}
+		return nil, nil
+	}
+	record, err := ensureBoot(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Adapter != "systemd-user" || enabled != 2 || !strings.Contains(record.Warning, "cron fallback failed") {
+		t.Fatalf("boot record: %#v, enable calls: %d", record, enabled)
 	}
 }
 

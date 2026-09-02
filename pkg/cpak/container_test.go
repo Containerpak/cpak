@@ -805,14 +805,14 @@ func TestSystemBrokerRuntimeUsesPrivateDirectory(t *testing.T) {
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(runtimeDirectory, "service.sock"))
 	socketPath, tokenPath, err := createSystemBrokerRuntime(stateDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	container := types.Container{SystemBrokerSocketPath: socketPath, SystemBrokerTokenPath: tokenPath}
 	t.Cleanup(func() { cleanupSystemBrokerRuntime(container) })
-	if filepath.Dir(socketPath) != filepath.Join(runtimeDirectory, "cpak") || filepath.Dir(tokenPath) != stateDirectory {
+	if filepath.Dir(socketPath) != runtimeDirectory || filepath.Dir(tokenPath) != stateDirectory {
 		t.Fatalf("system broker paths escaped the runtime directory: %s %s", socketPath, tokenPath)
 	}
 	info, err := os.Stat(filepath.Dir(socketPath))
@@ -829,7 +829,7 @@ func TestSystemBrokerRuntimeUsesOneSharedSocket(t *testing.T) {
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(runtimeDirectory, "service.sock"))
 	firstSocket, firstToken, err := createSystemBrokerRuntime(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -851,12 +851,12 @@ func TestSystemBrokerPoliciesStayOutsideThePersistentStore(t *testing.T) {
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(runtimeDirectory, "service.sock"))
 	directory, err := systemBrokerPolicyDirectory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directory != filepath.Join(runtimeDirectory, "cpak", "policies") {
+	if directory != filepath.Join(runtimeDirectory, "policies") {
 		t.Fatalf("policy directory: %s", directory)
 	}
 	info, err := os.Stat(directory)

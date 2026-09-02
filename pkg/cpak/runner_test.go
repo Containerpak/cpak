@@ -122,7 +122,7 @@ func TestHostServiceSocketPathLeavesADirectoryItRefusesAlone(t *testing.T) {
 // The socket carries the whole nested request and answers with the output and
 // the exit code of the run, so it may not sit on a name another account on the
 // machine is free to take first.
-func TestHostServiceSocketPathLivesInAPrivateDirectory(t *testing.T) {
+func TestHostServiceSocketPathDoesNotMoveAtLogin(t *testing.T) {
 	runtimeDirectory, err := os.MkdirTemp("", "cpak")
 	if err != nil {
 		t.Fatalf("temporary directory: %v", err)
@@ -131,17 +131,26 @@ func TestHostServiceSocketPathLivesInAPrivateDirectory(t *testing.T) {
 	if err = os.Chmod(runtimeDirectory, 0700); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
 	t.Setenv("CPAK_SERVICE_SOCKET", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
 
-	path, err := HostServiceSocketPath()
+	beforeLogin, err := HostServiceSocketPath()
 	if err != nil {
 		t.Fatalf("socket path: %v", err)
 	}
-	if !strings.HasPrefix(path, runtimeDirectory+string(os.PathSeparator)) {
-		t.Fatalf("the socket is outside the private runtime directory: %s", path)
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	afterLogin, err := HostServiceSocketPath()
+	if err != nil {
+		t.Fatalf("socket path after login: %v", err)
 	}
-	info, err := os.Stat(filepath.Dir(path))
+	if beforeLogin != afterLogin {
+		t.Fatalf("the socket moved at login: %s -> %s", beforeLogin, afterLogin)
+	}
+	expectedDirectory := filepath.Join("/tmp", fmt.Sprintf("cpak-%d", os.Getuid()))
+	if filepath.Dir(afterLogin) != expectedDirectory {
+		t.Fatalf("the socket is outside the stable private runtime directory: %s", afterLogin)
+	}
+	info, err := os.Stat(expectedDirectory)
 	if err != nil {
 		t.Fatalf("socket directory: %v", err)
 	}
@@ -159,8 +168,7 @@ func TestSpawnArgumentsPairTheHostSocketWithTheContainerAddress(t *testing.T) {
 		t.Fatalf("temporary directory: %v", err)
 	}
 	t.Cleanup(func() { os.RemoveAll(runtimeDirectory) })
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
-	t.Setenv("CPAK_SERVICE_SOCKET", "")
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(runtimeDirectory, "service.sock"))
 
 	arguments, err := serviceSocketArguments()
 	if err != nil {
@@ -178,7 +186,10 @@ func TestSpawnArgumentsPairTheHostSocketWithTheContainerAddress(t *testing.T) {
 
 func TestSystemBrokerSocketDoesNotReuseTheLegacyProtocol(t *testing.T) {
 	runtimeDirectory := t.TempDir()
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
+	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(runtimeDirectory, "service.sock"))
 
 	path, err := sharedSystemBrokerSocketPath()
 	if err != nil {
@@ -195,8 +206,7 @@ func TestNestedServiceArgumentsAreLimitedToDeclaredDependencies(t *testing.T) {
 		t.Fatalf("temporary directory: %v", err)
 	}
 	t.Cleanup(func() { os.RemoveAll(runtimeDirectory) })
-	t.Setenv("XDG_RUNTIME_DIR", runtimeDirectory)
-	t.Setenv("CPAK_SERVICE_SOCKET", "")
+	t.Setenv("CPAK_SERVICE_SOCKET", filepath.Join(runtimeDirectory, "service.sock"))
 
 	plain := types.Application{}
 	arguments, err := nestedServiceArguments(plain, "")

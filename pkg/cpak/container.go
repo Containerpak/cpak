@@ -1889,13 +1889,20 @@ func sharedSystemBrokerSocketPath() (string, error) {
 }
 
 func sharedSystemBrokerRuntimeDirectory() (string, error) {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	directory := ""
-	if privateRuntimeDirectory(base) {
-		directory = filepath.Join(base, "cpak")
-	} else {
-		directory = filepath.Join(os.TempDir(), fmt.Sprintf("cpak-%d", os.Getuid()))
+	if servicePath := os.Getenv("CPAK_SERVICE_SOCKET"); servicePath != "" && servicePath != ContainerServiceSocketPath {
+		if !filepath.IsAbs(servicePath) || filepath.Clean(servicePath) != servicePath {
+			return "", fmt.Errorf("the cpak service socket %s is not an absolute path", servicePath)
+		}
+		directory := filepath.Dir(servicePath)
+		if err := provePrivateDirectory(directory); err != nil {
+			return "", fmt.Errorf("prepare system broker runtime: %w", err)
+		}
+		return directory, nil
 	}
+
+	// A service manager may start before XDG_RUNTIME_DIR exists and keep
+	// running after login. Its sockets need one address for that whole lifetime.
+	directory := filepath.Join("/tmp", fmt.Sprintf("cpak-%d", os.Getuid()))
 	if err := securePrivateDirectory(directory); err != nil {
 		return "", fmt.Errorf("prepare system broker runtime: %w", err)
 	}
@@ -2020,18 +2027,6 @@ func securePrivateDirectoryUnder(root, path string) error {
 		}
 	}
 	return nil
-}
-
-func privateRuntimeDirectory(path string) bool {
-	if path == "" || !filepath.IsAbs(path) {
-		return false
-	}
-	info, err := os.Stat(path)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return false
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && stat.Uid == uint32(os.Getuid())
 }
 
 func cleanupSystemBrokerRuntime(container types.Container) {

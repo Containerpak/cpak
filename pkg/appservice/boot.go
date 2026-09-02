@@ -76,9 +76,23 @@ func ensureBoot(options BootOptions) (BootRecord, error) {
 		}
 	}
 	if crontab, pathErr := options.LookPath("crontab"); pathErr == nil {
+		systemdDisabled := false
+		if loginFallback != nil {
+			if disableErr := setSystemdUserEnabled(options, false); disableErr != nil {
+				loginFallback.Warning += "; cron fallback was not installed: " + disableErr.Error()
+				return saveBootRecord(options.StoreDirectory, *loginFallback)
+			}
+			systemdDisabled = true
+		}
 		record, cronErr := installCron(options, crontab)
 		if cronErr == nil {
 			return saveBootRecord(options.StoreDirectory, record)
+		}
+		if systemdDisabled {
+			if enableErr := setSystemdUserEnabled(options, true); enableErr != nil {
+				return BootRecord{}, errors.Join(cronErr, enableErr)
+			}
+			loginFallback.Warning += "; cron fallback failed: " + cronErr.Error()
 		}
 	}
 	if loginFallback != nil {
@@ -105,8 +119,8 @@ func installSystemdUser(options BootOptions) (BootRecord, error) {
 	if output, err := options.Run(ctx, "systemctl", []string{"--user", "daemon-reload"}, nil); err != nil {
 		return BootRecord{}, fmt.Errorf("reload user services: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	if output, err := options.Run(ctx, "systemctl", []string{"--user", "enable", "--now", "cpak.service"}, nil); err != nil {
-		return BootRecord{}, fmt.Errorf("enable cpak user service: %w: %s", err, strings.TrimSpace(string(output)))
+	if err := setSystemdUserEnabled(options, true); err != nil {
+		return BootRecord{}, err
 	}
 	record := BootRecord{Adapter: "systemd-user", Path: path}
 	if options.Username == "" {
@@ -134,7 +148,13 @@ func installSystemdUser(options BootOptions) (BootRecord, error) {
 func installCron(options BootOptions, crontab string) (BootRecord, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	current, _ := options.Run(ctx, crontab, []string{"-l"}, nil)
+	current, err := options.Run(ctx, crontab, []string{"-l"}, nil)
+	if err != nil {
+		if !missingCrontab(current) {
+			return BootRecord{}, fmt.Errorf("read crontab activation: %w: %s", err, strings.TrimSpace(string(current)))
+		}
+		current = nil
+	}
 	marker := "# cpak service restore"
 	lines := make([]string, 0)
 	for _, line := range strings.Split(string(current), "\n") {
@@ -149,6 +169,24 @@ func installCron(options BootOptions, crontab string) (BootRecord, error) {
 		return BootRecord{}, fmt.Errorf("install crontab activation: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return BootRecord{Adapter: "cron", Path: crontab, StartsBeforeLogin: true}, nil
+}
+
+func setSystemdUserEnabled(options BootOptions, enabled bool) error {
+	action := "disable"
+	if enabled {
+		action = "enable"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output, err := options.Run(ctx, "systemctl", []string{"--user", action, "--now", "cpak.service"}, nil)
+	if err != nil {
+		return fmt.Errorf("%s cpak user service: %w: %s", action, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func missingCrontab(output []byte) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(string(output))), "no crontab for ")
 }
 
 func installXDGAutostart(options BootOptions) (BootRecord, error) {
@@ -224,6 +262,7 @@ func writeFile(path string, content []byte, mode os.FileMode) error {
 
 func runBootCommand(ctx context.Context, name string, arguments []string, input []byte) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, arguments...)
+	command.Env = append(os.Environ(), "LC_ALL=C")
 	command.Stdin = bytes.NewReader(input)
 	return command.CombinedOutput()
 }

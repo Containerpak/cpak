@@ -89,8 +89,7 @@ func runNestedServiceSocketTest(t *testing.T) {
 		}
 	}()
 
-	t.Setenv("XDG_RUNTIME_DIR", "/run/user")
-	t.Setenv("CPAK_SERVICE_SOCKET", "")
+	t.Setenv("CPAK_SERVICE_SOCKET", "/run/user/cpak.sock")
 
 	// The service re-executes cpak for every nested run it accepts, so it is
 	// run in helper mode so the real executable identity remains unchanged.
