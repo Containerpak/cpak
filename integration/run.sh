@@ -142,7 +142,7 @@ write(
     desktop_entries=["/usr/share/applications/cpak-integration-browser.desktop"],
 )
 write("uri", "URI probe", override={"socketWayland": True, "openURI": True})
-write("session-bus", "Session bus probe", override={"sessionBus": {"own": ["org.example.CpakIntegration"]}})
+write("session-bus", "Session bus probe", override={"sessionBus": {"own": ["org.example.CpakIntegration.*"]}})
 write("bluetooth", "Bluetooth probe", override={"network": True, "bluetooth": True})
 write("loopback", "Loopback probe", override={"network": True, "hostNetwork": True})
 write("network", "Network probe", override={"network": True})

@@ -38,6 +38,11 @@ func TestLearnCoreManifestValidationMatchesRuntime(t *testing.T) {
 			manifest.Override.HostNetwork = true
 			manifest.Override.Network = false
 		},
+		"forbidden session bus namespace": func(manifest *types.CpakManifest) {
+			manifest.ManifestVersion = "3.0"
+			manifest.Image = "ghcr.io/example/app@sha256:" + strings.Repeat("a", 64)
+			manifest.Override.SessionBus = types.DBusPolicy{Own: []string{"org.freedesktop.*"}}
+		},
 	}
 
 	for name, change := range cases {

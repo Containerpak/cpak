@@ -208,7 +208,7 @@ func probeSessionBusOwn() error {
 		return err
 	}
 	defer connection.Close()
-	result, err := connection.RequestName("org.example.CpakIntegration", dbus.NameFlagDoNotQueue)
+	result, err := connection.RequestName("org.example.CpakIntegration.Instance294", dbus.NameFlagDoNotQueue)
 	if err != nil {
 		return fmt.Errorf("request declared name: %w", err)
 	}

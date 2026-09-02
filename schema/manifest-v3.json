@@ -174,7 +174,7 @@
           "type": "array",
           "maxItems": 32,
           "uniqueItems": true,
-          "description": "Session bus names the application may own"
+          "description": "Exact session bus names or trailing namespace patterns the application may own"
         }
       },
       "additionalProperties": false,

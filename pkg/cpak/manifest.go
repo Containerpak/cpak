@@ -200,18 +200,20 @@ func validateManifestBusPolicy(version, scope string, override types.Override) e
 	return nil
 }
 
-func forbiddenSessionBusName(name string) bool {
-	switch name {
-	case "org.freedesktop.DBus",
+func forbiddenSessionBusName(rule string) bool {
+	for _, name := range []string{
+		"org.freedesktop.DBus",
 		"org.freedesktop.Flatpak",
 		"org.freedesktop.portal.Desktop",
 		"org.freedesktop.secrets",
 		"org.freedesktop.systemd1",
-		"org.gnome.keyring":
-		return true
-	default:
-		return false
+		"org.gnome.keyring",
+	} {
+		if (types.DBusPolicy{Own: []string{rule}}).AllowsOwn(name) {
+			return true
+		}
 	}
+	return false
 }
 
 func validateAddonProvider(provider *types.AddonProvider) error {

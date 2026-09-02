@@ -21,7 +21,7 @@ var (
 
 type DBusPolicy struct {
 	Talk []DBusCallGrant `json:"talk,omitempty" jsonschema:"maxItems=64,description=Exact session bus calls the application may make"`
-	Own  []string        `json:"own,omitempty" jsonschema:"maxItems=32,uniqueItems=true,description=Session bus names the application may own"`
+	Own  []string        `json:"own,omitempty" jsonschema:"maxItems=32,uniqueItems=true,description=Exact session bus names or trailing namespace patterns the application may own"`
 }
 
 type DBusCallGrant struct {
@@ -41,7 +41,7 @@ func ValidateDBusPolicy(policy DBusPolicy) error {
 	}
 	owned := make(map[string]bool, len(policy.Own))
 	for _, name := range policy.Own {
-		if !validDBusName(name) {
+		if !validDBusOwnRule(name) {
 			return fmt.Errorf("invalid session bus name: %q", name)
 		}
 		if owned[name] {
@@ -86,6 +86,14 @@ func validDBusName(name string) bool {
 	return len(name) <= 255 && dbusNamePattern.MatchString(name)
 }
 
+func validDBusOwnRule(rule string) bool {
+	if validDBusName(rule) {
+		return true
+	}
+	namespace, wildcard := strings.CutSuffix(rule, ".*")
+	return wildcard && len(rule) <= 255 && validDBusName(namespace)
+}
+
 func (p DBusPolicy) AllowsCall(name, path, interfaceName, member string) bool {
 	for _, rule := range p.Talk {
 		if rule.Name != name || rule.Path != path || rule.Interface != interfaceName {
@@ -102,11 +110,22 @@ func (p DBusPolicy) AllowsCall(name, path, interfaceName, member string) bool {
 
 func (p DBusPolicy) AllowsOwn(name string) bool {
 	for _, allowed := range p.Own {
-		if allowed == name {
+		if dbusOwnRuleAllows(allowed, name) {
 			return true
 		}
 	}
 	return false
+}
+
+func dbusOwnRuleAllows(rule, name string) bool {
+	if !validDBusOwnRule(rule) || !validDBusOwnRule(name) {
+		return false
+	}
+	if rule == name {
+		return true
+	}
+	namespace, wildcard := strings.CutSuffix(rule, ".*")
+	return wildcard && strings.HasPrefix(name, namespace+".")
 }
 
 func DBusPolicyRestricts(current, candidate DBusPolicy) bool {
@@ -127,10 +146,18 @@ func DBusPolicyRestricts(current, candidate DBusPolicy) bool {
 
 func IntersectDBusPolicies(left, right DBusPolicy) DBusPolicy {
 	result := DBusPolicy{}
-	for _, name := range left.Own {
-		if right.AllowsOwn(name) {
-			result.Own = append(result.Own, name)
+	owned := make(map[string]bool)
+	for _, leftName := range left.Own {
+		for _, rightName := range right.Own {
+			if dbusOwnRuleAllows(leftName, rightName) {
+				owned[rightName] = true
+			} else if dbusOwnRuleAllows(rightName, leftName) {
+				owned[leftName] = true
+			}
 		}
+	}
+	for name := range owned {
+		result.Own = append(result.Own, name)
 	}
 	for _, rule := range left.Talk {
 		shared := DBusCallGrant{Name: rule.Name, Path: rule.Path, Interface: rule.Interface}

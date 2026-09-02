@@ -736,7 +736,7 @@ func TestProxyForwardsBusAndInterceptsFileChooser(t *testing.T) {
 					{Name: "org.example.CpakDesktopBus", Path: "/org/example/CpakDesktopBus", Interface: "org.example.CpakDesktopBus", Members: []string{"StartTransientUnit"}},
 					{Name: "org.freedesktop.DBus", Path: "/org/freedesktop/DBus", Interface: "org.freedesktop.DBus", Members: []string{"ListNames"}},
 				},
-				Own: []string{"org.example.CpakClient"},
+				Own: []string{"org.example.CpakClient.*"},
 			},
 			PickFile: func(_ context.Context, request systembroker.FilePickerRequest) (systembroker.FilePickerResult, error) {
 				selected <- request
@@ -757,7 +757,7 @@ func TestProxyForwardsBusAndInterceptsFileChooser(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	if reply, requestErr := connection.RequestName("org.example.CpakClient", dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+	if reply, requestErr := connection.RequestName("org.example.CpakClient.Instance294", dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
 		t.Fatalf("request declared client name: %d, %v", reply, requestErr)
 	}
 	if _, requestErr := connection.RequestName("org.example.CpakUndeclared", dbus.NameFlagDoNotQueue); requestErr == nil || !strings.Contains(requestErr.Error(), "not permitted") {

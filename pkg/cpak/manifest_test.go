@@ -100,6 +100,18 @@ func TestManifestVersionThreeAcceptsOnlyFilteredSessionBusCalls(t *testing.T) {
 	}
 }
 
+func TestManifestVersionThreeRejectsOwnershipPatternsCoveringHostServices(t *testing.T) {
+	for _, name := range []string{"org.freedesktop.*", "org.gnome.*"} {
+		manifest := validManifestForTest()
+		manifest.ManifestVersion = "3.0"
+		manifest.Image = "ghcr.io/example/test@sha256:" + strings.Repeat("a", 64)
+		manifest.Override.SessionBus = types.DBusPolicy{Own: []string{name}}
+		if err := (&Cpak{}).ValidateManifest(manifest); err == nil {
+			t.Fatalf("a pattern covering a protected host service was accepted: %s", name)
+		}
+	}
+}
+
 func TestManifestVersionThreeRequiresPinnedCode(t *testing.T) {
 	manifest := validManifestForTest()
 	manifest.ManifestVersion = "3.0"
