@@ -57,8 +57,16 @@ func TestX11BrokerIntegratesXephyrWithTheHostDesktop(t *testing.T) {
 		})
 	}()
 	ready := []byte{0}
-	if _, err = io.ReadFull(readyReader, ready); err != nil || ready[0] != 1 {
-		t.Fatalf("X11 broker readiness: %v, %v", ready, err)
+	if _, err = io.ReadFull(readyReader, ready); err != nil {
+		select {
+		case brokerErr := <-done:
+			t.Fatalf("X11 broker readiness: %v, broker: %v", err, brokerErr)
+		case <-time.After(time.Second):
+			t.Fatalf("X11 broker readiness: %v", err)
+		}
+	}
+	if ready[0] != 1 {
+		t.Fatalf("X11 broker readiness response: %v", ready)
 	}
 	readyReader.Close()
 	defer func() {
