@@ -1,0 +1,52 @@
+name: Build Learn core
+
+on:
+  push:
+    branches: [v2]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+
+      - name: Test decision core
+        run: go test ./pkg/core ./pkg/cpak
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            version="0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "value=${version#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build WebAssembly module
+        env:
+          CPAK_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p dist
+          GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=${CPAK_VERSION}" -o dist/cpak-core.wasm ./cmd/cpak-wasm
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/wasm_exec.js
+          cd dist
+          sha256sum cpak-core.wasm wasm_exec.js > SHA256SUMS
+
+      - name: Exercise the shipped module
+        run: node cmd/cpak-wasm/smoke.mjs dist/cpak-core.wasm dist/wasm_exec.js "${{ steps.version.outputs.value }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: cpak-learn-core-${{ steps.version.outputs.value }}
+          path: dist
+          if-no-files-found: error
