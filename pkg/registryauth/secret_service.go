@@ -24,6 +24,8 @@ const (
 	nullObjectPath         = dbus.ObjectPath("/")
 )
 
+var errSecretServiceUnavailable = errors.New("registryauth: Secret Service is unavailable")
+
 type secretValue struct {
 	Session     dbus.ObjectPath
 	Parameters  []byte
@@ -138,7 +140,7 @@ func clearSecret(ctx context.Context, record Record) error {
 func openSecretService(ctx context.Context) (*secretService, error) {
 	connection, err := dbus.ConnectSessionBus()
 	if err != nil {
-		return nil, fmt.Errorf("registryauth: connect to Secret Service: %w", err)
+		return nil, fmt.Errorf("%w: connect to session bus: %v", errSecretServiceUnavailable, err)
 	}
 	var output dbus.Variant
 	var session dbus.ObjectPath
@@ -151,6 +153,9 @@ func openSecretService(ctx context.Context) (*secretService, error) {
 	)
 	if err = call.Store(&output, &session); err != nil {
 		connection.Close()
+		if secretServiceActivationUnavailable(err) {
+			return nil, fmt.Errorf("%w: %v", errSecretServiceUnavailable, err)
+		}
 		return nil, fmt.Errorf("registryauth: open Secret Service session: %w", err)
 	}
 	if !session.IsValid() || session == nullObjectPath {
@@ -158,6 +163,23 @@ func openSecretService(ctx context.Context) (*secretService, error) {
 		return nil, errors.New("registryauth: Secret Service returned an invalid session")
 	}
 	return &secretService{connection: connection, session: session}, nil
+}
+
+func secretServiceActivationUnavailable(err error) bool {
+	var busErr dbus.Error
+	if !errors.As(err, &busErr) {
+		return false
+	}
+	switch busErr.Name {
+	case "org.freedesktop.DBus.Error.NameHasNoOwner",
+		"org.freedesktop.DBus.Error.ServiceUnknown",
+		"org.freedesktop.DBus.Error.Spawn.ExecFailed",
+		"org.freedesktop.DBus.Error.Spawn.ChildExited",
+		"org.freedesktop.DBus.Error.Spawn.Failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *secretService) close() {

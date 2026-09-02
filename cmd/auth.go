@@ -136,6 +136,7 @@ func (c *AuthCmd) login(cp cpak.Cpak, origin string) error {
 	if err = registryauth.Save(cp.Ctx, cp.Options.RegistryAuthPath, record, secret); err != nil {
 		return err
 	}
+	c.reportCredentialFallback(cp.Options.RegistryAuthPath, origin)
 	c.Logger.Success("Registry access saved for %s", origin)
 	return nil
 }
@@ -196,8 +197,22 @@ func (c *AuthCmd) loginGitHub(cp cpak.Cpak, origin string) error {
 	if err = registryauth.Save(cp.Ctx, cp.Options.RegistryAuthPath, record, secret); err != nil {
 		return err
 	}
+	c.reportCredentialFallback(cp.Options.RegistryAuthPath, origin)
 	c.Logger.Success("GitHub access saved for %s", origin)
 	return nil
+}
+
+func (c *AuthCmd) reportCredentialFallback(path, origin string) {
+	records, err := registryauth.Load(path)
+	if err != nil {
+		return
+	}
+	for _, record := range records {
+		if record.Origin == origin && record.SecretFileManaged {
+			c.Logger.Info("Secret Service is unavailable; cpak stored the credential in its private configuration directory with mode 0600.")
+			return
+		}
+	}
 }
 
 func (c *AuthCmd) readGitHubSecret() (string, error) {

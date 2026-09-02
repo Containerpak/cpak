@@ -298,10 +298,12 @@ For GHCR, enter a GitHub personal access token as the password and keep the
 GitHub username. `--token` is for a registry-issued bearer token and cannot be
 combined with `--username`.
 
-Desktop sessions store secrets through Secret Service. With `--secret-file`,
-cpak keeps the secret in the user-owned mode `0600` file and stores only its
-absolute path in the binding. A binding is restricted to one package origin,
-registry host and OCI repository path.
+Desktop sessions store secrets through Secret Service when it is available. If
+the session has no D-Bus or Secret Service provider, cpak writes the secret to
+its private configuration directory with mode `0600`. This fallback needs no
+keyring service. With `--secret-file`, cpak keeps using the user-owned mode
+`0600` file and stores only its absolute path in the binding. A binding is
+restricted to one package origin, registry host and OCI repository path.
 
 ## Private GitHub repositories
 

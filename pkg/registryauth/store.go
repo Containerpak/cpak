@@ -7,7 +7,9 @@ package registryauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,17 +17,19 @@ import (
 	"syscall"
 
 	"github.com/mirkobrombin/cpak/pkg/oci"
+	"golang.org/x/sys/unix"
 )
 
 // Record binds one package origin to the exact source and OCI repository it may access.
 type Record struct {
-	Origin     string   `json:"origin"`
-	SourceHost string   `json:"source_host,omitempty"`
-	Registry   string   `json:"registry"`
-	Repository string   `json:"repository"`
-	Username   string   `json:"username,omitempty"`
-	TokenHosts []string `json:"token_hosts,omitempty"`
-	SecretFile string   `json:"secret_file,omitempty"`
+	Origin            string   `json:"origin"`
+	SourceHost        string   `json:"source_host,omitempty"`
+	Registry          string   `json:"registry"`
+	Repository        string   `json:"repository"`
+	Username          string   `json:"username,omitempty"`
+	TokenHosts        []string `json:"token_hosts,omitempty"`
+	SecretFile        string   `json:"secret_file,omitempty"`
+	SecretFileManaged bool     `json:"secret_file_managed,omitempty"`
 }
 
 type credentialFile struct {
@@ -116,10 +120,20 @@ func Save(ctx context.Context, path string, record Record, secret string) error 
 	if err != nil {
 		return err
 	}
-	stored := record.SecretFile == ""
-	if stored {
-		if err := storeSecret(ctx, record, secret); err != nil {
+	desktopStored := false
+	managedStored := false
+	if record.SecretFile == "" {
+		if err = storeSecret(ctx, record, secret); errors.Is(err, errSecretServiceUnavailable) {
+			record.SecretFile, err = writeManagedSecret(path, secret)
+			if err != nil {
+				return err
+			}
+			record.SecretFileManaged = true
+			managedStored = true
+		} else if err != nil {
 			return err
+		} else {
+			desktopStored = true
 		}
 	}
 	previous := make([]Record, 0, 1)
@@ -133,16 +147,25 @@ func Save(ctx context.Context, path string, record Record, secret string) error 
 	}
 	records = append(filtered, record)
 	if err = writeRecords(path, records); err != nil {
-		if stored {
+		if desktopStored {
 			_ = clearSecret(ctx, record)
+		}
+		if managedStored {
+			_ = removeManagedSecret(path, record)
 		}
 		return err
 	}
 	for _, current := range previous {
+		if current.SecretFileManaged {
+			if err = removeManagedSecret(path, current); err != nil {
+				return err
+			}
+			continue
+		}
 		if current.SecretFile != "" || secretBinding(current) == secretBinding(record) {
 			continue
 		}
-		if err = clearSecret(ctx, current); err != nil {
+		if err = clearSecret(ctx, current); err != nil && !errors.Is(err, errSecretServiceUnavailable) {
 			return err
 		}
 	}
@@ -151,7 +174,13 @@ func Save(ctx context.Context, path string, record Record, secret string) error 
 
 // ReadSecretFile reads a user-owned secret file without accepting broad permissions.
 func ReadSecretFile(path string) (string, error) {
-	info, err := os.Stat(path)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		return "", err
 	}
@@ -159,7 +188,7 @@ func ReadSecretFile(path string) (string, error) {
 	if info.Mode().Perm()&0077 != 0 || !info.Mode().IsRegular() || !ok || int(stat.Uid) != os.Getuid() {
 		return "", fmt.Errorf("registryauth: secret file must be a user-owned regular file with mode 0600")
 	}
-	content, err := os.ReadFile(path)
+	content, err := io.ReadAll(file)
 	if err != nil {
 		return "", err
 	}
@@ -177,18 +206,32 @@ func Remove(ctx context.Context, path, origin string) error {
 		return err
 	}
 	filtered := make([]Record, 0, len(records))
+	removed := make([]Record, 0, len(records))
 	for _, record := range records {
 		if record.Origin == origin {
-			if record.SecretFile == "" {
-				if err = clearSecret(ctx, record); err != nil {
-					return err
-				}
-			}
+			removed = append(removed, record)
 			continue
 		}
 		filtered = append(filtered, record)
 	}
-	return writeRecords(path, filtered)
+	if err = writeRecords(path, filtered); err != nil {
+		return err
+	}
+	for _, record := range removed {
+		if record.SecretFileManaged {
+			if err = removeManagedSecret(path, record); err != nil {
+				return err
+			}
+			continue
+		}
+		if record.SecretFile != "" {
+			continue
+		}
+		if err = clearSecret(ctx, record); err != nil && !errors.Is(err, errSecretServiceUnavailable) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Load reads public credential bindings.
@@ -234,6 +277,82 @@ func writeRecords(path string, records []Record) error {
 		return err
 	}
 	return os.Rename(temporaryPath, path)
+}
+
+func writeManagedSecret(bindingsPath, secret string) (string, error) {
+	directory, err := managedSecretDirectory(bindingsPath)
+	if err != nil {
+		return "", err
+	}
+	if err = os.MkdirAll(directory, 0700); err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 || !ok || int(stat.Uid) != os.Getuid() {
+		return "", fmt.Errorf("registryauth: credential directory must be a user-owned directory with mode 0700")
+	}
+	file, err := os.CreateTemp(directory, ".credential-*")
+	if err != nil {
+		return "", err
+	}
+	secretPath := file.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(secretPath)
+		}
+	}()
+	if err = file.Chmod(0600); err == nil {
+		_, err = file.WriteString(secret)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	keep = true
+	return secretPath, nil
+}
+
+func removeManagedSecret(bindingsPath string, record Record) error {
+	directory, err := managedSecretDirectory(bindingsPath)
+	if err != nil {
+		return err
+	}
+	secretPath, err := filepath.Abs(record.SecretFile)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(filepath.Base(secretPath), ".credential-") {
+		return fmt.Errorf("registryauth: managed secret path is outside the credential directory")
+	}
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		return err
+	}
+	secretDirectoryInfo, err := os.Stat(filepath.Dir(secretPath))
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(directoryInfo, secretDirectoryInfo) {
+		return fmt.Errorf("registryauth: managed secret path is outside the credential directory")
+	}
+	if err = os.Remove(secretPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func managedSecretDirectory(bindingsPath string) (string, error) {
+	return filepath.Abs(filepath.Join(filepath.Dir(bindingsPath), "credentials"))
 }
 
 func credentialFromFile(path, origin string, ref oci.Reference) (oci.Credential, error) {
@@ -335,6 +454,9 @@ func validateRecord(record Record) error {
 	}
 	if record.SourceHost == "" && record.Registry == "" {
 		return fmt.Errorf("registryauth: source or registry scope is required")
+	}
+	if record.SecretFileManaged && record.SecretFile == "" {
+		return fmt.Errorf("registryauth: managed secret path is required")
 	}
 	return nil
 }
