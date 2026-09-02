@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d)
 runtime="/run/user/$(id -u)"
+broker_runtime="/tmp/cpak-$(id -u)"
 manifests="$work/manifests"
 web="$work/web"
 manifest_host=cpak.test
@@ -361,12 +362,12 @@ done
 policy_marker="$work/uri-policy-marker"
 touch "$policy_marker"
 WAYLAND_DISPLAY="$stale_wayland_display" run_command "$uri_origin" desktop
-uri_policy_count=$(find "$runtime/cpak/policies" -type f -newer "$policy_marker" | wc -l)
+uri_policy_count=$(find "$broker_runtime/policies" -type f -newer "$policy_marker" | wc -l)
 if [ "$uri_policy_count" -ne 1 ]; then
 	echo "URI container created $uri_policy_count broker policies, want one" >&2
 	exit 1
 fi
-uri_policy=$(find "$runtime/cpak/policies" -type f -newer "$policy_marker")
+uri_policy=$(find "$broker_runtime/policies" -type f -newer "$policy_marker")
 if grep -F '"desktop_environment"' "$uri_policy" >/dev/null; then
 	echo "new broker policy persisted its container display" >&2
 	exit 1
