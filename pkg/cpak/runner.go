@@ -23,6 +23,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/appservice"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
+	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -172,6 +173,10 @@ func (c *Cpak) RunInstance(origin string, version string, branch string, commit 
 	if err != nil || app.CpakId == "" {
 		_ = store.Close()
 		return fmt.Errorf("no application found for origin %s and version/criteria %s: %w", origin, version, err)
+	}
+	if _, ok := storedOverride(app); ok {
+		origin := tools.SanitizeForDisplay(app.Origin)
+		logger.Printf("Using a saved user override for %s; run cpak override edit %s to inspect it", origin, origin)
 	}
 	binary, extraArgs, err = applicationServiceCommand(app, c.applicationService, binary, extraArgs)
 	if err != nil {

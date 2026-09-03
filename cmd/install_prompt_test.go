@@ -118,12 +118,13 @@ func TestTheInstallPromptOnlyShowsRuntimeSourcesForThisArchitecture(t *testing.T
 	}
 	var output bytes.Buffer
 	command := &InstallCmd{Base: cli.Base{Logger: clilog.NewWriter(&output, &output)}}
-	command.describeRuntimeSourcesAndPermissions(&types.CpakManifest{
+	manifest := &types.CpakManifest{
 		RuntimeSources: []types.RuntimeSource{
 			{URL: "https://example.com/native", Size: 1, Architecture: runtime.GOARCH},
 			{URL: "https://example.com/other", Size: 1, Architecture: other},
 		},
-	})
+	}
+	command.describeRuntimeSourcesAndPermissions(manifest, manifest.Override, false, "")
 	printed := output.String()
 	if !strings.Contains(printed, "/native") || strings.Contains(printed, "/other") {
 		t.Fatalf("runtime source prompt: %q", printed)
@@ -165,7 +166,7 @@ func TestTheInstallPromptLetsNoPublisherValueMoveTheCursor(t *testing.T) {
 			Description: "a library nobody asked for" + tainted,
 		},
 	}})
-	command.describeRuntimeSourcesAndPermissions(manifest)
+	command.describeRuntimeSourcesAndPermissions(manifest, manifest.Override, false, "")
 
 	printed := output.String()
 	// The line breaks are the prompt's own, so the rule is applied to what is
@@ -187,5 +188,25 @@ func TestTheInstallPromptLetsNoPublisherValueMoveTheCursor(t *testing.T) {
 	}
 	if got := strings.Count(printed, `\u009b`); got != 18 {
 		t.Fatalf("the single character control sequences were spelled out %d times, want twice per printed value: %q", got, printed)
+	}
+}
+
+func TestTheInstallPromptShowsTheSavedRuntimeOverride(t *testing.T) {
+	var output bytes.Buffer
+	command := &InstallCmd{Base: cli.Base{Logger: clilog.NewWriter(&output, &output)}}
+	manifest := &types.CpakManifest{Override: types.Override{SessionBus: types.DBusPolicy{
+		Own: []string{"com.steampowered.PressureVessel.*"},
+	}}}
+	saved := types.Override{SessionBus: types.DBusPolicy{
+		Own: []string{"com.steampowered.PressureVessel.LaunchAlongsideSteam"},
+	}}
+
+	command.describeRuntimeSourcesAndPermissions(manifest, saved, true, "github.com/containerpak/steam")
+	printed := output.String()
+	if !strings.Contains(printed, "saved user override") {
+		t.Fatalf("the saved override was hidden: %q", printed)
+	}
+	if !strings.Contains(printed, "LaunchAlongsideSteam") || strings.Contains(printed, "PressureVessel.*") {
+		t.Fatalf("the prompt did not show the effective permissions: %q", printed)
 	}
 }

@@ -224,11 +224,15 @@ func declaresDependency(parent, app types.Application) bool {
 // restrictive choice an owner can make, deny everything, as no choice at all,
 // and hand the application whatever its manifest asked for instead.
 func requestedOverride(app types.Application) types.Override {
-	userOverride, err := LoadOverride(app.Origin, app.Version)
-	if err != nil {
-		return app.ParsedOverride
+	if override, ok := storedOverride(app); ok {
+		return override
 	}
-	return userOverride
+	return app.ParsedOverride
+}
+
+func storedOverride(app types.Application) (types.Override, bool) {
+	override, err := LoadOverride(app.Origin, app.Version)
+	return override, err == nil
 }
 
 // underHostCeiling holds a policy to the widest one this host permits. The
