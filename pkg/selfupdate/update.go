@@ -56,6 +56,7 @@ type Checker struct {
 	Executable      string
 	HTTP            *http.Client
 	Migrate         func(context.Context, string) error
+	PrepareRuntime  func(context.Context, string) error
 	VerifyChecksums func([]byte, []byte) error
 }
 
@@ -166,6 +167,11 @@ func (c Checker) Install(ctx context.Context, release Release) error {
 	}
 	if err = replaceExecutable(executable, binary); err != nil {
 		return fmt.Errorf("selfupdate: replace cpak: %w", err)
+	}
+	if c.PrepareRuntime != nil {
+		if err = c.PrepareRuntime(ctx, executable); err != nil {
+			return fmt.Errorf("selfupdate: prepare runtime: %w", err)
+		}
 	}
 	if err = c.migrate(ctx, executable); err != nil {
 		return fmt.Errorf("selfupdate: migrate storage: %w", err)

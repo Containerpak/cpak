@@ -99,6 +99,9 @@ func TestNixStoreExecutableUsesItsDeclarativeIntegration(t *testing.T) {
 	if got.binary != binary || got.service != filepath.Join(prefix, "share/dbus-1/system-services", serviceFileName) {
 		t.Fatalf("declarative layout: %+v", got)
 	}
+	if got.storage != filepath.Join(prefix, "bin", "cpak-storaged") {
+		t.Fatalf("declarative storage service: %s", got.storage)
+	}
 	if got.polkit != filepath.Join(prefix, "share/polkit-1/actions", polkitPolicyName) {
 		t.Fatalf("declarative polkit action: %s", got.polkit)
 	}

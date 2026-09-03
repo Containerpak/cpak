@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/mirkobrombin/cpak/cmd"
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"github.com/mirkobrombin/cpak/pkg/selfupdate"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
@@ -82,6 +84,10 @@ var selfUpdateMode = "enabled"
 var cpakIcon []byte
 
 func main() {
+	if err := relaunchForAppArmor(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	desktopui.SetBrandIcon(cpakIcon)
 	root := &CLI{}
 	root.Run.Configure(cpakIcon)
@@ -100,6 +106,57 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func relaunchForAppArmor() error {
+	if !needsAppArmorRuntime(os.Args) || !systemauthority.AppArmorUserNamespacesRestricted() {
+		return nil
+	}
+	if systemauthority.AppArmorRuntimeActive() {
+		return nil
+	}
+	target, available := systemauthority.AppArmorRuntimeExecutable()
+	if !available {
+		if isDoctorCommand(os.Args) {
+			return nil
+		}
+		return errors.New("AppArmor restricts user namespaces; run cpak system setup before this command")
+	}
+	current, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve cpak executable for AppArmor: %w", err)
+	}
+	current, err = filepath.EvalSymlinks(current)
+	if err != nil {
+		return fmt.Errorf("resolve cpak executable for AppArmor: %w", err)
+	}
+	if systemauthority.SameExecutableContents(current, target) {
+		currentInfo, currentErr := os.Stat(current)
+		targetInfo, targetErr := os.Stat(target)
+		if currentErr == nil && targetErr == nil && os.SameFile(currentInfo, targetInfo) {
+			return nil
+		}
+		return syscall.Exec(target, os.Args, os.Environ())
+	}
+	if isDoctorCommand(os.Args) {
+		return nil
+	}
+	return errors.New("the profiled cpak copy is from another release; run cpak system setup again")
+}
+
+func isDoctorCommand(arguments []string) bool {
+	return len(arguments) > 1 && arguments[1] == "doctor"
+}
+
+func needsAppArmorRuntime(arguments []string) bool {
+	if len(arguments) < 2 {
+		return false
+	}
+	switch arguments[1] {
+	case "doctor", "install", "update", "rollback", "run", "shell", "orchestrate", "spawn", "service", "dev", "test", "storage", "environment", "addon", "extract":
+		return true
+	}
+	return false
 }
 
 func (c *CLI) Before() error {

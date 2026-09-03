@@ -42,6 +42,7 @@ ssh_authorized_keys:
   - $public_key
 package_update: true
 packages:
+  - apparmor
   - busybox-static
   - ca-certificates
   - curl
@@ -58,7 +59,6 @@ packages:
   - xdg-utils
 runcmd:
   - [sh, -c, 'sysctl -w kernel.unprivileged_userns_clone=1 || true']
-  - [sh, -c, 'sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true']
   - [sh, -c, 'modprobe fuse || true']
 EOF
 printf 'instance-id: cpak-integration\nlocal-hostname: cpak-integration\n' >"$work/meta-data"

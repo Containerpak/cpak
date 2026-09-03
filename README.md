@@ -24,12 +24,18 @@ the download, then install it in a directory on `PATH`:
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
 install -Dm755 cpak-linux-amd64 "$HOME/.local/bin/cpak"
+cpak system setup
 cpak doctor
 ```
 
 `cpak doctor` checks user namespaces, rootless OverlayFS, seccomp, Landlock,
 cgroup delegation, display, audio and the host action broker. It
 prints a JSON report with `cpak doctor --json`.
+
+On Ubuntu systems that restrict unprivileged user namespaces, `cpak system
+setup` installs a profile for a root-owned cpak copy. cpak uses that copy for
+runtime commands and keeps the system restriction active for other
+applications. The AppArmor profile is skipped on hosts that do not need it.
 
 On NixOS, add the flake module so the binary and system authority are installed
 declaratively:

@@ -19,10 +19,17 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"golang.org/x/term"
 )
 
 type progressFunc func(string)
+
+var (
+	appArmorRestricted        = systemauthority.AppArmorUserNamespacesRestricted
+	appArmorRuntimeExecutable = systemauthority.AppArmorRuntimeExecutable
+	appArmorRuntimeMatches    = systemauthority.SameExecutableContents
+)
 
 func main() {
 	forceTerminal := flag.Bool("terminal", false, "use the terminal interface")
@@ -131,6 +138,15 @@ func install(capsule bootstrap.Capsule, progress progressFunc) error {
 		progress("Installed cpak in ~/.local/bin")
 	} else {
 		progress("cpak is ready")
+	}
+	if appArmorRestricted() {
+		target, ready := appArmorRuntimeExecutable()
+		if !ready || !appArmorRuntimeMatches(cpakPath, target) {
+			progress("Preparing cpak for Ubuntu's user namespace policy")
+			if err := runCommand(cpakPath, []string{"system", "setup"}, progress); err != nil {
+				return err
+			}
+		}
 	}
 	if changed || storageChanged {
 		progress("Preparing cpak storage")

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,10 +46,20 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	var migrated string
+	var steps []string
 	checker := Checker{
 		Executable: target,
+		PrepareRuntime: func(_ context.Context, executable string) error {
+			installed, err := os.ReadFile(executable)
+			if err != nil || string(installed) != string(binary) {
+				return fmt.Errorf("runtime preparation saw %q: %w", installed, err)
+			}
+			steps = append(steps, "runtime")
+			return nil
+		},
 		Migrate: func(_ context.Context, executable string) error {
 			migrated = executable
+			steps = append(steps, "migration")
 			return nil
 		},
 		VerifyChecksums: func(gotChecksums, gotBundle []byte) error {
@@ -77,6 +88,9 @@ func TestCheckerInstallsVerifiedBinary(t *testing.T) {
 	}
 	if migrated != target {
 		t.Fatalf("storage migration used %q", migrated)
+	}
+	if strings.Join(steps, ",") != "runtime,migration" {
+		t.Fatalf("update steps ran in the wrong order: %v", steps)
 	}
 }
 

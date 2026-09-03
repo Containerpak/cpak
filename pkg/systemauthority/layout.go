@@ -28,6 +28,7 @@ var installPrefixes = []string{standardPrefix, "/opt/cpak", "/var/lib/cpak"}
 type layout struct {
 	prefix   string
 	binary   string
+	storage  string
 	service  string
 	policy   string
 	polkit   string
@@ -38,6 +39,7 @@ func layoutFor(prefix string) layout {
 	l := layout{
 		prefix:   prefix,
 		binary:   filepath.Join(prefix, "bin", "cpak"),
+		storage:  filepath.Join(prefix, "bin", "cpak-storaged"),
 		service:  filepath.Join(prefix, "share", "dbus-1", "system-services", serviceFileName),
 		policy:   busPolicyPath,
 		polkit:   filepath.Join(prefix, "share", "polkit-1", "actions", polkitPolicyName),
@@ -154,6 +156,7 @@ func declarativeLayoutForExecutable(binary string) (layout, bool) {
 	return layout{
 		prefix:   prefix,
 		binary:   clean,
+		storage:  filepath.Join(prefix, "bin", "cpak-storaged"),
 		service:  filepath.Join(prefix, "share", "dbus-1", "system-services", serviceFileName),
 		policy:   filepath.Join(prefix, "share", "dbus-1", "system.d", "it.cpak.SystemAuthority1.conf"),
 		polkit:   filepath.Join(prefix, "share", "polkit-1", "actions", polkitPolicyName),

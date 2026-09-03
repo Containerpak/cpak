@@ -1,0 +1,11 @@
+# This profile grants cpak the user namespaces its rootless runtime uses.
+# Ubuntu's restriction stays active for unprofiled applications.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile cpak-userns "@BINARY@" flags=(unconfined) {
+  allow userns create,
+
+  include if exists <local/cpak-userns>
+}

@@ -222,6 +222,55 @@ for attempt in $(seq 1 100); do
 done
 
 cpak="$root/out/cpak"
+restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+if [ ! -r "$restriction" ] || [ "$(cat "$restriction")" != 1 ]; then
+	echo "Ubuntu AppArmor user namespace restriction is not active" >&2
+	exit 1
+fi
+set +e
+"$cpak" doctor --json >"$work/doctor-before-apparmor.json" 2>"$work/doctor-before-apparmor.log"
+doctor_before_status=$?
+set -e
+if [ "$doctor_before_status" -eq 0 ]; then
+	echo "unprofiled cpak passed doctor before AppArmor setup" >&2
+	exit 1
+fi
+python3 - "$work/doctor-before-apparmor.json" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+overlay = next(check for check in report["checks"] if check["name"] == "rootless OverlayFS")
+if overlay["available"]:
+    raise SystemExit("unprofiled cpak mounted OverlayFS before AppArmor setup")
+if "cpak system setup" not in overlay["detail"]:
+    raise SystemExit("doctor did not explain how to install the AppArmor profile")
+PY
+"$cpak" system setup
+sudo grep -Fx 'cpak-userns (unconfined)' /sys/kernel/security/apparmor/profiles >/dev/null
+for iteration in 1 2 3; do
+	"$cpak" doctor --json >"$work/doctor-after-apparmor-$iteration.json"
+	python3 - "$work/doctor-after-apparmor-$iteration.json" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+overlay = next(check for check in report["checks"] if check["name"] == "rootless OverlayFS")
+if not report["ready"] or not overlay["available"]:
+    raise SystemExit("profiled cpak did not pass its runtime checks")
+PY
+done
+if [ "$(cat "$restriction")" != 1 ]; then
+	echo "cpak disabled Ubuntu's AppArmor user namespace restriction" >&2
+	exit 1
+fi
+if "$root/out/cpak-integration-probe" nested-mount >"$work/unprofiled-userns.log" 2>&1; then
+	echo "unprofiled process mounted inside a user namespace" >&2
+	exit 1
+fi
+echo "AppArmor user namespace integration passed"
 "$root/out/cpak-integration-probe" user-manager-mock "$WAYLAND_DISPLAY" >"$work/user-manager.log" 2>&1 &
 service_pids="$service_pids $!"
 for attempt in $(seq 1 100); do
@@ -313,20 +362,8 @@ LANG=en_US.UTF-8 LC_ALL= LC_NUMERIC=ru_RU.UTF-8 XDG_DATA_DIRS=/nix/store/desktop
 install "$manifest_host/integration/session-bus"
 run_probe "$manifest_host/integration/session-bus" session-bus-own
 
-nested_host_log="$work/nested-host.log"
-if "$root/out/cpak-integration-probe" nested-mount >"$nested_host_log" 2>&1; then
-	nested_host_mounts=true
-else
-	nested_host_mounts=false
-	echo "host policy does not permit nested mounts; runtime coverage is enforced by the NixOS VM" >&2
-	cat "$nested_host_log" >&2
-fi
 install "$manifest_host/integration/nested-sandbox"
-if [ "$nested_host_mounts" = true ]; then
-	run_probe "$manifest_host/integration/nested-sandbox" nested-mount
-else
-	"$cpak" stop "$manifest_host/integration/nested-sandbox"
-fi
+run_probe "$manifest_host/integration/nested-sandbox" nested-mount
 install "$manifest_host/integration/nested-sandbox-disabled"
 run_probe "$manifest_host/integration/nested-sandbox-disabled" blocked-mount
 

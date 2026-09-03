@@ -31,6 +31,10 @@ var ErrNotInstalled = errors.New("cpak system integration is not installed")
 // ErrDeclarativeInstallation means the package manager owns the integration.
 var ErrDeclarativeInstallation = errors.New("cpak system integration is managed declaratively")
 
+var prepareSystemBinaryDirectory = func(path string) error {
+	return ensureDirectory(path, 0)
+}
+
 //go:embed assets/it.cpak.system.policy
 var polkitPolicy []byte
 
@@ -53,7 +57,15 @@ func Install() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if AppArmorUserNamespacesRestricted() {
+		if err := installCompanionExecutable(target.storage); err != nil {
+			return nil, err
+		}
+	}
 	if err := installExecutable(target.binary); err != nil {
+		return nil, err
+	}
+	if err := installAppArmorProfile(target); err != nil {
 		return nil, err
 	}
 	for _, file := range []struct {
@@ -103,10 +115,13 @@ func Uninstall() error {
 	if err := unpublishSessions(); err != nil {
 		return err
 	}
+	if err := removeAppArmorProfile(); err != nil {
+		return err
+	}
 	paths := []string{busPolicyPath}
 	for _, prefix := range installPrefixes {
 		candidate := layoutFor(prefix)
-		paths = append(paths, candidate.service, candidate.polkit, candidate.binary)
+		paths = append(paths, candidate.service, candidate.polkit, candidate.binary, candidate.storage)
 	}
 	if systemdIsRunning() {
 		paths = append(paths, systemdUnitPath)
@@ -149,6 +164,12 @@ func Installed() bool {
 			return false
 		}
 	}
+	if AppArmorUserNamespacesRestricted() && !appArmorProfileTrusted(target) {
+		return false
+	}
+	if AppArmorUserNamespacesRestricted() && !trustedFile(target.storage) {
+		return false
+	}
 	return true
 }
 
@@ -174,16 +195,32 @@ func servicedirElement(target layout) string {
 }
 
 func installExecutable(destination string) error {
-	input, err := os.Open("/proc/self/exe")
+	return copyExecutable("/proc/self/exe", destination, "running cpak executable")
+}
+
+func installCompanionExecutable(destination string) error {
+	executable, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("open running cpak executable: %w", err)
+		return fmt.Errorf("resolve running cpak executable: %w", err)
+	}
+	if executable, err = filepath.EvalSymlinks(executable); err != nil {
+		return fmt.Errorf("resolve running cpak executable: %w", err)
+	}
+	source := filepath.Join(filepath.Dir(executable), "cpak-storaged")
+	return copyExecutable(source, destination, "cpak storage service")
+}
+
+func copyExecutable(source, destination, description string) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", description, err)
 	}
 	defer input.Close()
 	info, err := input.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
-		return errors.New("running cpak executable is not trusted")
+		return fmt.Errorf("%s is not trusted", description)
 	}
-	if err := ensureDirectory(filepath.Dir(destination), 0); err != nil {
+	if err := prepareSystemBinaryDirectory(filepath.Dir(destination)); err != nil {
 		return fmt.Errorf("create system binary directory: %w", err)
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(destination), ".cpak-")

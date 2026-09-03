@@ -12,6 +12,7 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
 	"github.com/mirkobrombin/cpak/pkg/selfupdate"
+	"github.com/mirkobrombin/cpak/pkg/systemauthority"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -28,6 +29,12 @@ type SelfUpdateCmd struct {
 
 func (c *SelfUpdateCmd) Run() error {
 	checker := selfupdate.Checker{CurrentVersion: c.version, Mode: c.mode}
+	checker.PrepareRuntime = func(context.Context, string) error {
+		if !systemauthority.AppArmorUserNamespacesRestricted() {
+			return nil
+		}
+		return runSystemSetup("setup")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	release, available, err := checker.Check(ctx, 0)

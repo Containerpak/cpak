@@ -61,30 +61,49 @@ func TestInstallCompanionUsesTheCpakBinDirectory(t *testing.T) {
 }
 
 func TestInstallMigratesStorageBeforeInstallingTheApplication(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	payload := []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\n")
-	capsule := bootstrap.Capsule{
-		Metadata: bootstrap.Metadata{
-			Name:           "Demo",
-			Origin:         "github.com/containerpak/demo",
-			Ref:            strings.Repeat("a", 40),
-			ManifestDigest: "sha256:" + strings.Repeat("b", 64),
-		},
-		Payload:   payload,
-		Companion: []byte("storage service"),
-	}
-	if err := install(capsule, func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(home, "calls"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	wantInstall := "install --commit " + strings.Repeat("a", 40) + " --signed-installer github.com/containerpak/demo"
-	if len(lines) != 2 || lines[0] != "storage migrate" || lines[1] != wantInstall {
-		t.Fatalf("commands = %q", lines)
+	for _, test := range []struct {
+		name       string
+		restricted bool
+		wantPrefix []string
+	}{
+		{name: "ordinary host", wantPrefix: []string{"storage migrate"}},
+		{name: "restricted AppArmor host", restricted: true, wantPrefix: []string{"system setup", "storage migrate"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			savedRestricted := appArmorRestricted
+			savedRuntime := appArmorRuntimeExecutable
+			appArmorRestricted = func() bool { return test.restricted }
+			appArmorRuntimeExecutable = func() (string, bool) { return "", false }
+			t.Cleanup(func() {
+				appArmorRestricted = savedRestricted
+				appArmorRuntimeExecutable = savedRuntime
+			})
+			payload := []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\n")
+			capsule := bootstrap.Capsule{
+				Metadata: bootstrap.Metadata{
+					Name:           "Demo",
+					Origin:         "github.com/containerpak/demo",
+					Ref:            strings.Repeat("a", 40),
+					ManifestDigest: "sha256:" + strings.Repeat("b", 64),
+				},
+				Payload:   payload,
+				Companion: []byte("storage service"),
+			}
+			if err := install(capsule, func(string) {}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(home, "calls"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := append(test.wantPrefix, "install --commit "+strings.Repeat("a", 40)+" --signed-installer github.com/containerpak/demo")
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("commands = %q, want %q", lines, want)
+			}
+		})
 	}
 }
 

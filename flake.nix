@@ -68,6 +68,10 @@
 
               install -Dm644 pkg/systemauthority/assets/it.cpak.system.policy \
                 "$out/share/polkit-1/actions/it.cpak.system.policy"
+              install -Dm644 pkg/systemauthority/assets/cpak-userns \
+                "$out/etc/apparmor.d/cpak-userns"
+              substituteInPlace "$out/etc/apparmor.d/cpak-userns" \
+                --replace-fail '@BINARY@' "$out/bin/cpak"
               install -Dm644 cpak-icon.png "$out/share/icons/hicolor/512x512/apps/it.cpak.cpak.png"
             '';
 
@@ -96,12 +100,17 @@
             };
           };
 
-          config = lib.mkIf cfg.enable {
-            environment.systemPackages = [ cfg.package ];
-            security.polkit.enable = true;
-            services.dbus.packages = [ cfg.package ];
-            systemd.packages = [ cfg.package ];
-          };
+          config = lib.mkIf cfg.enable (lib.mkMerge [
+            {
+              environment.systemPackages = [ cfg.package ];
+              security.polkit.enable = true;
+              services.dbus.packages = [ cfg.package ];
+              systemd.packages = [ cfg.package ];
+            }
+            (lib.mkIf config.security.apparmor.enable {
+              security.apparmor.policies.cpak-userns.path = "${cfg.package}/etc/apparmor.d/cpak-userns";
+            })
+          ]);
         };
 
       checks = forAllSystems (system:

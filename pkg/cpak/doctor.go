@@ -102,6 +102,9 @@ func checkOverlay() DoctorCheck {
 		if detail == "" {
 			detail = runErr.Error()
 		}
+		if systemauthority.AppArmorUserNamespacesRestricted() {
+			detail += "; run cpak system setup to install cpak's AppArmor user namespace profile"
+		}
 		return DoctorCheck{Name: "rootless OverlayFS", Required: true, Detail: detail}
 	}
 	return DoctorCheck{Name: "rootless OverlayFS", Available: true, Required: true, Detail: "overlay mount with userxattr succeeded in a user namespace"}
