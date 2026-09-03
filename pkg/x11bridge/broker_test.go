@@ -43,6 +43,33 @@ func TestClipboardValueMatchesItsX11Format(t *testing.T) {
 	}
 }
 
+func TestClipboardPlainTextTargets(t *testing.T) {
+	for _, target := range []string{"UTF8_STRING", "STRING", "TEXT", "COMPOUND_TEXT", "text/plain", "text/plain;charset=utf-8"} {
+		if !plainClipboardTarget(target) {
+			t.Fatalf("plain text target %q was not recognized", target)
+		}
+	}
+	for _, target := range []string{"text/html", "image/png"} {
+		if plainClipboardTarget(target) {
+			t.Fatalf("non-plain target %q was recognized as plain text", target)
+		}
+	}
+}
+
+func TestClipboardUsesReadyUTF8Alias(t *testing.T) {
+	data := &clipboardData{items: map[string]clipboardItem{
+		"UTF8_STRING":              {target: "UTF8_STRING", kind: "UTF8_STRING"},
+		"text/plain;charset=utf-8": {target: "text/plain;charset=utf-8", kind: "text/plain;charset=utf-8", format: 8, data: []byte("ready")},
+	}}
+	item, ok := data.item("UTF8_STRING")
+	if !ok || string(item.data) != "ready" || item.target != "UTF8_STRING" || item.kind != "UTF8_STRING" {
+		t.Fatalf("UTF-8 fallback: %+v, available=%t", item, ok)
+	}
+	if _, ok = data.item("image/png"); ok {
+		t.Fatal("text was offered for an image target")
+	}
+}
+
 func TestClipboardLimitsConcurrentIncrementalTransfers(t *testing.T) {
 	bridge := newClipboardBridge(nil, nil, false, false)
 	for transfer := 0; transfer < maxClipboardTransfers; transfer++ {
