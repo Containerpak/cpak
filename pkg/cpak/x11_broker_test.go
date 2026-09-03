@@ -369,6 +369,15 @@ func sendTestSelectionIncremental(connection *xgb.Conn, requestor xproto.Window,
 
 func readTestSelection(t *testing.T, connection *xgb.Conn, previousOwner xproto.Window, expected string) string {
 	t.Helper()
+	value, ok := tryReadTestSelection(t, connection, previousOwner, 3*time.Second)
+	if !ok {
+		t.Fatalf("clipboard value with %d bytes was not delivered", len(expected))
+	}
+	return value
+}
+
+func tryReadTestSelection(t *testing.T, connection *xgb.Conn, previousOwner xproto.Window, timeout time.Duration) (string, bool) {
+	t.Helper()
 	clipboard := testAtom(t, connection, "CLIPBOARD")
 	utf8 := testAtom(t, connection, "UTF8_STRING")
 	property := testAtom(t, connection, "CPAK_TEST_SELECTION")
@@ -380,7 +389,8 @@ func readTestSelection(t *testing.T, connection *xgb.Conn, previousOwner xproto.
 	if err = xproto.CreateWindowChecked(connection, screen.RootDepth, window, screen.Root, 0, 0, 1, 1, 0, xproto.WindowClassInputOutput, screen.RootVisual, 0, nil).Check(); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	defer xproto.DestroyWindow(connection, window)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		owner, ownerErr := xproto.GetSelectionOwner(connection, clipboard).Reply()
 		if ownerErr == nil && owner.Owner != xproto.WindowNone && owner.Owner != previousOwner {
@@ -403,17 +413,16 @@ func readTestSelection(t *testing.T, connection *xgb.Conn, previousOwner xproto.
 				continue
 			}
 			if !incremental {
-				return string(reply.Value)
+				return string(reply.Value), true
 			}
 			if len(reply.Value) == 0 {
-				return string(value)
+				return string(value), true
 			}
 			value = append(value, reply.Value...)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("clipboard value with %d bytes was not delivered", len(expected))
-	return ""
+	return "", false
 }
 
 func testAtom(t *testing.T, connection *xgb.Conn, name string) xproto.Atom {

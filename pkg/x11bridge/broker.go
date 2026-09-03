@@ -232,14 +232,14 @@ func (b *broker) watch(display *endpoint) {
 	go func() {
 		for {
 			event, err := display.connection.WaitForEvent()
-			if event == nil && err == nil {
+			if event == nil {
+				if err != nil {
+					continue
+				}
 				b.events <- endpointEvent{endpoint: display, err: errors.New("X11 connection closed")}
 				return
 			}
-			b.events <- endpointEvent{endpoint: display, event: event, err: err}
-			if err != nil {
-				return
-			}
+			b.events <- endpointEvent{endpoint: display, event: event}
 		}
 	}()
 }
@@ -247,6 +247,10 @@ func (b *broker) watch(display *endpoint) {
 func (b *broker) handleEvent(received endpointEvent) {
 	if request, ok := received.event.(xproto.SelectionRequestEvent); ok {
 		b.clipboard.serve(received.endpoint, request)
+		return
+	}
+	if b.clipboard.selectionChanged(received.endpoint, received.event) {
+		b.clipboard.poll()
 		return
 	}
 	if received.endpoint != b.nested {
@@ -324,7 +328,7 @@ func (b *broker) applicationWindows() []xproto.Window {
 
 func (b *broker) isApplicationWindow(window xproto.Window) bool {
 	attributes, err := xproto.GetWindowAttributes(b.nested.connection, window).Reply()
-	if err != nil || attributes.MapState != xproto.MapStateViewable || attributes.OverrideRedirect {
+	if err != nil || attributes.MapState != xproto.MapStateViewable || attributes.OverrideRedirect || b.windowIsTransient(window) {
 		return false
 	}
 	types := propertyAtoms(b.nested.connection, window, b.nested.atoms.netWMWindowType)
@@ -340,7 +344,7 @@ func (b *broker) isApplicationWindow(window xproto.Window) bool {
 }
 
 func (b *broker) fitWindow(window xproto.Window) {
-	if window == 0 || b.windowIsDialog(window) {
+	if window == 0 || !b.windowCanFillRoot(window) {
 		return
 	}
 	root, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(b.nested.root)).Reply()
@@ -359,17 +363,22 @@ func (b *broker) fitWindow(window xproto.Window) {
 	).Check()
 }
 
-func (b *broker) windowIsDialog(window xproto.Window) bool {
-	for _, kind := range propertyAtoms(b.nested.connection, window, b.nested.atoms.netWMWindowType) {
-		if kind == b.nested.atoms.netWMWindowDialog {
-			return true
-		}
+func (b *broker) windowCanFillRoot(window xproto.Window) bool {
+	attributes, err := xproto.GetWindowAttributes(b.nested.connection, window).Reply()
+	if err != nil || attributes.OverrideRedirect || b.windowIsTransient(window) {
+		return false
 	}
-	return false
+	types := propertyAtoms(b.nested.connection, window, b.nested.atoms.netWMWindowType)
+	return len(types) == 0 || containsAtom(types, b.nested.atoms.netWMWindowNormal)
+}
+
+func (b *broker) windowIsTransient(window xproto.Window) bool {
+	reply, err := xproto.GetProperty(b.nested.connection, false, window, xproto.AtomWmTransientFor, xproto.AtomWindow, 0, 1).Reply()
+	return err == nil && reply.Format == 32 && len(reply.Value) >= 4 && xproto.Window(xgb.Get32(reply.Value)) != xproto.WindowNone
 }
 
 func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {
-	if !b.windowIsDialog(event.Window) {
+	if b.windowCanFillRoot(event.Window) {
 		b.fitWindow(event.Window)
 		return
 	}
@@ -449,7 +458,7 @@ func (b *broker) syncHostWindow() {
 	}
 	icon := propertyBytes(b.nested.connection, b.primary, b.nested.atoms.netWMIcon, 1<<20)
 	if len(icon) > 0 && !bytes.Equal(icon, b.lastIcon) {
-		xproto.ChangeProperty(b.host.connection, xproto.PropModeReplace, b.hostWindow, b.host.atoms.netWMIcon, xproto.AtomCardinal, 32, uint32(len(icon)/4), icon)
+		replaceProperty(b.host.connection, b.hostWindow, b.host.atoms.netWMIcon, xproto.AtomCardinal, 32, icon)
 		b.lastIcon = append(b.lastIcon[:0], icon...)
 	}
 	states := propertyAtoms(b.nested.connection, b.primary, b.nested.atoms.netWMState)
@@ -540,6 +549,26 @@ func setProperty32(connection *xgb.Conn, window xproto.Window, property, propert
 		xgb.Put32(data[index*4:], value)
 	}
 	xproto.ChangeProperty(connection, xproto.PropModeReplace, window, property, propertyType, 32, uint32(len(values)), data)
+}
+
+func replaceProperty(connection *xgb.Conn, window xproto.Window, property, propertyType xproto.Atom, format byte, data []byte) {
+	unit := int(format / 8)
+	setup := xproto.Setup(connection)
+	if unit == 0 || setup == nil || setup.MaximumRequestLength <= 6 {
+		return
+	}
+	chunkSize := (int(setup.MaximumRequestLength) - 6) * 4
+	chunkSize -= chunkSize % unit
+	mode := byte(xproto.PropModeReplace)
+	for offset := 0; offset < len(data); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[offset:end]
+		xproto.ChangeProperty(connection, mode, window, property, propertyType, format, uint32(len(chunk)/unit), chunk)
+		mode = xproto.PropModeAppend
+	}
 }
 
 func containsAtom(atoms []xproto.Atom, wanted xproto.Atom) bool {

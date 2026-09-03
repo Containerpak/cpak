@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jezek/xgb"
+	"github.com/jezek/xgb/xfixes"
 	"github.com/jezek/xgb/xproto"
 )
 
@@ -37,33 +38,42 @@ type clipboardData struct {
 }
 
 type clipboardCapture struct {
-	source    *endpoint
-	dest      *endpoint
-	selection string
-	owner     xproto.Window
-	data      *clipboardData
-	err       error
+	source     *endpoint
+	dest       *endpoint
+	selection  string
+	owner      xproto.Window
+	generation uint64
+	data       *clipboardData
+	err        error
 }
 
 type clipboardBridge struct {
-	nested    *endpoint
-	host      *endpoint
-	hostToApp bool
-	appToHost bool
-	owners    map[string]xproto.Window
-	inflight  map[string]bool
-	offers    map[*endpoint]map[xproto.Atom]*clipboardData
-	results   chan clipboardCapture
-	transfers chan struct{}
+	nested      *endpoint
+	host        *endpoint
+	hostToApp   bool
+	appToHost   bool
+	owners      map[string]xproto.Window
+	generations map[string]uint64
+	inflight    map[string]bool
+	offers      map[*endpoint]map[xproto.Atom]*clipboardData
+	results     chan clipboardCapture
+	transfers   chan struct{}
 }
 
 func newClipboardBridge(nested, host *endpoint, hostToApp, appToHost bool) *clipboardBridge {
-	return &clipboardBridge{
+	bridge := &clipboardBridge{
 		nested: nested, host: host, hostToApp: hostToApp, appToHost: appToHost,
-		owners: make(map[string]xproto.Window), inflight: make(map[string]bool),
+		owners: make(map[string]xproto.Window), generations: make(map[string]uint64), inflight: make(map[string]bool),
 		offers: make(map[*endpoint]map[xproto.Atom]*clipboardData), results: make(chan clipboardCapture, 8),
 		transfers: make(chan struct{}, maxClipboardTransfers),
 	}
+	if hostToApp {
+		bridge.watchSelectionChanges(host)
+	}
+	if appToHost {
+		bridge.watchSelectionChanges(nested)
+	}
+	return bridge
 }
 
 func (b *clipboardBridge) poll() {
@@ -75,7 +85,7 @@ func (b *clipboardBridge) poll() {
 		case result := <-b.results:
 			key := clipboardKey(result.source, result.selection)
 			b.inflight[key] = false
-			if result.err != nil || result.data == nil || b.currentOwner(result.source, result.selection) != result.owner {
+			if result.err != nil || result.data == nil || b.currentOwner(result.source, result.selection) != result.owner || b.generations[key] != result.generation {
 				delete(b.owners, key)
 				continue
 			}
@@ -102,6 +112,45 @@ observed:
 	}
 }
 
+func (b *clipboardBridge) watchSelectionChanges(display *endpoint) {
+	if display == nil {
+		return
+	}
+	if err := xfixes.Init(display.connection); err != nil {
+		return
+	}
+	if _, err := xfixes.QueryVersion(display.connection, 5, 0).Reply(); err != nil {
+		return
+	}
+	mask := uint32(xfixes.SelectionEventMaskSetSelectionOwner | xfixes.SelectionEventMaskSelectionWindowDestroy | xfixes.SelectionEventMaskSelectionClientClose)
+	for _, selection := range []xproto.Atom{display.atoms.clipboard, display.atoms.primary} {
+		if err := xfixes.SelectSelectionInputChecked(display.connection, display.window, selection, mask).Check(); err != nil {
+			return
+		}
+	}
+	display.connection.Sync()
+}
+
+func (b *clipboardBridge) selectionChanged(display *endpoint, event xgb.Event) bool {
+	notification, ok := event.(xfixes.SelectionNotifyEvent)
+	if !ok || display == nil {
+		return false
+	}
+	selection := ""
+	switch notification.Selection {
+	case display.atoms.clipboard:
+		selection = "CLIPBOARD"
+	case display.atoms.primary:
+		selection = "PRIMARY"
+	default:
+		return true
+	}
+	key := clipboardKey(display, selection)
+	b.generations[key]++
+	delete(b.owners, key)
+	return true
+}
+
 func (b *clipboardBridge) observe(source, dest *endpoint, selection string) {
 	key := clipboardKey(source, selection)
 	owner := b.currentOwner(source, selection)
@@ -117,9 +166,10 @@ func (b *clipboardBridge) observe(source, dest *endpoint, selection string) {
 		return
 	}
 	b.inflight[key] = true
+	generation := b.generations[key]
 	go func() {
 		data, err := captureClipboard(source, selectionAtom(source, selection), owner)
-		b.results <- clipboardCapture{source: source, dest: dest, selection: selection, owner: owner, data: data, err: err}
+		b.results <- clipboardCapture{source: source, dest: dest, selection: selection, owner: owner, generation: generation, data: data, err: err}
 	}()
 }
 
@@ -171,7 +221,7 @@ func (b *clipboardBridge) serve(display *endpoint, request xproto.SelectionReque
 		sendSelectionNotify(display, request, xproto.AtomNone)
 		return
 	}
-	item, ok := data.items[target]
+	item, ok := data.item(target)
 	if !ok {
 		sendSelectionNotify(display, request, xproto.AtomNone)
 		return
@@ -231,13 +281,14 @@ func captureClipboard(display *endpoint, selection xproto.Atom, owner xproto.Win
 	}
 	result := &clipboardData{items: make(map[string]clipboardItem)}
 	total := 0
+	plainTextCaptured := false
 	for _, target := range requested {
 		name, nameErr := atomName(display.connection, target)
-		if nameErr != nil || !allowedClipboardTarget(name) {
+		if nameErr != nil || !allowedClipboardTarget(name) || plainTextCaptured && plainClipboardTarget(name) {
 			continue
 		}
 		value, readErr := requestSelection(display, selection, target)
-		if readErr != nil || len(value.data)+total > maxClipboardBytes {
+		if readErr != nil || len(value.data) == 0 || len(value.data)+total > maxClipboardBytes {
 			continue
 		}
 		kind, kindErr := atomName(display.connection, value.kind)
@@ -246,6 +297,9 @@ func captureClipboard(display *endpoint, selection xproto.Atom, owner xproto.Win
 		}
 		result.items[name] = clipboardItem{target: name, kind: kind, format: value.format, data: append([]byte{}, value.data...)}
 		total += len(value.data)
+		if plainClipboardTarget(name) {
+			plainTextCaptured = true
+		}
 	}
 	if len(result.items) == 0 {
 		return nil, errors.New("clipboard has no safe target")
@@ -254,6 +308,30 @@ func captureClipboard(display *endpoint, selection xproto.Atom, owner xproto.Win
 		return nil, errors.New("clipboard owner changed during transfer")
 	}
 	return result, nil
+}
+
+func (d *clipboardData) item(target string) (clipboardItem, bool) {
+	item, ok := d.items[target]
+	if ok && len(item.data) > 0 {
+		return item, true
+	}
+	if !utf8ClipboardTarget(target) {
+		return clipboardItem{}, false
+	}
+	for _, preferred := range []string{"UTF8_STRING", "text/plain;charset=utf-8", "text/plain;charset=UTF-8", "text/plain"} {
+		for name, candidate := range d.items {
+			if strings.EqualFold(name, preferred) && len(candidate.data) > 0 {
+				candidate.target = target
+				candidate.kind = target
+				return candidate, true
+			}
+		}
+	}
+	return clipboardItem{}, false
+}
+
+func utf8ClipboardTarget(target string) bool {
+	return strings.EqualFold(target, "UTF8_STRING") || strings.HasPrefix(strings.ToLower(target), "text/plain")
 }
 
 func validClipboardValue(format byte, data []byte) bool {
@@ -266,6 +344,15 @@ func validClipboardValue(format byte, data []byte) bool {
 		return len(data)%4 == 0
 	default:
 		return false
+	}
+}
+
+func plainClipboardTarget(target string) bool {
+	switch strings.ToLower(target) {
+	case "utf8_string", "string", "text", "compound_text":
+		return true
+	default:
+		return strings.HasPrefix(strings.ToLower(target), "text/plain")
 	}
 }
 

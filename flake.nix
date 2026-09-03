@@ -19,7 +19,7 @@
             pname = "cpak";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-5R2FFzn9Vz7UqMv/7AlnE27Vz04Mf3hm1ctu+6hbvcQ=";
+            vendorHash = "sha256-cgqb2AY06Ru+JJIK7vyaLSPyjJqiLvNytvSQCgDOASc=";
 
             nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [
@@ -127,7 +127,7 @@
                 pname = "cpak-sandbox-test";
                 inherit version;
                 src = ./.;
-                vendorHash = "sha256-5R2FFzn9Vz7UqMv/7AlnE27Vz04Mf3hm1ctu+6hbvcQ=";
+                vendorHash = "sha256-cgqb2AY06Ru+JJIK7vyaLSPyjJqiLvNytvSQCgDOASc=";
                 doCheck = false;
                 buildPhase = ''
                   runHook preBuild
