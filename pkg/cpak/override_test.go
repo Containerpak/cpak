@@ -161,6 +161,36 @@ func TestSaveOverrideCreatesParentAndRoundTrips(t *testing.T) {
 	}
 }
 
+func TestAStoredOverrideStillReplacesARefreshedManifest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	app := types.Application{
+		Origin:  "github.com/containerpak/steam",
+		Version: "main",
+		ParsedOverride: types.Override{SessionBus: types.DBusPolicy{
+			Own: []string{"com.steampowered.PressureVessel.*"},
+		}},
+	}
+	stored := types.Override{SessionBus: types.DBusPolicy{
+		Own: []string{"com.steampowered.PressureVessel.LaunchAlongsideSteam"},
+	}}
+	if err := SaveOverride(stored, app.Origin, app.Version); err != nil {
+		t.Fatal(err)
+	}
+
+	effective := requestedOverride(app)
+	name := "com.steampowered.PressureVessel.LaunchAlongsideSteam.Instance325"
+	if !app.ParsedOverride.SessionBus.AllowsOwn(name) {
+		t.Fatal("the refreshed manifest does not allow the PID-suffixed name")
+	}
+	if effective.SessionBus.AllowsOwn(name) {
+		t.Fatal("the saved exact rule did not replace the refreshed manifest")
+	}
+	if _, ok := storedOverride(app); !ok {
+		t.Fatal("the saved override was not reported as active")
+	}
+}
+
 func TestBluetoothRequiresSharedNetwork(t *testing.T) {
 	manifest := validManifestForTest()
 	manifest.Override.SocketBluetooth = true

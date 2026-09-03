@@ -90,7 +90,19 @@ func (c *InstallCmd) Run() error {
 	}
 
 	c.describeDependencies(dependencies)
-	c.describeRuntimeSourcesAndPermissions(manifest)
+	granted := manifest.Override
+	version := branch
+	if c.Release != "" {
+		version = c.Release
+	} else if c.Commit != "" {
+		version = c.Commit
+	}
+	saved := false
+	if override, loadErr := cpak.LoadOverride(remote, version); loadErr == nil {
+		granted = override
+		saved = true
+	}
+	c.describeRuntimeSourcesAndPermissions(manifest, granted, saved, remote)
 
 	if !c.Yes && !c.SignedInstaller && !tools.ConfirmOperation("Do you want to continue?") {
 		return nil
@@ -144,7 +156,7 @@ func (c *InstallCmd) describeDependencies(dependencies []cpak.ResolvedDependency
 	c.Logger.Info("")
 }
 
-func (c *InstallCmd) describeRuntimeSourcesAndPermissions(manifest *types.CpakManifest) {
+func (c *InstallCmd) describeRuntimeSourcesAndPermissions(manifest *types.CpakManifest, granted types.Override, saved bool, origin string) {
 	sources := cpak.RuntimeSourcesForArchitecture(manifest.RuntimeSources, runtime.GOARCH)
 	if len(sources) > 0 {
 		c.Logger.Info("The following files will be downloaded from third parties:")
@@ -154,8 +166,11 @@ func (c *InstallCmd) describeRuntimeSourcesAndPermissions(manifest *types.CpakMa
 		c.Logger.Info("")
 	}
 
+	if saved {
+		c.Logger.Warning("A saved user override replaces the package permissions for %s.", tools.SanitizeForDisplay(origin))
+	}
 	c.Logger.Info("The following permissions will be granted:")
-	c.describePermissions(manifest.Override)
+	c.describePermissions(granted)
 	c.Logger.Info("")
 }
 
