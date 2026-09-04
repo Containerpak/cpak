@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/mirkobrombin/cpak/pkg/logger"
 )
 
 const (
@@ -162,10 +164,11 @@ func (s userNetworkSupervisor) run(ready, exit *os.File) error {
 			stopUserNetworkProcess(process)
 			return nil
 		case err = <-process.exited:
-			if err == nil {
-				return errors.New("userspace network helper exited")
+			var alive bool
+			process, alive = s.restart(exit, lifecycle, signals, err)
+			if !alive {
+				return nil
 			}
-			return fmt.Errorf("userspace network helper exited: %w", err)
 		case <-ticker.C:
 			current, readErr := networkResolverFingerprint(s.resolverPath)
 			if readErr != nil || (fingerprintErr == nil && current == fingerprint) {
@@ -174,11 +177,39 @@ func (s userNetworkSupervisor) run(ready, exit *os.File) error {
 			stopUserNetworkProcess(process)
 			process, err = s.start(exit)
 			if err != nil {
-				return fmt.Errorf("refresh userspace network helper: %w", err)
+				var alive bool
+				process, alive = s.restart(exit, lifecycle, signals, err)
+				if !alive {
+					return nil
+				}
 			}
 			fingerprint = current
 			fingerprintErr = nil
 		}
+	}
+}
+
+func (s userNetworkSupervisor) restart(exit *os.File, lifecycle <-chan struct{}, signals <-chan os.Signal, cause error) (*userNetworkProcess, bool) {
+	for {
+		if cause == nil {
+			cause = errors.New("userspace network helper exited")
+		}
+		logger.Printf("Warning: %v; retrying", cause)
+		timer := time.NewTimer(s.period)
+		select {
+		case <-lifecycle:
+			timer.Stop()
+			return nil, false
+		case <-signals:
+			timer.Stop()
+			return nil, false
+		case <-timer.C:
+		}
+		process, err := s.start(exit)
+		if err == nil {
+			return process, true
+		}
+		cause = fmt.Errorf("restart userspace network helper: %w", err)
 	}
 }
 

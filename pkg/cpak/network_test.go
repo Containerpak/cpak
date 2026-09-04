@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -199,6 +201,78 @@ func TestNetworkSupervisorRefreshesChangedResolver(t *testing.T) {
 	select {
 	case err = <-result:
 		t.Fatalf("network supervisor exited during resolver refresh: %v", err)
+	default:
+	}
+	if err = exitWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-result:
+		if err != nil {
+			t.Fatalf("network supervisor lifecycle: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("network supervisor survived its container")
+	}
+}
+
+func TestNetworkSupervisorRestartsExitedHelper(t *testing.T) {
+	directory := t.TempDir()
+	resolver := filepath.Join(directory, "resolv.conf")
+	if err := os.WriteFile(resolver, []byte("nameserver 192.0.2.1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(directory, "starts")
+	helperPath := filepath.Join(directory, "slirp4netns")
+	helper := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$$\" >> \"$CPAK_NETWORK_TEST_LOG\"\n" +
+		"printf '\\001' >&3\n" +
+		"trap 'exit 0' TERM INT\n" +
+		"while read -r ignored <&4; do :; done\n"
+	if err := os.WriteFile(helperPath, []byte(helper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CPAK_NETWORK_TEST_LOG", logPath)
+
+	readyReader, readyWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readyReader.Close()
+	defer readyWriter.Close()
+	exitReader, exitWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exitReader.Close()
+
+	supervisor := userNetworkSupervisor{
+		plan:         &userNetworkPlan{path: helperPath},
+		namespacePID: os.Getpid(),
+		resolverPath: resolver,
+		period:       10 * time.Millisecond,
+	}
+	result := make(chan error, 1)
+	go func() { result <- supervisor.run(readyWriter, exitReader) }()
+	if err = readNetworkReady(readyReader); err != nil {
+		t.Fatalf("network supervisor readiness: %v", err)
+	}
+	waitForNetworkStarts(t, logPath, 1)
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	waitForNetworkStarts(t, logPath, 2)
+	select {
+	case err = <-result:
+		t.Fatalf("network supervisor exited after helper failure: %v", err)
 	default:
 	}
 	if err = exitWriter.Close(); err != nil {
