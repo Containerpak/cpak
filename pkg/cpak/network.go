@@ -195,6 +195,11 @@ func (s userNetworkSupervisor) restart(exit *os.File, lifecycle <-chan struct{},
 			cause = errors.New("userspace network helper exited")
 		}
 		logger.Printf("Warning: %v; retrying", cause)
+		process, err := s.start(exit)
+		if err == nil {
+			return process, true
+		}
+		cause = fmt.Errorf("restart userspace network helper: %w", err)
 		timer := time.NewTimer(s.period)
 		select {
 		case <-lifecycle:
@@ -205,11 +210,6 @@ func (s userNetworkSupervisor) restart(exit *os.File, lifecycle <-chan struct{},
 			return nil, false
 		case <-timer.C:
 		}
-		process, err := s.start(exit)
-		if err == nil {
-			return process, true
-		}
-		cause = fmt.Errorf("restart userspace network helper: %w", err)
 	}
 }
 
