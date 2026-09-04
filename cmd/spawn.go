@@ -158,6 +158,14 @@ func (c *SpawnCmd) Run() error {
 		}
 		return c.installRuntimePackagesInSandbox(c.RuntimePackage, c.RuntimeInstaller, c.RuntimeDestination)
 	}
+	layersPath := c.LayersDir
+	if c.LowerDir != "" {
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("read mount working directory: %w", err)
+		}
+		layersPath = absoluteOverlayLowerDirs(workingDir, c.LowerDir)
+	}
 	machineIDGrant, err := c.injectMachineID(c.Rootfs, c.MachineId)
 	if err != nil {
 		return err
@@ -251,10 +259,6 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 
-	layersPath := c.LayersDir
-	if c.LowerDir != "" {
-		layersPath = c.LowerDir
-	}
 	_envVars := setEnvironmentVariables(c.ContainerId, c.Rootfs, finalEnvVarsForContainer, c.StateDir, layersPath, c.Layers)
 	err = c.serveInit(listener, grantListener, grantMounts, _envVars, append([]sandbox.PathGrant{{Path: "/", ReadOnly: true}}, grants...), time.Duration(c.IdleTime)*time.Minute)
 	if err != nil {
@@ -262,6 +266,16 @@ func (c *SpawnCmd) Run() error {
 	}
 
 	return nil
+}
+
+func absoluteOverlayLowerDirs(workingDir, lowerDirs string) string {
+	paths := strings.Split(lowerDirs, ":")
+	for index, current := range paths {
+		if !filepath.IsAbs(current) {
+			paths[index] = filepath.Join(workingDir, current)
+		}
+	}
+	return strings.Join(paths, ":")
 }
 
 func (c *SpawnCmd) writeHostPID() error {

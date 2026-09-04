@@ -609,7 +609,8 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	if mapSystemIDs {
 		cmds = append(cmds, "--map-system-ids")
 	}
-	cmds = append(cmds, "--lower-dir", container.FVSLayerMountPath)
+	mountDir, lowerDirs := compactOverlayLowerDirs(container.FVSLayerMountPath)
+	cmds = append(cmds, "--lower-dir", lowerDirs)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
 	grantSocketPath := container.GrantSocketPath
@@ -790,6 +791,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), containerEnv...)
 	cmd.Env = append(cmd.Env, "CPAK_CONTAINER_ID="+container.CpakId)
+	if mountDir != "" {
+		cmd.Dir = mountDir
+	}
 	cmd.ExtraFiles = []*os.File{readyWriter}
 	if hostPIDWriter != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, hostPIDWriter)
@@ -931,6 +935,27 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		return "", 0, "", fmt.Errorf("container init is not running: %w", err)
 	}
 	return
+}
+
+func compactOverlayLowerDirs(lowerDirs string) (string, string) {
+	paths := strings.Split(lowerDirs, ":")
+	if len(paths) < 2 {
+		return "", lowerDirs
+	}
+	base := filepath.Dir(filepath.Dir(paths[0]))
+	compact := make([]string, 0, len(paths))
+	for _, current := range paths {
+		relative, err := filepath.Rel(base, current)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || strings.Contains(relative, ":") {
+			return "", lowerDirs
+		}
+		compact = append(compact, relative)
+	}
+	joined := strings.Join(compact, ":")
+	if len(joined) >= len(lowerDirs) {
+		return "", lowerDirs
+	}
+	return base, joined
 }
 
 func containerNamespaceOptions(override types.Override) namespaceOptions {

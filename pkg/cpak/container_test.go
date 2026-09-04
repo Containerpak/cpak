@@ -73,6 +73,41 @@ func TestBuildContainerPath(t *testing.T) {
 	}
 }
 
+func TestCompactOverlayLowerDirsKeepsMountOptionsBelowOnePage(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "storage", "drivers", "fvs", "layers")
+	paths := make([]string, 40)
+	for index := range paths {
+		paths[index] = filepath.Join(base, fmt.Sprintf("%064x", index), "rootfs")
+	}
+	lowerDirs := strings.Join(paths, ":")
+
+	mountDir, compact := compactOverlayLowerDirs(lowerDirs)
+	if mountDir != base {
+		t.Fatalf("mount directory: got %q, want %q", mountDir, base)
+	}
+	if len(compact) >= 4096 {
+		t.Fatalf("compacted lower directories still exceed one page: %d bytes", len(compact))
+	}
+	for index, relative := range strings.Split(compact, ":") {
+		if got := filepath.Join(mountDir, relative); got != paths[index] {
+			t.Fatalf("lower directory %d: got %q, want %q", index, got, paths[index])
+		}
+	}
+}
+
+func TestCompactOverlayLowerDirsRejectsAnUnrelatedPath(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "layers")
+	lowerDirs := strings.Join([]string{
+		filepath.Join(base, "first", "rootfs"),
+		filepath.Join(filepath.Dir(base), "elsewhere", "rootfs"),
+	}, ":")
+
+	mountDir, compact := compactOverlayLowerDirs(lowerDirs)
+	if mountDir != "" || compact != lowerDirs {
+		t.Fatalf("unrelated lower directories were compacted: dir=%q paths=%q", mountDir, compact)
+	}
+}
+
 func TestForcedRuntimeTerminalSurvivesProxiedIO(t *testing.T) {
 	t.Setenv(systembroker.TerminalRowsEnvironment, "41")
 	t.Setenv(systembroker.TerminalColumnsEnvironment, "132")

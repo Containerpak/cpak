@@ -33,6 +33,22 @@ func TestCreateCpakFileSkipsContainersWithoutNestedDependencies(t *testing.T) {
 	}
 }
 
+func TestAbsoluteOverlayLowerDirsPreservesTheHostPaths(t *testing.T) {
+	workingDir := filepath.Join(t.TempDir(), "layers")
+	absolute := filepath.Join(t.TempDir(), "other", "rootfs")
+	lowerDirs := strings.Join([]string{"first/rootfs", "second/rootfs", absolute}, ":")
+
+	got := absoluteOverlayLowerDirs(workingDir, lowerDirs)
+	want := strings.Join([]string{
+		filepath.Join(workingDir, "first", "rootfs"),
+		filepath.Join(workingDir, "second", "rootfs"),
+		absolute,
+	}, ":")
+	if got != want {
+		t.Fatalf("absolute lower directories: got %q, want %q", got, want)
+	}
+}
+
 func TestWriteNvidiaLoaderConfigurationUsesSoname(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source.json")
