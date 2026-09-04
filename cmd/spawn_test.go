@@ -529,9 +529,56 @@ func TestRootApplicationIdentityMapHelper(t *testing.T) {
 }
 
 func TestConfigurationFilesRejectAnInvalidNameserverBeforeMounting(t *testing.T) {
-	_, _, err := (&SpawnCmd{}).injectConfigurationFiles(t.TempDir(), false, "not-an-address")
+	_, _, err := (&SpawnCmd{}).injectConfigurationFiles(t.TempDir(), false, "not-an-address", nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid nameserver") {
 		t.Fatalf("got %v, want an invalid nameserver error", err)
+	}
+}
+
+func TestConfigurationFilesLeaveExplicitHostEtcGrantUntouched(t *testing.T) {
+	root := t.TempDir()
+	etc := filepath.Join(root, "etc")
+	if err := os.Mkdir(etc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/static/resolv.conf", filepath.Join(etc, "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(etc, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(etc, 0o755) })
+
+	permissions := []types.FilesystemPermission{{Path: "/etc", Access: "read-write"}}
+	if _, _, err := (&SpawnCmd{}).injectConfigurationFiles(root, false, "", permissions); err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(etc, "resolv.conf"))
+	if err != nil || target != "/etc/static/resolv.conf" {
+		t.Fatalf("resolver link changed: target=%q err=%v", target, err)
+	}
+}
+
+func TestFilesystemPermissionCoversPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		permission string
+		path       string
+		want       bool
+	}{
+		{name: "exact", permission: "/etc/resolv.conf", path: "/etc/resolv.conf", want: true},
+		{name: "parent", permission: "/etc", path: "/etc/resolv.conf", want: true},
+		{name: "prefix only", permission: "/etc2", path: "/etc/resolv.conf", want: false},
+		{name: "unrelated", permission: "/var", path: "/etc/resolv.conf", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			permissions := []types.FilesystemPermission{{Path: test.permission, Access: "read-only"}}
+			if got := filesystemPermissionCoversPath(permissions, test.path); got != test.want {
+				t.Fatalf("filesystemPermissionCoversPath(%q, %q) = %t, want %t", test.permission, test.path, got, test.want)
+			}
+		})
 	}
 }
 

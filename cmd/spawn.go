@@ -188,7 +188,7 @@ func (c *SpawnCmd) Run() error {
 	}
 	grants = append(grants, machineIDGrant)
 
-	configurationGrants, refreshDynamicLinker, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia, c.Nameserver)
+	configurationGrants, refreshDynamicLinker, err := c.injectConfigurationFiles(c.Rootfs, c.Nvidia, c.Nameserver, filesystem)
 	if err != nil {
 		return err
 	}
@@ -1037,7 +1037,7 @@ func (c *SpawnCmd) setupBaseDevices(rootFs string) ([]sandbox.PathGrant, error) 
 	return grants, nil
 }
 
-func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, nameserver string) ([]sandbox.PathGrant, bool, error) {
+func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, nameserver string, filesystem []types.FilesystemPermission) ([]sandbox.PathGrant, bool, error) {
 	grants := []sandbox.PathGrant{}
 	var err error
 	if nameserver != "" && net.ParseIP(nameserver) == nil {
@@ -1061,6 +1061,10 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, n
 	}
 
 	for _, conf := range files {
+		if filesystemPermissionCoversPath(filesystem, conf) {
+			c.spawnVerbose("Leaving configuration to the explicit filesystem grant: ", conf)
+			continue
+		}
 		content, readErr := os.ReadFile(conf)
 		if conf == "/etc/resolv.conf" && nameserver != "" {
 			content = []byte("nameserver " + nameserver + "\n")
@@ -1127,6 +1131,21 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, n
 	}
 
 	return grants, len(nvidiaMounts) > 0, nil
+}
+
+func filesystemPermissionCoversPath(permissions []types.FilesystemPermission, path string) bool {
+	path = filepath.Clean(path)
+	for _, permission := range permissions {
+		_, target, err := types.ResolveFilesystemPermission(permission)
+		if err != nil {
+			continue
+		}
+		target = filepath.Clean(target)
+		if target == path || strings.HasPrefix(path, target+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 var absoluteNvidiaLibraryPath = regexp.MustCompile(`("library_path"\s*:\s*")/[^"/]*/(?:[^"/]*/)*([^"/]+")`)
