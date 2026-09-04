@@ -169,7 +169,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
-		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerNetworkAlive(container, override) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
+		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerNetworkAlive(container, override) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container, override) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
 			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
 			if containerProcessRunning(container) {
 				terminateContainerProcess(container)
@@ -1628,9 +1628,12 @@ func containerDesktopBusAlive(container types.Container) bool {
 	return sameRecordedProcess(container.DesktopBusProxyPid, container.DesktopBusProxyStartTime) && socketIsLive(container.DesktopBusSocketPath)
 }
 
-func containerBluetoothBusAlive(container types.Container) bool {
-	if container.BluetoothBusSocketPath == "" {
+func containerBluetoothBusAlive(container types.Container, override types.Override) bool {
+	if !bluetoothProxyRequested(override) {
 		return true
+	}
+	if container.BluetoothBusSocketPath == "" {
+		return false
 	}
 	return sameRecordedProcess(container.BluetoothBusProxyPid, container.BluetoothBusProxyStartTime) && socketIsLive(container.BluetoothBusSocketPath)
 }

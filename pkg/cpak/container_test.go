@@ -692,6 +692,19 @@ func TestLegacyBluetoothPermissionUsesThePrivateProxy(t *testing.T) {
 	}
 }
 
+func TestContainerWithoutBluetoothEndpointCannotBeReused(t *testing.T) {
+	container := types.Container{}
+	if containerBluetoothBusAlive(container, types.Override{Bluetooth: true}) {
+		t.Fatal("a container without a Bluetooth endpoint was reusable")
+	}
+	if containerBluetoothBusAlive(container, types.Override{SocketBluetooth: true}) {
+		t.Fatal("a legacy Bluetooth container without an endpoint was reusable")
+	}
+	if !containerBluetoothBusAlive(container, types.Override{}) {
+		t.Fatal("a container without a Bluetooth grant required an endpoint")
+	}
+}
+
 func TestDesktopBusProxyRequiresADeclaredCapability(t *testing.T) {
 	if desktopBusProxyRequested(types.Override{}) {
 		t.Fatal("an application without a desktop bus capability requested a proxy")
