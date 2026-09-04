@@ -31,6 +31,19 @@ func TestAQuotedCommandKeepsItsPath(t *testing.T) {
 	}
 }
 
+func TestRepairReplacesAStaleLauncherPath(t *testing.T) {
+	entry := "[Desktop Entry]\nExec=\"/tmp/cpak test/cpak\" run --desktop-launch github.com/example/app @example -- %U\nTryExec=/tmp/cpak-test\n"
+	repaired := RepairDesktopLauncher(entry, "/home/user/.local/bin/cpak")
+
+	want := "Exec=/home/user/.local/bin/cpak run --desktop-launch github.com/example/app"
+	if !strings.Contains(repaired, want) {
+		t.Fatalf("stale launcher was not replaced:\n%s", repaired)
+	}
+	if !strings.Contains(repaired, "TryExec=/home/user/.local/bin/cpak") {
+		t.Fatalf("stale TryExec was not replaced:\n%s", repaired)
+	}
+}
+
 func TestASecondFilePlaceholderRemovesTheGrant(t *testing.T) {
 	rewritten := RewriteDesktopExec("/usr/bin/cpak", "github.com/example/app", `/usr/bin/example %f --and %U`)
 

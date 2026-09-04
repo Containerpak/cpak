@@ -318,12 +318,13 @@ func countDesktopFileSpan(arguments []string) (desktopFileSpan, bool, error) {
 func RepairDesktopLauncher(content, launcher string) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		switch {
-		case line == "Exec=cpak":
-			lines[i] = "Exec=" + DesktopExecArgument(launcher)
-		case strings.HasPrefix(line, "Exec=cpak "):
-			lines[i] = "Exec=" + DesktopExecArgument(launcher) + strings.TrimPrefix(line, "Exec=cpak")
-		case line == "TryExec=cpak":
+		key, value, ok := DesktopEntryKey(line)
+		if ok && key == "Exec" {
+			if repaired, repair := repairDesktopLauncherExec(value, launcher); repair {
+				lines[i] = "Exec=" + repaired
+			}
+		}
+		if ok && key == "TryExec" {
 			lines[i] = "TryExec=" + launcher
 		}
 		prefix := "Exec=" + DesktopExecArgument(launcher) + " run "
@@ -336,6 +337,44 @@ func RepairDesktopLauncher(content, launcher string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func repairDesktopLauncherExec(command, launcher string) (string, bool) {
+	command = strings.TrimSpace(command)
+	if command == "cpak" {
+		return DesktopExecArgument(launcher), true
+	}
+	end := firstDesktopArgumentEnd(command)
+	if end == len(command) {
+		return "", false
+	}
+	tail := strings.TrimLeft(command[end:], " \t")
+	if tail != "run" && !strings.HasPrefix(tail, "run ") {
+		return "", false
+	}
+	return DesktopExecArgument(launcher) + " " + tail, true
+}
+
+func firstDesktopArgumentEnd(value string) int {
+	quoted := false
+	escaped := false
+	for index := 0; index < len(value); index++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch value[index] {
+		case '\\':
+			escaped = true
+		case '"':
+			quoted = !quoted
+		case ' ', '\t':
+			if !quoted {
+				return index
+			}
+		}
+	}
+	return len(value)
 }
 
 func stripLegacyGrantMarkers(line string) string {

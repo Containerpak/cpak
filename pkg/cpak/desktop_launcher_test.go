@@ -21,10 +21,12 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 
 	cpakEntry := filepath.Join(directory, "cpak-package-demo.desktop")
 	aliasEntry := filepath.Join(directory, "demo.desktop")
+	staleEntry := filepath.Join(directory, "cpak-package-stale.desktop")
 	userEntry := filepath.Join(directory, "user.desktop")
 	for path, content := range map[string]string{
 		cpakEntry:  "[Desktop Entry]\nExec=cpak run github.com/containerpak/demo @demo -- %U\nTryExec=cpak\n",
 		aliasEntry: "[Desktop Entry]\nExec=cpak run github.com/containerpak/demo @demo -- %U\nTryExec=cpak\nX-cpak-Origin=github.com/containerpak/demo\n",
+		staleEntry: "[Desktop Entry]\nExec=\"/tmp/cpak test/cpak\" run --desktop-launch github.com/containerpak/demo @demo -- %U\nTryExec=/tmp/cpak-test\n",
 		userEntry:  "[Desktop Entry]\nExec=cpak run user-command\nTryExec=cpak\n",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -37,7 +39,7 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{cpakEntry, aliasEntry} {
+	for _, path := range []string{cpakEntry, aliasEntry, staleEntry} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -65,6 +67,23 @@ func TestRepairDesktopLaunchersUsesAbsoluteCpakPath(t *testing.T) {
 	}
 	if strings.Contains(string(content), launcher) {
 		t.Fatalf("unowned desktop entry was modified: %s", content)
+	}
+}
+
+func TestDesktopLauncherPathUsesInstalledCommand(t *testing.T) {
+	directory := t.TempDir()
+	launcher := filepath.Join(directory, "cpak")
+	if err := os.WriteFile(launcher, []byte("cpak"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+
+	got, err := desktopLauncherPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != launcher {
+		t.Fatalf("desktop launcher: got %q, want %q", got, launcher)
 	}
 }
 

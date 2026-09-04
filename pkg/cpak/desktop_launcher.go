@@ -7,12 +7,13 @@ package cpak
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 const (
-	desktopLauncherMigration = "desktop-launcher-v4"
+	desktopLauncherMigration = "desktop-launcher-v5"
 	// The markers an exported entry used to carry. They are no longer written
 	// and no longer honoured; they are named here only so a stale entry can be
 	// cleaned of them.
@@ -21,9 +22,16 @@ const (
 )
 
 func desktopLauncherPath() (string, error) {
-	path, err := os.Executable()
+	path, err := exec.LookPath("cpak")
 	if err != nil {
-		return "", fmt.Errorf("resolve cpak executable: %w", err)
+		path, err = os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("resolve cpak executable: %w", err)
+		}
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve cpak executable path: %w", err)
 	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
@@ -117,12 +125,13 @@ func repairDesktopLaunchers(launcher string) error {
 func repairDesktopLauncher(content, launcher string) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		switch {
-		case line == "Exec=cpak":
-			lines[i] = "Exec=" + desktopExecArgument(launcher)
-		case strings.HasPrefix(line, "Exec=cpak "):
-			lines[i] = "Exec=" + desktopExecArgument(launcher) + strings.TrimPrefix(line, "Exec=cpak")
-		case line == "TryExec=cpak":
+		key, value, ok := desktopEntryKey(line)
+		if ok && key == "Exec" {
+			if repaired, repair := repairDesktopLauncherExec(value, launcher); repair {
+				lines[i] = "Exec=" + repaired
+			}
+		}
+		if ok && key == "TryExec" {
 			lines[i] = "TryExec=" + launcher
 		}
 		prefix := "Exec=" + desktopExecArgument(launcher) + " run "
@@ -141,6 +150,44 @@ func repairDesktopLauncher(content, launcher string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func repairDesktopLauncherExec(command, launcher string) (string, bool) {
+	command = strings.TrimSpace(command)
+	if command == "cpak" {
+		return desktopExecArgument(launcher), true
+	}
+	end := firstDesktopArgumentEnd(command)
+	if end == len(command) {
+		return "", false
+	}
+	tail := strings.TrimLeft(command[end:], " \t")
+	if tail != "run" && !strings.HasPrefix(tail, "run ") {
+		return "", false
+	}
+	return desktopExecArgument(launcher) + " " + tail, true
+}
+
+func firstDesktopArgumentEnd(value string) int {
+	quoted := false
+	escaped := false
+	for index := 0; index < len(value); index++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch value[index] {
+		case '\\':
+			escaped = true
+		case '"':
+			quoted = !quoted
+		case ' ', '\t':
+			if !quoted {
+				return index
+			}
+		}
+	}
+	return len(value)
 }
 
 // splitDesktopArguments breaks a publisher argument list into tokens the way a
