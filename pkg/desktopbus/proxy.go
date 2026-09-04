@@ -87,6 +87,8 @@ func Serve(ctx context.Context, options Options) error {
 	}
 	portalSender := portalDestination
 	bluezSender := ""
+	var portalWatcher *dbus.Conn
+	var portalSignals chan *dbus.Signal
 	var bluezWatcher *dbus.Conn
 	var bluezSignals chan *dbus.Signal
 	if options.Bluetooth {
@@ -95,10 +97,20 @@ func Serve(ctx context.Context, options Options) error {
 			return fmt.Errorf("watch BlueZ owner: %w", err)
 		}
 		defer bluezWatcher.Close()
-	} else if owner, ownerErr := resolveBusNameOwner(options.UpstreamAddress, portalDestination); ownerErr == nil {
-		portalSender = owner
+	} else {
+		portalWatcher, portalSignals, portalSender, err = watchBusNameOwner(options.UpstreamAddress, portalDestination)
+		if err != nil {
+			return fmt.Errorf("watch desktop portal owner: %w", err)
+		}
+		defer portalWatcher.Close()
+		if portalSender == "" {
+			portalSender = portalDestination
+		}
 	}
 	proxy := &Proxy{options: options, portalSender: portalSender, bluezSender: bluezSender, requests: map[dbus.ObjectPath]context.CancelFunc{}}
+	if portalWatcher != nil {
+		go proxy.watchPortalOwner(ctx, portalSignals)
+	}
 	if bluezWatcher != nil {
 		go proxy.watchBluezOwner(ctx, bluezSignals)
 	}
@@ -598,6 +610,32 @@ func (p *Proxy) currentPortalSender() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.portalSender
+}
+
+func (p *Proxy) watchPortalOwner(ctx context.Context, signals <-chan *dbus.Signal) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case signal, open := <-signals:
+			if !open {
+				return
+			}
+			if signal == nil || len(signal.Body) != 3 || signal.Body[0] != portalDestination {
+				continue
+			}
+			owner, ok := signal.Body[2].(string)
+			if !ok {
+				continue
+			}
+			if owner == "" {
+				owner = portalDestination
+			}
+			p.mu.Lock()
+			p.portalSender = owner
+			p.mu.Unlock()
+		}
+	}
 }
 
 func (p *Proxy) watchBluezOwner(ctx context.Context, signals <-chan *dbus.Signal) {

@@ -845,6 +845,46 @@ func TestProxyForwardsBusAndInterceptsFileChooser(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("direct file chooser response was not delivered")
 	}
+	if _, err = service.ReleaseName(portalDestination); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := dbus.Connect("unix:path=" + upstreamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if reply, requestErr := replacement.RequestName(portalDestination, dbus.NameFlagDoNotQueue); requestErr != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		t.Fatalf("replace portal name: %d, %v", reply, requestErr)
+	}
+	if err = replacement.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, portalDestination).Store(&portalOwner); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		options["handle_token"] = dbus.MakeVariant("chrome_restarted_portal")
+		if err = connection.Object(portalDestination, portalObjectPath).Call(fileChooserInterface+".OpenFile", 0, "", "Select executable", options).Store(&handle); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-selected:
+		case <-time.After(3 * time.Second):
+			t.Fatal("file chooser request after portal restart was not intercepted")
+		}
+		select {
+		case signal := <-signals:
+			if signal.Sender == portalOwner {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("response sender after portal restart: %s, expected %s", signal.Sender, portalOwner)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		case <-time.After(3 * time.Second):
+			t.Fatal("file chooser response after portal restart was not delivered")
+		}
+		break
+	}
 	testGIOPortalResponse(t, proxyPath)
 	cancel()
 	select {
