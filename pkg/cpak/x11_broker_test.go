@@ -330,9 +330,32 @@ func startTestX11Broker(t *testing.T, host, nested types.Container, _ x11BridgeR
 
 func connectTestX11(t *testing.T, container types.Container) *xgb.Conn {
 	t.Helper()
+	connection, err := openTestX11(container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return connection
+}
+
+func connectTestX11Eventually(t *testing.T, container types.Container, timeout time.Duration) *xgb.Conn {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		connection, err := openTestX11(container)
+		if err == nil {
+			return connection
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func openTestX11(container types.Container) (*xgb.Conn, error) {
 	previous, present := os.LookupEnv("XAUTHORITY")
 	if err := os.Setenv("XAUTHORITY", container.X11AuthorityPath); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	connection, err := xgb.NewConnDisplay(x11BrokerDisplay(container))
 	if present {
@@ -340,10 +363,7 @@ func connectTestX11(t *testing.T, container types.Container) *xgb.Conn {
 	} else {
 		_ = os.Unsetenv("XAUTHORITY")
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return connection
+	return connection, err
 }
 
 func publishTestSelection(t *testing.T, connection *xgb.Conn, text string) xproto.Window {

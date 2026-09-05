@@ -199,13 +199,13 @@ func TestX11BridgeDefersThePrivateDisplayUntilAClientConnects(t *testing.T) {
 	}
 	defer runtime.close()
 	t.Cleanup(func() { cleanupX11Bridge(container) })
-	if container.X11Display != ":0" || container.X11BridgePid != 0 || containerX11BridgeAlive(container) {
+	if container.X11Display != isolatedX11Display || container.X11SocketTarget != isolatedX11SocketDirectory || container.X11BridgePid != 0 || containerX11BridgeAlive(container) {
 		t.Fatalf("X11 bridge started before a client connected: %+v", container)
 	}
-	if runtime.listener == nil || runtime.x11Server == "" || !runtime.lazy {
+	if runtime.listener == nil || runtime.listenPath != x11SocketEndpoint(container) || runtime.x11Server == "" || !runtime.lazy {
 		t.Fatalf("lazy X11 runtime is incomplete: %+v", runtime)
 	}
-	if err = validateSocketOwner(container.X11SocketPath); err != nil {
+	if err = validateSocketOwner(x11SocketEndpoint(container)); err != nil {
 		t.Fatalf("private X11 listener: %v", err)
 	}
 }
@@ -252,7 +252,7 @@ func TestX11BrokerStopsTheContainerAfterItsLastWindowCloses(t *testing.T) {
 			NestedDisplay: x11BrokerDisplay(container), NestedAuthority: container.X11AuthorityPath,
 			ContainerPid: container.Pid, ContainerStartTime: container.ProcessStartTime,
 			ContainerID: container.CpakId, ReadyFD: readyFD,
-			ListenFD: listenFD, X11Server: runtime.x11Server,
+			ListenFD: listenFD, ListenPath: runtime.listenPath, X11Server: runtime.x11Server,
 		})
 	}()
 	brokerStopped := false
@@ -389,7 +389,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 			NestedDisplay: x11BrokerDisplay(container), NestedAuthority: container.X11AuthorityPath,
 			ContainerPid: container.Pid, ContainerStartTime: container.ProcessStartTime,
 			ContainerID: container.CpakId,
-			ReadyFD:     readyFD, ListenFD: listenFD, X11Server: runtime.x11Server,
+			ReadyFD:     readyFD, ListenFD: listenFD, ListenPath: runtime.listenPath, X11Server: runtime.x11Server,
 			MixedWayland: true,
 		})
 	}()
@@ -484,7 +484,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	if !sameContainerProcess(container, container.Pid) {
 		t.Fatal("mixed Wayland application stopped with its X11 display")
 	}
-	restarted := connectTestX11(t, container)
+	restarted := connectTestX11Eventually(t, container, 3*time.Second)
 	restartedScreen := xproto.Setup(restarted).DefaultScreen(restarted)
 	restartedWindow, restartErr := xproto.NewWindowId(restarted)
 	if restartErr != nil {

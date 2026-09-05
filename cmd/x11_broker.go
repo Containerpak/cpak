@@ -21,6 +21,7 @@ type X11BrokerCmd struct {
 	ContainerID        string `cli:"container-id" help:"container identity"`
 	ReadyFD            int    `cli:"ready-fd" help:"readiness file descriptor"`
 	ListenFD           int    `cli:"listen-fd" help:"private X11 listener file descriptor"`
+	ListenPath         string `cli:"listen-path" help:"private X11 listener path"`
 	X11Server          string `cli:"x11-server" help:"nested X11 server executable"`
 	MixedWayland       bool   `cli:"mixed-wayland" help:"keep the Wayland application alive when X11 closes"`
 	HostToApp          bool   `cli:"host-to-app" help:"allow host clipboard reads"`
@@ -36,7 +37,7 @@ func (c *X11BrokerCmd) Run() error {
 		ServerPid: c.ServerPid, ServerStartTime: c.ServerStartTime,
 		ContainerPid: c.ContainerPid, ContainerStartTime: c.ContainerStartTime,
 		ContainerID: c.ContainerID, ReadyFD: c.ReadyFD,
-		ListenFD: c.ListenFD, X11Server: c.X11Server, MixedWayland: c.MixedWayland,
+		ListenFD: c.ListenFD, ListenPath: c.ListenPath, X11Server: c.X11Server, MixedWayland: c.MixedWayland,
 		HostToApp: c.HostToApp, AppToHost: c.AppToHost,
 	})
 }

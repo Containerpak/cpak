@@ -46,7 +46,7 @@ func startX11Broker(container types.Container, clipboard types.ClipboardGrant, r
 		"--ready-fd", "3",
 	}
 	if runtime != nil && runtime.lazy {
-		arguments = append(arguments, "--listen-fd", "4", "--x11-server", runtime.x11Server)
+		arguments = append(arguments, "--listen-fd", "4", "--listen-path", runtime.listenPath, "--x11-server", runtime.x11Server)
 		if container.WaylandDisplay != "" {
 			arguments = append(arguments, "--mixed-wayland")
 		}
@@ -149,6 +149,7 @@ type X11BrokerOptions struct {
 	ContainerID        string
 	ReadyFD            int
 	ListenFD           int
+	ListenPath         string
 	X11Server          string
 	MixedWayland       bool
 	HostToApp          bool
@@ -160,12 +161,12 @@ func RunX11Broker(options X11BrokerOptions) error {
 		return errors.New("invalid X11 broker configuration")
 	}
 	if options.ListenFD != 0 {
-		if options.ListenFD < 3 || !filepath.IsAbs(options.X11Server) || options.ServerPid != 0 || options.ServerStartTime != 0 {
+		if options.ListenFD < 3 || !filepath.IsAbs(options.ListenPath) || !filepath.IsAbs(options.X11Server) || options.ServerPid != 0 || options.ServerStartTime != 0 {
 			return errors.New("invalid lazy X11 broker configuration")
 		}
 		return runLazyX11Broker(options)
 	}
-	if options.ServerPid <= 0 || options.ServerStartTime == 0 || options.X11Server != "" || options.MixedWayland {
+	if options.ServerPid <= 0 || options.ServerStartTime == 0 || options.ListenPath != "" || options.X11Server != "" || options.MixedWayland {
 		return errors.New("invalid X11 broker configuration")
 	}
 	ready := os.NewFile(uintptr(options.ReadyFD), "x11-broker-ready")
@@ -240,7 +241,10 @@ func runLazyX11Broker(options X11BrokerOptions) error {
 	if listener == nil {
 		return errors.New("private X11 listener descriptor is unavailable")
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
+	if err := validatePrivateX11Listener(listener, options.ListenPath); err != nil {
+		return err
+	}
 	if _, err := ready.Write([]byte{1}); err != nil {
 		return fmt.Errorf("report X11 broker readiness: %w", err)
 	}
@@ -263,6 +267,33 @@ func runLazyX11Broker(options X11BrokerOptions) error {
 		if !options.MixedWayland {
 			return nil
 		}
+		_ = listener.Close()
+		if err = validateSocketOwner(options.ListenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("restore private X11 listener: %w", err)
+		}
+		_ = os.Remove(options.ListenPath)
+		listener, err = createPrivateX11Listener(options.ListenPath)
+		if err != nil {
+			return fmt.Errorf("restore private X11 listener: %w", err)
+		}
+	}
+	return nil
+}
+
+func validatePrivateX11Listener(listener *os.File, path string) error {
+	if err := validateSocketOwner(path); err != nil {
+		return fmt.Errorf("validate private X11 listener: %w", err)
+	}
+	listenerInfo, err := listener.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect private X11 listener: %w", err)
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect private X11 socket: %w", err)
+	}
+	if !os.SameFile(listenerInfo, pathInfo) {
+		return errors.New("private X11 listener does not match its socket path")
 	}
 	return nil
 }
