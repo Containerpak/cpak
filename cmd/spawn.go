@@ -850,8 +850,8 @@ func (c *SpawnCmd) mountFilesystemPermission(rootFs string, permission types.Fil
 		return sandbox.PathGrant{}, false, nil
 	}
 	if _, err := os.Stat(source); err != nil {
-		if os.IsNotExist(err) && strings.HasPrefix(permission.Path, "xdg-") {
-			c.spawnVerbose("(filesystem) XDG directory is unavailable, ignoring: ", source)
+		if os.IsNotExist(err) {
+			c.spawnVerbose("(filesystem) Host path is unavailable, ignoring: ", source)
 			return sandbox.PathGrant{}, false, nil
 		}
 		return sandbox.PathGrant{}, false, fmt.Errorf("filesystem path %s is unavailable: %w", source, err)

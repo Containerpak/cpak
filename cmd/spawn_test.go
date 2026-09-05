@@ -799,6 +799,22 @@ func TestAGrantOnCpakStateIsLeftOutOfTheContainer(t *testing.T) {
 	}
 }
 
+func TestAMissingHostGrantDoesNotStopTheContainer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	c := &SpawnCmd{}
+	grant, mounted, err := c.mountFilesystemPermission(t.TempDir(), types.FilesystemPermission{
+		Path:   "home/.local/share/example",
+		Access: "read-write",
+	})
+	if err != nil {
+		t.Fatalf("a missing optional host path stopped the container: %v", err)
+	}
+	if mounted || grant.Path != "" {
+		t.Fatalf("a missing host path was mounted: %+v", grant)
+	}
+}
+
 // TestAStaleCpakStateGrantStillDecodesAtLaunch walks the launch path itself.
 // Every grant an application was installed with is decoded and validated again
 // here, at every launch, so a refusal placed in the shared validator would not

@@ -6,9 +6,14 @@ package cpak
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,20 +26,20 @@ import (
 
 func TestNetworkHelperIsOptional(t *testing.T) {
 	t.Setenv("PATH", "")
-	plan, err := resolveUserNetwork(false, false)
+	plan, err := resolveUserNetwork(t.TempDir(), false, false)
 	if err != nil {
 		t.Fatalf("resolve disabled network: %v", err)
 	}
 	if plan != nil {
 		t.Fatalf("got a helper for disabled network: %+v", plan)
 	}
-	if _, err = resolveUserNetwork(true, false); err == nil {
+	if _, err = resolveUserNetwork("", true, false); err == nil {
 		t.Fatal("enabled network started without a userspace network helper")
 	}
-	if plan, err = resolveUserNetwork(true, true); err != nil || plan != nil {
+	if plan, err = resolveUserNetwork("", true, true); err != nil || plan != nil {
 		t.Fatalf("host network resolved a userspace helper: plan=%+v err=%v", plan, err)
 	}
-	if _, err = resolveUserNetwork(false, true); err == nil {
+	if _, err = resolveUserNetwork("", false, true); err == nil {
 		t.Fatal("host network was accepted without network access")
 	}
 }
@@ -50,12 +55,68 @@ func TestNetworkHelperUsesPackagedPath(t *testing.T) {
 	t.Cleanup(func() { defaultSlirpPath = original })
 	t.Setenv("PATH", "")
 
-	plan, err := resolveUserNetwork(true, false)
+	plan, err := resolveUserNetwork(t.TempDir(), true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.path != helper {
 		t.Fatalf("network helper: got %q, want %q", plan.path, helper)
+	}
+}
+
+func TestNetworkHelperDownloadsVerifiedReleaseWithoutAHostPackage(t *testing.T) {
+	payload := []byte("#!/bin/sh\nexit 0\n")
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		_, _ = writer.Write(payload)
+	}))
+	defer server.Close()
+	digest := sha256.Sum256(payload)
+	source := types.RuntimeSource{
+		Name:         "slirp4netns-test",
+		URL:          server.URL + "/slirp4netns",
+		SHA256:       hex.EncodeToString(digest[:]),
+		Size:         int64(len(payload)),
+		Installer:    "file",
+		Destination:  "/opt/cpak/slirp4netns",
+		Architecture: runtime.GOARCH,
+	}
+	originalSource, hadSource := slirpSources[runtime.GOARCH]
+	originalClient := slirpHTTPClient
+	slirpSources[runtime.GOARCH] = source
+	slirpHTTPClient = server.Client()
+	t.Cleanup(func() {
+		if hadSource {
+			slirpSources[runtime.GOARCH] = originalSource
+		} else {
+			delete(slirpSources, runtime.GOARCH)
+		}
+		slirpHTTPClient = originalClient
+	})
+	t.Setenv("PATH", "")
+	cache := t.TempDir()
+
+	plan, err := resolveUserNetwork(cache, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executableFile(plan.path) {
+		t.Fatalf("downloaded helper is not executable: %s", plan.path)
+	}
+	content, err := os.ReadFile(plan.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(content, payload) {
+		t.Fatalf("downloaded helper: got %q, want %q", content, payload)
+	}
+	reused, err := resolveUserNetwork(cache, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.path != plan.path || requests != 1 {
+		t.Fatalf("cached helper: path=%q requests=%d", reused.path, requests)
 	}
 }
 

@@ -118,7 +118,11 @@ func Uninstall() error {
 	if err := removeAppArmorProfile(); err != nil {
 		return err
 	}
-	paths := []string{busPolicyPath}
+	paths := []string{
+		busPolicyPath,
+		filepath.Join("/etc/polkit-1/actions", polkitPolicyName),
+		filepath.Join(standardPrefix, "share/polkit-1/actions", polkitPolicyName),
+	}
 	for _, prefix := range installPrefixes {
 		candidate := layoutFor(prefix)
 		paths = append(paths, candidate.service, candidate.polkit, candidate.binary, candidate.storage)

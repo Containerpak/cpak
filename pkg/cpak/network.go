@@ -6,17 +6,22 @@ package cpak
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
 const (
@@ -24,15 +29,39 @@ const (
 	networkResolverPath   = "/etc/resolv.conf"
 	networkRefreshPeriod  = time.Second
 	networkStartupTimeout = 20 * time.Second
+	slirpRelease          = "v1.3.5"
 )
 
 var defaultSlirpPath string
+
+var slirpSources = map[string]types.RuntimeSource{
+	"amd64": {
+		Name:         "slirp4netns-x86_64",
+		URL:          "https://github.com/rootless-containers/slirp4netns/releases/download/v1.3.5/slirp4netns-x86_64",
+		SHA256:       "8e54132bc80fc60d53af4b544dae63a81151774b56f129e572f7f1a2e89a57cf",
+		Size:         2383224,
+		Installer:    "file",
+		Destination:  "/opt/cpak/slirp4netns",
+		Architecture: "amd64",
+	},
+	"arm64": {
+		Name:         "slirp4netns-aarch64",
+		URL:          "https://github.com/rootless-containers/slirp4netns/releases/download/v1.3.5/slirp4netns-aarch64",
+		SHA256:       "a212e7acabf09e809b62ca62d1721ecab0d811d05c378ea0270ce29a70d986df",
+		Size:         1996792,
+		Installer:    "file",
+		Destination:  "/opt/cpak/slirp4netns",
+		Architecture: "arm64",
+	},
+}
+
+var slirpHTTPClient = &http.Client{Timeout: networkStartupTimeout}
 
 type userNetworkPlan struct {
 	path string
 }
 
-func resolveUserNetwork(enabled, hostNetwork bool) (*userNetworkPlan, error) {
+func resolveUserNetwork(cachePath string, enabled, hostNetwork bool) (*userNetworkPlan, error) {
 	if hostNetwork {
 		if !enabled {
 			return nil, fmt.Errorf("host network requires network access")
@@ -42,15 +71,72 @@ func resolveUserNetwork(enabled, hostNetwork bool) (*userNetworkPlan, error) {
 	if !enabled {
 		return nil, nil
 	}
-	path := defaultSlirpPath
-	if path == "" {
-		path = "slirp4netns"
+	if defaultSlirpPath != "" {
+		path, err := exec.LookPath(defaultSlirpPath)
+		if err != nil {
+			return nil, fmt.Errorf("network access requires slirp4netns: %w", err)
+		}
+		return &userNetworkPlan{path: path}, nil
 	}
-	path, err := exec.LookPath(path)
+	if cpakBinary, err := getCpakBinary(); err == nil {
+		candidate := filepath.Join(filepath.Dir(cpakBinary), "cpak-slirp4netns")
+		if executableFile(candidate) {
+			return &userNetworkPlan{path: candidate}, nil
+		}
+	}
+	if path, err := exec.LookPath("slirp4netns"); err == nil {
+		return &userNetworkPlan{path: path}, nil
+	}
+	path, err := fetchUserNetworkHelper(cachePath)
 	if err != nil {
-		return nil, fmt.Errorf("network access requires slirp4netns: %w", err)
+		return nil, fmt.Errorf("prepare isolated network helper: %w", err)
 	}
 	return &userNetworkPlan{path: path}, nil
+}
+
+func executableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0
+}
+
+func fetchUserNetworkHelper(cachePath string) (string, error) {
+	source, ok := slirpSources[runtime.GOARCH]
+	if !ok {
+		return "", fmt.Errorf("slirp4netns has no verified binary for %s", runtime.GOARCH)
+	}
+	if cachePath == "" || !filepath.IsAbs(cachePath) {
+		return "", errors.New("cpak cache path is unavailable")
+	}
+	digest := sha256.Sum256([]byte(slirpRelease + "\x00" + source.SHA256))
+	directory := filepath.Join(cachePath, "network", hex.EncodeToString(digest[:8]))
+	if err := securePrivateDirectoryUnder(cachePath, directory); err != nil {
+		return "", fmt.Errorf("prepare isolated network helper directory: %w", err)
+	}
+	lock, err := os.OpenFile(filepath.Join(directory, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return "", fmt.Errorf("open isolated network helper lock: %w", err)
+	}
+	defer lock.Close()
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return "", fmt.Errorf("lock isolated network helper: %w", err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	target := filepath.Join(directory, "slirp4netns")
+	if executableFile(target) && verifyRuntimeArtifact(target, source) == nil {
+		return target, nil
+	}
+	fetcher := RuntimeFetcher{CacheDir: directory, Client: slirpHTTPClient}
+	artifact, err := fetcher.Fetch(source)
+	if err != nil {
+		return "", err
+	}
+	if err = os.Chmod(artifact, 0700); err != nil {
+		return "", fmt.Errorf("make isolated network helper executable: %w", err)
+	}
+	if err = os.Rename(artifact, target); err != nil {
+		return "", fmt.Errorf("install isolated network helper: %w", err)
+	}
+	return target, nil
 }
 
 func (p *userNetworkPlan) command(pid int, ready, exit *os.File) *exec.Cmd {

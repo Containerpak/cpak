@@ -53,6 +53,7 @@ packages:
   - fuse-overlayfs
   - libglib2.0-bin
   - openssl
+  - policykit-1
   - slirp4netns
   - uidmap
   - weston

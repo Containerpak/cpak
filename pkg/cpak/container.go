@@ -190,7 +190,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 			return
 		}
 	}
-	if _, err = resolveUserNetwork(override.Network, override.HostNetwork); err != nil {
+	if _, err = resolveUserNetwork(c.Options.CachePath, override.Network, override.HostNetwork); err != nil {
 		return types.Container{}, err
 	}
 
@@ -527,7 +527,7 @@ type networkHelperRuntime struct {
 }
 
 func (c *Cpak) startContainer(container types.Container, app types.Application, components, addons []types.Application, config *oci.ConfigFile, override types.Override, mapSystemIDs bool, networkRuntime *networkHelperRuntime) (rootfs string, pid int, cgroupPath string, err error) {
-	network, err := resolveUserNetwork(override.Network, override.HostNetwork)
+	network, err := resolveUserNetwork(c.Options.CachePath, override.Network, override.HostNetwork)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -2200,7 +2200,7 @@ func systemBrokerFilePickerPaths(permissions []types.FilesystemPermission) ([]sy
 			return nil, err
 		}
 		resolved, err := filepath.EvalSymlinks(source)
-		if os.IsNotExist(err) && strings.HasPrefix(permission.Path, "xdg-") {
+		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
@@ -2263,6 +2263,9 @@ func systemBrokerContainerPaths(permissions []types.FilesystemPermission) ([]sys
 			return nil, err
 		}
 		resolved, err := filepath.EvalSymlinks(source)
+		if os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("resolve container provider path: %w", err)
 		}

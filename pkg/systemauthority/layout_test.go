@@ -81,7 +81,7 @@ func TestRelocatedLayoutStaysInScannedDirectories(t *testing.T) {
 		t.Fatalf("the relocated service directory is not published: %s", relocated.serviceDirectory())
 	}
 	standard := layoutFor(standardPrefix)
-	if standard.polkit != "/usr/local/share/polkit-1/actions/it.cpak.system.policy" {
+	if standard.polkit != "/usr/share/polkit-1/actions/it.cpak.system.policy" {
 		t.Fatalf("the standard install moved its polkit action: %s", standard.polkit)
 	}
 	if standard.serviceDirectory() != "" {

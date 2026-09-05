@@ -468,7 +468,9 @@ cpak creates user, mount, PID, IPC, UTS, cgroup and network namespaces directly
 through the Linux kernel. Applications without network permission get only a
 private loopback interface. Applications with network permission use
 `slirp4netns` for outbound traffic without sharing the host namespace or its
-loopback services. A per-container PID 1 owns the lifecycle and
+loopback services. If the helper is not installed, cpak downloads the official
+static build to its private cache and verifies its size and SHA-256 before use.
+A per-container PID 1 owns the lifecycle and
 accepts bounded local execution requests over a private Unix socket. OverlayFS
 combines immutable OCI layers with disposable runtime state.
 

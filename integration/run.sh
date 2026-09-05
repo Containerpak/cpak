@@ -247,8 +247,9 @@ if overlay["available"]:
 if "cpak system setup" not in overlay["detail"]:
     raise SystemExit("doctor did not explain how to install the AppArmor profile")
 PY
-"$cpak" system setup
+sudo "$cpak" system setup
 sudo grep -Fx 'cpak-userns (unconfined)' /sys/kernel/security/apparmor/profiles >/dev/null
+pkaction --action-id it.cpak.system.enrol-anchor >/dev/null
 for iteration in 1 2 3; do
 	"$cpak" doctor --json >"$work/doctor-after-apparmor-$iteration.json"
 	python3 - "$work/doctor-after-apparmor-$iteration.json" <<'PY'
@@ -505,17 +506,28 @@ sudo ip address add "$network_fixture_ip/32" dev "$host_interface"
 network_origin="$manifest_host/integration/network"
 network_url="http://$network_fixture_ip:18080/ready"
 install "$network_origin"
-mkdir -p "$work/empty-path"
-if PATH="$work/empty-path" "$cpak" run "$network_origin" -- /usr/local/bin/cpak-integration-probe network "$network_url" >"$work/network-preflight.log" 2>&1; then
-	echo "network launch succeeded without slirp4netns" >&2
+path_without_slirp="$work/path-without-slirp"
+mkdir -p "$path_without_slirp"
+for directory in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+	for candidate in "$directory"/*; do
+		[ -x "$candidate" ] || continue
+		name=${candidate##*/}
+		[ "$name" = slirp4netns ] && continue
+		[ -e "$path_without_slirp/$name" ] || ln -s "$candidate" "$path_without_slirp/$name"
+	done
+done
+if ! PATH="$path_without_slirp" "$cpak" run "$network_origin" -- /usr/local/bin/cpak-integration-probe network "$network_url" >"$work/network-bootstrap.log" 2>&1; then
+	cat "$work/network-bootstrap.log" >&2
+	echo "network helper bootstrap failed without a host slirp4netns" >&2
 	exit 1
 fi
-grep -F 'network access requires slirp4netns' "$work/network-preflight.log" >/dev/null
-if grep -F 'Container created:' "$work/network-preflight.log" >/dev/null; then
-	echo "network helper validation happened after container allocation" >&2
+downloaded_slirp=$(find "$CPAK_INSTALLATION_PATH/cache/network" -type f -name slirp4netns -perm -u+x -print -quit)
+if [ -z "$downloaded_slirp" ]; then
+	echo "verified network helper was not cached" >&2
 	exit 1
 fi
-echo "network helper preflight probe passed"
+printf '%s  %s\n' '8e54132bc80fc60d53af4b544dae63a81151774b56f129e572f7f1a2e89a57cf' "$downloaded_slirp" | sha256sum --check --status
+echo "network helper bootstrap probe passed"
 printf 'nameserver 192.0.2.254\n' >"$work/resolver-old"
 printf 'nameserver 127.0.0.1\n' >"$work/resolver-new"
 sudo dnsmasq --keep-in-foreground --no-resolv --no-hosts --bind-interfaces \

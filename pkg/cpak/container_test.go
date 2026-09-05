@@ -73,6 +73,29 @@ func TestBuildContainerPath(t *testing.T) {
 	}
 }
 
+func TestMissingHostPathsAreLeftOutOfBrokerPolicies(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	permissions := []types.FilesystemPermission{{
+		Path:   "home/.local/share/example",
+		Access: "read-write",
+	}}
+	filePicker, err := systemBrokerFilePickerPaths(permissions)
+	if err != nil {
+		t.Fatalf("missing file picker path: %v", err)
+	}
+	if len(filePicker) != 0 {
+		t.Fatalf("missing file picker path was granted: %+v", filePicker)
+	}
+	container, err := systemBrokerContainerPaths(permissions)
+	if err != nil {
+		t.Fatalf("missing container provider path: %v", err)
+	}
+	if len(container) != 0 {
+		t.Fatalf("missing container provider path was granted: %+v", container)
+	}
+}
+
 func TestCompactOverlayLowerDirsKeepsMountOptionsBelowOnePage(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "storage", "drivers", "fvs", "layers")
 	paths := make([]string, 40)

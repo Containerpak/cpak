@@ -16,7 +16,7 @@ const (
 	standardPrefix    = "/usr/local"
 	nixStorePrefix    = "/nix/store"
 	busPolicyPath     = "/etc/dbus-1/system.d/it.cpak.SystemAuthority1.conf"
-	polkitActionsPath = "/etc/polkit-1/actions"
+	polkitActionsPath = "/usr/share/polkit-1/actions"
 	serviceFileName   = "it.cpak.SystemAuthority1.service"
 	polkitPolicyName  = "it.cpak.system.policy"
 )
@@ -42,13 +42,8 @@ func layoutFor(prefix string) layout {
 		storage:  filepath.Join(prefix, "bin", "cpak-storaged"),
 		service:  filepath.Join(prefix, "share", "dbus-1", "system-services", serviceFileName),
 		policy:   busPolicyPath,
-		polkit:   filepath.Join(prefix, "share", "polkit-1", "actions", polkitPolicyName),
+		polkit:   filepath.Join(polkitActionsPath, polkitPolicyName),
 		sessions: filepath.Join(prefix, "share", "wayland-sessions"),
-	}
-	// polkitd reads actions from /etc, /run and the two standard share
-	// directories only, so a relocated prefix has to use the /etc one.
-	if !l.standard() {
-		l.polkit = filepath.Join(polkitActionsPath, polkitPolicyName)
 	}
 	return l
 }
