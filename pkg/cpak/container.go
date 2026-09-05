@@ -111,6 +111,8 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		}
 	}
 	override := policy.effective
+	x11Runtime := x11BridgeRuntime{}
+	defer x11Runtime.close()
 
 	if store == nil {
 		store, err = NewStore(c.Options.StorePath)
@@ -336,7 +338,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		}
 	}
 	if override.DisplayX11 {
-		container, err = startX11Bridge(container, override.Clipboard)
+		container, x11Runtime, err = startX11Bridge(container, override.Clipboard)
 		if err != nil {
 			cleanupX11Bridge(container)
 			cleanupBluetoothBusProxy(container)
@@ -386,7 +388,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		return types.Container{}, fmt.Errorf("identify container process: %w", err)
 	}
 	if container.X11SocketPath != "" {
-		container, err = startX11Broker(container, override.Clipboard)
+		container, err = startX11Broker(container, override.Clipboard, &x11Runtime)
 		if err != nil {
 			terminateContainerProcess(container)
 			c.CleanupContainer(container)

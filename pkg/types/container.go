@@ -80,7 +80,7 @@ type Container struct {
 	// BluetoothBusSocketPath is the private BlueZ bus mounted into the container.
 	BluetoothBusSocketPath string `json:"bluetooth_bus_socket_path"`
 
-	// X11BridgePid is the PID of the per-container nested X server.
+	// X11BridgePid is the PID of the per-container X11 display supervisor.
 	X11BridgePid       int    `json:"x11_bridge_pid"`
 	X11BridgeStartTime uint64 `json:"x11_bridge_start_time"`
 

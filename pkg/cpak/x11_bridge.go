@@ -31,25 +31,34 @@ type x11Server struct {
 	command       *exec.Cmd
 	privateSocket bool
 	hostWindow    bool
+	lazy          bool
 }
 
-func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (types.Container, error) {
+type x11BridgeRuntime struct {
+	listener  *os.File
+	x11Server string
+	lazy      bool
+}
+
+func (r *x11BridgeRuntime) close() {
+	if r.listener != nil {
+		_ = r.listener.Close()
+		r.listener = nil
+	}
+}
+
+func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (types.Container, x11BridgeRuntime, error) {
+	runtime := x11BridgeRuntime{}
 	authorityPath := filepath.Join(container.StatePath, "xauthority")
 	if err := writeX11Authority(authorityPath); err != nil {
-		return container, err
+		return container, runtime, err
 	}
 	hostWindowName := "cpak-" + container.CpakId
 	server, err := x11ServerCommand(authorityPath, hostWindowName, clipboard)
 	if err != nil {
 		_ = os.Remove(authorityPath)
-		return container, err
+		return container, runtime, err
 	}
-	displayReader, displayWriter, err := os.Pipe()
-	if err != nil {
-		_ = os.Remove(authorityPath)
-		return container, fmt.Errorf("create X11 display pipe: %w", err)
-	}
-	defer displayReader.Close()
 	command := server.command
 	socketPath := ""
 	var listener *net.UnixListener
@@ -67,27 +76,73 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 			_ = os.Remove(socketPath)
 		}
 	}
+	if server.lazy {
+		if !server.privateSocket {
+			_ = os.Remove(authorityPath)
+			return container, runtime, errors.New("lazy X11 display requires a private socket")
+		}
+		socketPath = filepath.Join(container.StatePath, "x11.sock")
+		listener, err = net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+		if err != nil {
+			_ = os.Remove(authorityPath)
+			return container, runtime, fmt.Errorf("create private X11 socket: %w", err)
+		}
+		listener.SetUnlinkOnClose(false)
+		if err = os.Chmod(socketPath, 0600); err != nil {
+			closePrivateListener(true)
+			_ = os.Remove(authorityPath)
+			return container, runtime, fmt.Errorf("restrict private X11 socket: %w", err)
+		}
+		listenerFile, err = listener.File()
+		if err != nil {
+			closePrivateListener(true)
+			_ = os.Remove(authorityPath)
+			return container, runtime, fmt.Errorf("retain private X11 socket: %w", err)
+		}
+		runtime.listener = listenerFile
+		runtime.x11Server = command.Path
+		runtime.lazy = true
+		listenerFile = nil
+		closePrivateListener(false)
+		container.X11Display = ":0"
+		container.X11SocketPath = socketPath
+		container.X11SocketTarget = filepath.Join("/tmp/.X11-unix", "X0")
+		container.X11AuthorityPath = authorityPath
+		if err = os.Symlink(socketPath, x11BrokerDisplay(container)); err != nil {
+			runtime.close()
+			_ = os.Remove(authorityPath)
+			_ = os.Remove(socketPath)
+			return container, runtime, fmt.Errorf("create private X11 broker endpoint: %w", err)
+		}
+		return container, runtime, nil
+	}
+	displayReader, displayWriter, err := os.Pipe()
+	if err != nil {
+		_ = os.Remove(authorityPath)
+		return container, runtime, fmt.Errorf("create X11 display pipe: %w", err)
+	}
+	defer displayReader.Close()
 	if server.privateSocket {
 		socketPath = filepath.Join(container.StatePath, "x11.sock")
 		listener, err = net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 		if err != nil {
 			displayWriter.Close()
 			_ = os.Remove(authorityPath)
-			return container, fmt.Errorf("create private X11 socket: %w", err)
+			return container, runtime, fmt.Errorf("create private X11 socket: %w", err)
 		}
 		listener.SetUnlinkOnClose(false)
 		if err = os.Chmod(socketPath, 0600); err != nil {
 			closePrivateListener(true)
 			displayWriter.Close()
 			_ = os.Remove(authorityPath)
-			return container, fmt.Errorf("restrict private X11 socket: %w", err)
+			return container, runtime, fmt.Errorf("restrict private X11 socket: %w", err)
 		}
 		listenerFile, err = listener.File()
 		if err != nil {
 			closePrivateListener(true)
 			displayWriter.Close()
 			_ = os.Remove(authorityPath)
-			return container, fmt.Errorf("pass private X11 socket: %w", err)
+			return container, runtime, fmt.Errorf("pass private X11 socket: %w", err)
 		}
 		command.Args = append(command.Args, "-listenfd", "3", "-displayfd", "4")
 		command.ExtraFiles = []*os.File{listenerFile, displayWriter}
@@ -98,54 +153,59 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	logFile, err := os.OpenFile(container.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
+		runtime.close()
 		closePrivateListener(true)
 		displayWriter.Close()
 		_ = os.Remove(authorityPath)
-		return container, fmt.Errorf("open X11 bridge log: %w", err)
+		return container, runtime, fmt.Errorf("open X11 bridge log: %w", err)
 	}
 	defer logFile.Close()
 	command.Stdin = nil
 	command.Stdout = logFile
 	command.Stderr = logFile
 	if err = command.Start(); err != nil {
+		runtime.close()
 		closePrivateListener(true)
 		displayWriter.Close()
 		_ = os.Remove(authorityPath)
-		return container, fmt.Errorf("start isolated X11 display: %w", err)
+		return container, runtime, fmt.Errorf("start isolated X11 display: %w", err)
 	}
 	closePrivateListener(false)
 	displayWriter.Close()
 	display, err := readX11Display(displayReader, 5*time.Second)
 	if err != nil {
+		runtime.close()
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		_ = os.Remove(authorityPath)
 		_ = os.Remove(socketPath)
-		return container, err
+		return container, runtime, err
 	}
 	socketTarget := filepath.Join("/tmp/.X11-unix", "X"+display)
 	if socketPath == "" {
 		socketPath = socketTarget
 	}
 	if err = waitForX11Socket(socketPath, 3*time.Second); err != nil {
+		runtime.close()
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		_ = os.Remove(authorityPath)
 		if server.privateSocket {
 			_ = os.Remove(socketPath)
 		}
-		return container, fmt.Errorf("start isolated X11 display: %w", err)
+		return container, runtime, fmt.Errorf("start isolated X11 display: %w", err)
 	}
 	container.X11BridgePid = command.Process.Pid
 	container.X11BridgeStartTime, err = processStartTime(command.Process.Pid)
 	if err != nil {
+		runtime.close()
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		_ = os.Remove(authorityPath)
 		if server.privateSocket {
 			_ = os.Remove(socketPath)
 		}
-		return container, fmt.Errorf("identify isolated X11 display: %w", err)
+		return container, runtime, fmt.Errorf("identify isolated X11 display: %w", err)
 	}
 	container.X11Display = ":" + display
 	container.X11SocketPath = socketPath
@@ -156,16 +216,17 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 	}
 	alias := x11BrokerDisplay(container)
 	if err = os.Symlink(socketPath, alias); err != nil {
+		runtime.close()
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		_ = os.Remove(authorityPath)
 		if server.privateSocket {
 			_ = os.Remove(socketPath)
 		}
-		return container, fmt.Errorf("create private X11 broker endpoint: %w", err)
+		return container, runtime, fmt.Errorf("create private X11 broker endpoint: %w", err)
 	}
 	go func() { _ = command.Wait() }()
-	return container, nil
+	return container, runtime, nil
 }
 
 func x11ServerCommand(authorityPath, hostWindowName string, clipboard types.ClipboardGrant) (x11Server, error) {
@@ -176,7 +237,11 @@ func x11ServerCommand(authorityPath, hostWindowName string, clipboard types.Clip
 		}
 		server, err := findX11Server("Xwayland")
 		if err == nil {
-			return x11Server{command: exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-geometry", "1280x800"), privateSocket: true}, nil
+			return x11Server{
+				command:       exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-geometry", "1280x800"),
+				privateSocket: true,
+				lazy:          true,
+			}, nil
 		}
 	}
 	if os.Getenv("DISPLAY") != "" {

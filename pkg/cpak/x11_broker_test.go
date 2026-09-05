@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,8 +22,8 @@ import (
 )
 
 func TestX11BrokerMovesClipboardTextInBothDirections(t *testing.T) {
-	host, nested := testX11Displays(t)
-	stop := startTestX11Broker(t, host, nested, true, true)
+	host, nested, runtime := testX11Displays(t)
+	stop := startTestX11Broker(t, host, nested, runtime, true, true)
 	defer stop()
 
 	hostSource := connectTestX11(t, host)
@@ -53,8 +54,8 @@ func TestX11BrokerMovesClipboardTextInBothDirections(t *testing.T) {
 }
 
 func TestX11BrokerDoesNotMoveClipboardWithoutDirections(t *testing.T) {
-	host, nested := testX11Displays(t)
-	stop := startTestX11Broker(t, host, nested, false, false)
+	host, nested, runtime := testX11Displays(t)
+	stop := startTestX11Broker(t, host, nested, runtime, false, false)
 	defer stop()
 
 	hostSource := connectTestX11(t, host)
@@ -74,7 +75,7 @@ func TestX11BrokerDoesNotMoveClipboardWithoutDirections(t *testing.T) {
 }
 
 func TestX11BrokerMirrorsWindowIdentityAndFullscreen(t *testing.T) {
-	host, nested := testX11Displays(t)
+	host, nested, runtime := testX11Displays(t)
 	hostWM := connectTestX11(t, host)
 	defer hostWM.Close()
 	hostScreen := xproto.Setup(hostWM).DefaultScreen(hostWM)
@@ -92,7 +93,7 @@ func TestX11BrokerMirrorsWindowIdentityAndFullscreen(t *testing.T) {
 	xproto.ChangeProperty(hostWM, xproto.PropModeReplace, outer, xproto.AtomWmClass, xproto.AtomString, 8, uint32(len(class)), class)
 	xproto.MapWindow(hostWM, outer)
 	hostWM.Sync()
-	stop := startTestX11Broker(t, host, nested, false, false)
+	stop := startTestX11Broker(t, host, nested, runtime, false, false)
 	defer stop()
 
 	application := connectTestX11(t, nested)
@@ -178,7 +179,7 @@ func TestX11BrokerMirrorsWindowIdentityAndFullscreen(t *testing.T) {
 	}
 }
 
-func testX11Displays(t *testing.T) (types.Container, types.Container) {
+func testX11Displays(t *testing.T) (types.Container, types.Container, x11BridgeRuntime) {
 	t.Helper()
 	if os.Getenv("WAYLAND_DISPLAY") == "" || !socketIsLive(waylandSocketPath(strconv.Itoa(os.Getuid()))) {
 		t.Skip("no Wayland display")
@@ -186,19 +187,59 @@ func testX11Displays(t *testing.T) (types.Container, types.Container) {
 	if _, err := exec.LookPath("Xwayland"); err != nil {
 		t.Skip("Xwayland is not installed")
 	}
-	start := func(id string) types.Container {
+	start := func(id string) (types.Container, x11BridgeRuntime) {
 		state := t.TempDir()
-		container, err := startX11Bridge(types.Container{CpakId: id, StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
+		container, runtime, err := startX11Bridge(types.Container{CpakId: id, StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
 		if err != nil {
 			t.Fatal(err)
 		}
+		container = startTestLazyX11Display(t, container, &runtime)
 		t.Cleanup(func() { cleanupX11Bridge(container) })
-		return container
+		return container, runtime
 	}
-	return start("clipboard-host"), start("clipboard-guest")
+	host, _ := start("clipboard-host")
+	nested, nestedRuntime := start("clipboard-guest")
+	return host, nested, nestedRuntime
 }
 
-func startTestX11Broker(t *testing.T, host, nested types.Container, hostToApp, appToHost bool) func() {
+func startTestLazyX11Display(t *testing.T, container types.Container, runtime *x11BridgeRuntime) types.Container {
+	t.Helper()
+	displayReader, displayWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(runtime.x11Server,
+		"-auth", container.X11AuthorityPath, "-nolisten", "tcp", "-geometry", "1280x800",
+		"-listenfd", "3", "-displayfd", "4",
+	)
+	command.ExtraFiles = []*os.File{runtime.listener, displayWriter}
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err = command.Start(); err != nil {
+		displayReader.Close()
+		displayWriter.Close()
+		t.Fatal(err)
+	}
+	displayWriter.Close()
+	runtime.close()
+	display, err := readX11Display(displayReader, 5*time.Second)
+	displayReader.Close()
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("start test X11 display: display=%q err=%v", display, err)
+	}
+	container.X11BridgePid = command.Process.Pid
+	container.X11BridgeStartTime, err = processStartTime(command.Process.Pid)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatal(err)
+	}
+	go func() { _ = command.Wait() }()
+	return container
+}
+
+func startTestX11Broker(t *testing.T, host, nested types.Container, _ x11BridgeRuntime, hostToApp, appToHost bool) func() {
 	t.Helper()
 	process := exec.Command("sleep", "30")
 	process.Env = append(os.Environ(), "CPAK_CONTAINER_ID="+nested.CpakId)

@@ -180,6 +180,49 @@ jobs:
           browser="$(command -v '${{ matrix.browser }}')"
           CPAK_X11_BROWSER="${browser}" CPAK_X11_DRIVER="${gecko_driver}" DISPLAY=:90 go test -race ./pkg/cpak -run 'TestX11(BrokerIntegratesXephyrWithTheHostDesktop|BridgeStartsAReachableDisplayOnX11)' -count=1 -v
 
+  wayland:
+    name: Isolated X11 on Wayland
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: go.mod
+
+      - name: Install Wayland test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y labwc wlrctl x11-utils xwayland
+
+      - name: Test lazy Xwayland input
+        run: |
+          runtime="/run/user/$(id -u)"
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${runtime}"
+          export XDG_RUNTIME_DIR="${runtime}"
+          unset WAYLAND_DISPLAY
+          export WLR_BACKENDS=headless
+          export WLR_HEADLESS_OUTPUTS=1
+          export WLR_LIBINPUT_NO_DEVICES=1
+          export WLR_RENDERER=pixman
+          labwc >/tmp/cpak-labwc.log 2>&1 &
+          labwc_pid=$!
+          trap 'kill "${labwc_pid}" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 100); do
+            socket="$(find "${runtime}" -maxdepth 1 -type s -name 'wayland-*' -print -quit)"
+            if [ -n "${socket}" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ -z "${socket}" ]; then
+            cat /tmp/cpak-labwc.log
+            exit 1
+          fi
+          export WAYLAND_DISPLAY="${socket##*/}"
+          CPAK_WAYLAND_INPUT_TEST=1 go test -race ./pkg/cpak -run 'TestX(11|wayland)' -count=1 -v
+
   nixos:
     name: NixOS
     runs-on: ubuntu-24.04
@@ -322,7 +365,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [assemble, compliance, integration, nixos, x11]
+    needs: [assemble, compliance, integration, nixos, wayland, x11]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

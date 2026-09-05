@@ -57,6 +57,7 @@ type endpointAtoms struct {
 	netWMWindowDialog    xproto.Atom
 	netWMSupported       xproto.Atom
 	netWMSupportingWM    xproto.Atom
+	wmSelection          xproto.Atom
 }
 
 type broker struct {
@@ -184,7 +185,9 @@ func newEndpoint(connection *xgb.Conn, windowManager bool) (*endpoint, error) {
 	}
 	result := &endpoint{connection: connection, root: root, window: window, atoms: atoms}
 	if windowManager {
-		result.publishWindowManager()
+		if err = result.publishWindowManager(); err != nil {
+			return nil, err
+		}
 	}
 	connection.Sync()
 	return result, nil
@@ -196,7 +199,7 @@ func loadAtoms(connection *xgb.Conn) (endpointAtoms, error) {
 		"_NET_WM_NAME", "_NET_WM_ICON", "_NET_WM_STATE", "_NET_WM_STATE_FULLSCREEN",
 		"_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_MAXIMIZED_VERT",
 		"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NORMAL", "_NET_WM_WINDOW_TYPE_DIALOG",
-		"_NET_SUPPORTED", "_NET_SUPPORTING_WM_CHECK",
+		"_NET_SUPPORTED", "_NET_SUPPORTING_WM_CHECK", "WM_S0",
 	}
 	values := make([]xproto.Atom, len(names))
 	for index, name := range names {
@@ -211,10 +214,11 @@ func loadAtoms(connection *xgb.Conn) (endpointAtoms, error) {
 		netWMName: values[5], netWMIcon: values[6], netWMState: values[7], netWMStateFullscreen: values[8],
 		netWMStateMaxHorz: values[9], netWMStateMaxVert: values[10], netWMWindowType: values[11],
 		netWMWindowNormal: values[12], netWMWindowDialog: values[13], netWMSupported: values[14], netWMSupportingWM: values[15],
+		wmSelection: values[16],
 	}, nil
 }
 
-func (e *endpoint) publishWindowManager() {
+func (e *endpoint) publishWindowManager() error {
 	setProperty32(e.connection, e.root, e.atoms.netWMSupportingWM, xproto.AtomWindow, uint32(e.window))
 	setProperty32(e.connection, e.window, e.atoms.netWMSupportingWM, xproto.AtomWindow, uint32(e.window))
 	supported := []uint32{
@@ -226,6 +230,17 @@ func (e *endpoint) publishWindowManager() {
 	setProperty32(e.connection, e.root, e.atoms.netWMSupported, xproto.AtomAtom, supported...)
 	name := []byte("cpak")
 	xproto.ChangeProperty(e.connection, xproto.PropModeReplace, e.window, e.atoms.netWMName, e.atoms.utf8, 8, uint32(len(name)), name)
+	if err := xproto.SetSelectionOwnerChecked(e.connection, e.window, e.atoms.wmSelection, xproto.TimeCurrentTime).Check(); err != nil {
+		return fmt.Errorf("claim X11 window manager selection: %w", err)
+	}
+	owner, err := xproto.GetSelectionOwner(e.connection, e.atoms.wmSelection).Reply()
+	if err != nil {
+		return fmt.Errorf("read X11 window manager selection: %w", err)
+	}
+	if owner.Owner != e.window {
+		return errors.New("claim X11 window manager selection: another window manager is active")
+	}
+	return nil
 }
 
 func (b *broker) watch(display *endpoint) {

@@ -51,10 +51,11 @@ func TestX11BrokerIntegratesXephyrWithTheHostDesktop(t *testing.T) {
 		t.Skip("Xephyr is not installed")
 	}
 	state := t.TempDir()
-	container, err := startX11Bridge(types.Container{CpakId: "xephyr-broker-test", StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
+	container, runtime, err := startX11Bridge(types.Container{CpakId: "xephyr-broker-test", StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer runtime.close()
 	if container.X11HostWindowName == "" {
 		t.Fatal("Xephyr has no stable host window identity")
 	}
