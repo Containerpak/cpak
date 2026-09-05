@@ -95,10 +95,10 @@ type Container struct {
 	// X11Display is the private display name used inside the container.
 	X11Display string `json:"x11_display"`
 
-	// X11SocketPath is the nested server socket mounted into the container.
+	// X11SocketPath is the nested server socket or socket directory mounted into the container.
 	X11SocketPath string `json:"x11_socket_path"`
 
-	// X11SocketTarget is the conventional display socket path inside the container.
+	// X11SocketTarget is the conventional display socket or directory inside the container.
 	X11SocketTarget string `json:"x11_socket_target"`
 
 	// X11AuthorityPath authenticates the container to its nested server.

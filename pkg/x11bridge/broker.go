@@ -250,10 +250,11 @@ func (b *broker) watch(display *endpoint) {
 		for {
 			event, err := display.connection.WaitForEvent()
 			if event == nil {
-				if err != nil {
-					continue
+				connectionErr := error(err)
+				if connectionErr == nil {
+					connectionErr = errors.New("X11 connection closed")
 				}
-				b.events <- endpointEvent{endpoint: display, err: errors.New("X11 connection closed")}
+				b.events <- endpointEvent{endpoint: display, err: connectionErr}
 				return
 			}
 			b.events <- endpointEvent{endpoint: display, event: event}
