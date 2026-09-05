@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -218,11 +219,15 @@ func RunX11Broker(options X11BrokerOptions) error {
 }
 
 func x11BrokerConnection(options X11BrokerOptions) (*xgb.Conn, error) {
+	return x11Connection(options.NestedDisplay, options.NestedAuthority)
+}
+
+func x11Connection(display, authority string) (*xgb.Conn, error) {
 	previousAuthority, hadAuthority := os.LookupEnv("XAUTHORITY")
-	if err := os.Setenv("XAUTHORITY", options.NestedAuthority); err != nil {
+	if err := os.Setenv("XAUTHORITY", authority); err != nil {
 		return nil, fmt.Errorf("select isolated X11 authority: %w", err)
 	}
-	connection, err := xgb.NewConnDisplay(options.NestedDisplay)
+	connection, err := xgb.NewConnDisplay(display)
 	if hadAuthority {
 		_ = os.Setenv("XAUTHORITY", previousAuthority)
 	} else {
@@ -269,15 +274,6 @@ func runLazyX11Broker(options X11BrokerOptions) error {
 		}
 		if ctx.Err() != nil || !sameContainerProcess(container, options.ContainerPid) {
 			return nil
-		}
-		_ = listener.Close()
-		if err = validateSocketOwner(options.ListenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("restore private X11 listener: %w", err)
-		}
-		_ = os.Remove(options.ListenPath)
-		listener, err = createPrivateX11Listener(options.ListenPath)
-		if err != nil {
-			return fmt.Errorf("restore private X11 listener: %w", err)
 		}
 	}
 	return nil
@@ -326,11 +322,21 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		return fmt.Errorf("create X11 display pipe: %w", err)
 	}
 	defer displayReader.Close()
+	serverDisplay := filepath.Join(filepath.Dir(options.ListenPath), ".x11-server") + isolatedX11Display
+	serverListener, err := createPrivateX11Listener(serverDisplay)
+	if err != nil {
+		displayWriter.Close()
+		return fmt.Errorf("create Xwayland listener: %w", err)
+	}
+	defer func() {
+		_ = serverListener.Close()
+		_ = os.Remove(serverDisplay)
+	}()
 	arguments := xwaylandArguments(options.X11Server, options.NestedAuthority)
 	arguments = append(arguments, "-listenfd", "3", "-displayfd", "4")
 	command := exec.Command(options.X11Server, arguments...)
 	command.Env = setEnvironmentValue(os.Environ(), "NO_AT_BRIDGE", "1")
-	command.ExtraFiles = []*os.File{listener, displayWriter}
+	command.ExtraFiles = []*os.File{serverListener, displayWriter}
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
@@ -338,6 +344,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		displayWriter.Close()
 		return fmt.Errorf("start isolated X11 display: %w", err)
 	}
+	_ = serverListener.Close()
 	displayWriter.Close()
 	serverStart, err := processStartTime(command.Process.Pid)
 	if err != nil {
@@ -367,19 +374,22 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 	if err != nil {
 		return err
 	}
-	nested, err := x11BrokerConnection(options)
+	nested, err := x11Connection(serverDisplay, options.NestedAuthority)
 	if err != nil {
 		return fmt.Errorf("connect to isolated X11 display: %w", err)
 	}
-	_ = listener.Close()
 	defer nested.Close()
+	stopProxy, err := startX11ClientProxy(ctx, listener, serverDisplay)
+	if err != nil {
+		return fmt.Errorf("start private X11 proxy: %w", err)
+	}
+	defer stopProxy()
 	var stop sync.Once
 	stopDisplay := func() {
 		stop.Do(func() {
 			if !options.MixedWayland && sameContainerProcess(container, options.ContainerPid) {
 				_ = syscall.Kill(options.ContainerPid, syscall.SIGTERM)
 			}
-			_ = os.Remove(options.ListenPath)
 			stopServer()
 		})
 	}
@@ -390,4 +400,53 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		},
 		StopContainer: stopDisplay,
 	})
+}
+
+func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string) (func(), error) {
+	proxy, err := net.FileListener(listener)
+	if err != nil {
+		return nil, err
+	}
+	proxyContext, cancel := context.WithCancel(ctx)
+	go func() {
+		defer proxy.Close()
+		for {
+			client, acceptErr := proxy.Accept()
+			if acceptErr != nil {
+				return
+			}
+			server, dialErr := net.Dial("unix", upstream)
+			if dialErr != nil {
+				_ = client.Close()
+				continue
+			}
+			go proxyX11Connection(proxyContext, client, server)
+		}
+	}()
+	return func() {
+		cancel()
+		_ = proxy.Close()
+	}, nil
+}
+
+func proxyX11Connection(ctx context.Context, client, server net.Conn) {
+	var close sync.Once
+	closeBoth := func() {
+		close.Do(func() {
+			_ = client.Close()
+			_ = server.Close()
+		})
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			closeBoth()
+		}
+	}()
+	go func() {
+		_, _ = io.Copy(server, client)
+		closeBoth()
+	}()
+	_, _ = io.Copy(client, server)
+	closeBoth()
 }

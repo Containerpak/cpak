@@ -415,6 +415,10 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	if err = exec.Command(wlrctl, "toplevel", "find").Run(); err == nil {
 		t.Fatal("Xwayland created a host window before an X11 client connected")
 	}
+	publicSocket, err := os.Stat(x11SocketEndpoint(container))
+	if err != nil {
+		t.Fatal(err)
+	}
 	connection := connectTestX11(t, container)
 	screen := xproto.Setup(connection).DefaultScreen(connection)
 	window, err := xproto.NewWindowId(connection)
@@ -485,6 +489,13 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 		t.Fatal("mixed Wayland application stopped with its X11 display")
 	}
 	restarted := connectTestX11Eventually(t, container, done, 3*time.Second)
+	restartedSocket, statErr := os.Stat(x11SocketEndpoint(container))
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !os.SameFile(publicSocket, restartedSocket) {
+		t.Fatal("private X11 endpoint changed while Xwayland restarted")
+	}
 	restartedScreen := xproto.Setup(restarted).DefaultScreen(restarted)
 	restartedWindow, restartErr := xproto.NewWindowId(restarted)
 	if restartErr != nil {
