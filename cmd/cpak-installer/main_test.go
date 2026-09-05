@@ -40,6 +40,13 @@ func TestInstallCpakIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestBareInstallerExplainsItsRole(t *testing.T) {
+	err := installerReadError(bootstrap.ErrCapsuleFooterMissing)
+	if !strings.Contains(err.Error(), "application-installer component") || !strings.Contains(err.Error(), "cpak-linux-amd64") {
+		t.Fatalf("bare installer error: %v", err)
+	}
+}
+
 func TestInstallCompanionUsesTheCpakBinDirectory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

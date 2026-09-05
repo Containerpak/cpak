@@ -21,6 +21,9 @@ import (
 	"strings"
 )
 
+// ErrCapsuleFooterMissing means the input is not a complete application installer.
+var ErrCapsuleFooterMissing = errors.New("capsule footer is missing")
+
 const (
 	SchemaVersion = 2
 	footerSize    = 16
@@ -329,7 +332,7 @@ func section(source io.ReaderAt, size int64, magic [8]byte, trailing int) (int64
 		return 0, 0, err
 	}
 	if string(footer[:8]) != string(magic[:]) {
-		return 0, 0, errors.New("capsule footer is missing")
+		return 0, 0, ErrCapsuleFooterMissing
 	}
 	length := binary.LittleEndian.Uint64(footer[8:])
 	if length > uint64(size-footerSize-int64(trailing)) {

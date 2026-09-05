@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"reflect"
 	"runtime"
 	"strings"
@@ -162,6 +163,18 @@ func TestCapsuleRejectsTruncatedInput(t *testing.T) {
 	_, err = ReadCapsule(bytes.NewReader([]byte("short")), 5, publicKey)
 	if err == nil {
 		t.Fatal("expected truncated capsule error")
+	}
+}
+
+func TestCapsuleReportsMissingFooter(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := bytes.Repeat([]byte{0}, footerSize+signatureSize)
+	_, err = ReadCapsule(bytes.NewReader(input), int64(len(input)), publicKey)
+	if !errors.Is(err, ErrCapsuleFooterMissing) {
+		t.Fatalf("missing footer error: %v", err)
 	}
 }
 

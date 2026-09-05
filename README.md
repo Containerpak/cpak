@@ -17,16 +17,26 @@ layers, atomic updates and a rootless Linux sandbox from one Go binary.
 
 ## Install
 
-Download `cpak-linux-amd64` or `cpak-linux-arm64` and `SHA256SUMS` from the
-[latest release](https://github.com/Containerpak/cpak/releases/latest), verify
-the download, then install it in a directory on `PATH`:
+Download `cpak-linux-amd64` or `cpak-linux-arm64`, the matching
+`cpak-storaged-linux-*` file, and `SHA256SUMS` from the
+[latest release](https://github.com/Containerpak/cpak/releases/latest). Verify
+both binaries, then install them in the same directory on `PATH`:
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
 install -Dm755 cpak-linux-amd64 "$HOME/.local/bin/cpak"
+install -Dm755 cpak-storaged-linux-amd64 "$HOME/.local/bin/cpak-storaged"
 cpak system setup
 cpak doctor
 ```
+
+If `cpak` was installed without its storage service, `cpak self-update` repairs
+the installation by downloading and verifying the missing companion.
+
+Use the `arm64` filenames on an ARM64 host. The `cpak-installer-linux-*` release
+assets are components used to produce signed application installers and cannot
+be run on their own. Complete graphical installers are downloaded from package
+pages on [cpak.it](https://cpak.it).
 
 `cpak doctor` checks user namespaces, rootless OverlayFS, seccomp, Landlock,
 cgroup delegation, display, audio and the host action broker. It

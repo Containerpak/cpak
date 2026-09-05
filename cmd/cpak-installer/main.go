@@ -38,7 +38,7 @@ func main() {
 
 	capsule, err := readSelf()
 	if err != nil {
-		fail(err)
+		fail(installerReadError(err))
 	}
 	desktopui.SetBrandIcon(capsule.BrandIcon)
 	if *inspect {
@@ -64,6 +64,13 @@ func main() {
 	if err = runTerminal(capsule); err != nil {
 		fail(err)
 	}
+}
+
+func installerReadError(err error) error {
+	if errors.Is(err, bootstrap.ErrCapsuleFooterMissing) {
+		return errors.New("this binary is an application-installer component; install cpak-linux-amd64 or cpak-linux-arm64, or download a complete application installer from cpak.it")
+	}
+	return err
 }
 
 func readSelf() (bootstrap.Capsule, error) {
