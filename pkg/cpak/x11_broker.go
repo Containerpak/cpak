@@ -295,10 +295,9 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		return fmt.Errorf("create X11 display pipe: %w", err)
 	}
 	defer displayReader.Close()
-	command := exec.Command(options.X11Server,
-		"-auth", options.NestedAuthority, "-nolisten", "tcp", "-geometry", "1280x800",
-		"-listenfd", "3", "-displayfd", "4",
-	)
+	arguments := xwaylandArguments(options.X11Server, options.NestedAuthority)
+	arguments = append(arguments, "-listenfd", "3", "-displayfd", "4")
+	command := exec.Command(options.X11Server, arguments...)
 	command.ExtraFiles = []*os.File{listener, displayWriter}
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	command.Stdout = os.Stdout

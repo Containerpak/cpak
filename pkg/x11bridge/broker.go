@@ -57,6 +57,7 @@ type endpointAtoms struct {
 	netWMWindowDialog    xproto.Atom
 	netWMSupported       xproto.Atom
 	netWMSupportingWM    xproto.Atom
+	netWMActiveWindow    xproto.Atom
 	wmSelection          xproto.Atom
 }
 
@@ -199,7 +200,7 @@ func loadAtoms(connection *xgb.Conn) (endpointAtoms, error) {
 		"_NET_WM_NAME", "_NET_WM_ICON", "_NET_WM_STATE", "_NET_WM_STATE_FULLSCREEN",
 		"_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_MAXIMIZED_VERT",
 		"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NORMAL", "_NET_WM_WINDOW_TYPE_DIALOG",
-		"_NET_SUPPORTED", "_NET_SUPPORTING_WM_CHECK", "WM_S0",
+		"_NET_SUPPORTED", "_NET_SUPPORTING_WM_CHECK", "_NET_ACTIVE_WINDOW", "WM_S0",
 	}
 	values := make([]xproto.Atom, len(names))
 	for index, name := range names {
@@ -214,7 +215,7 @@ func loadAtoms(connection *xgb.Conn) (endpointAtoms, error) {
 		netWMName: values[5], netWMIcon: values[6], netWMState: values[7], netWMStateFullscreen: values[8],
 		netWMStateMaxHorz: values[9], netWMStateMaxVert: values[10], netWMWindowType: values[11],
 		netWMWindowNormal: values[12], netWMWindowDialog: values[13], netWMSupported: values[14], netWMSupportingWM: values[15],
-		wmSelection: values[16],
+		netWMActiveWindow: values[16], wmSelection: values[17],
 	}, nil
 }
 
@@ -226,6 +227,7 @@ func (e *endpoint) publishWindowManager() error {
 		uint32(e.atoms.netWMStateFullscreen),
 		uint32(e.atoms.netWMStateMaxHorz),
 		uint32(e.atoms.netWMStateMaxVert),
+		uint32(e.atoms.netWMActiveWindow),
 	}
 	setProperty32(e.connection, e.root, e.atoms.netWMSupported, xproto.AtomAtom, supported...)
 	name := []byte("cpak")
@@ -275,12 +277,18 @@ func (b *broker) handleEvent(received endpointEvent) {
 	case xproto.MapRequestEvent:
 		xproto.MapWindow(b.nested.connection, event.Window)
 		b.fitWindow(event.Window)
+		b.focusWindow(event.Window)
 	case xproto.ConfigureRequestEvent:
 		b.configureWindow(event)
 	case xproto.ClientMessageEvent:
-		b.updateWindowState(event)
+		if event.Type == b.nested.atoms.netWMActiveWindow {
+			b.focusWindow(event.Window)
+		} else {
+			b.updateWindowState(event)
+		}
 	case xproto.MapNotifyEvent:
 		b.fitWindow(event.Window)
+		b.focusWindow(event.Window)
 	case xproto.ConfigureNotifyEvent:
 		if event.Window == b.nested.root && b.primary != 0 {
 			b.fitWindow(b.primary)
@@ -390,6 +398,25 @@ func (b *broker) windowCanFillRoot(window xproto.Window) bool {
 func (b *broker) windowIsTransient(window xproto.Window) bool {
 	reply, err := xproto.GetProperty(b.nested.connection, false, window, xproto.AtomWmTransientFor, xproto.AtomWindow, 0, 1).Reply()
 	return err == nil && reply.Format == 32 && len(reply.Value) >= 4 && xproto.Window(xgb.Get32(reply.Value)) != xproto.WindowNone
+}
+
+func (b *broker) focusWindow(window xproto.Window) {
+	attributes, err := xproto.GetWindowAttributes(b.nested.connection, window).Reply()
+	if err != nil || attributes.MapState != xproto.MapStateViewable || attributes.OverrideRedirect {
+		return
+	}
+	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(window)).Reply()
+	if err != nil || geometry.Width < 32 || geometry.Height < 32 {
+		return
+	}
+	types := propertyAtoms(b.nested.connection, window, b.nested.atoms.netWMWindowType)
+	if len(types) > 0 && !containsAtom(types, b.nested.atoms.netWMWindowNormal) && !containsAtom(types, b.nested.atoms.netWMWindowDialog) {
+		return
+	}
+	if err = xproto.SetInputFocusChecked(b.nested.connection, xproto.InputFocusPointerRoot, window, xproto.TimeCurrentTime).Check(); err != nil {
+		return
+	}
+	setProperty32(b.nested.connection, b.nested.root, b.nested.atoms.netWMActiveWindow, xproto.AtomWindow, uint32(window))
 }
 
 func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {

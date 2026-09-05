@@ -141,6 +141,39 @@ func TestX11BrokerMirrorsWindowIdentityAndFullscreen(t *testing.T) {
 	if geometry.Width != root.Width || geometry.Height != root.Height {
 		t.Fatalf("application geometry: %dx%d, display: %dx%d", geometry.Width, geometry.Height, root.Width, root.Height)
 	}
+	focus, err := xproto.GetInputFocus(application).Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if focus.Focus != window {
+		t.Fatalf("application focus: got %d, want %d", focus.Focus, window)
+	}
+	popup, err := xproto.NewWindowId(application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(application, screen.RootDepth, popup, screen.Root, 80, 90, 240, 160, 0, xproto.WindowClassInputOutput, screen.RootVisual, xproto.CwOverrideRedirect, []uint32{1}).Check(); err != nil {
+		t.Fatal(err)
+	}
+	xproto.MapWindow(application, popup)
+	application.Sync()
+	time.Sleep(250 * time.Millisecond)
+	attributes, err := xproto.GetWindowAttributes(application, popup).Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attributes.MapState != xproto.MapStateViewable {
+		t.Fatalf("override-redirect popup map state: %d", attributes.MapState)
+	}
+	focus, err = xproto.GetInputFocus(application).Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if focus.Focus != window {
+		t.Fatalf("focus after override-redirect popup: got %d, want %d", focus.Focus, window)
+	}
+	xproto.DestroyWindow(application, popup)
+	application.Sync()
 	if got := readTestProperty(t, hostWM, outer, "_NET_WM_NAME"); got != string(title) {
 		t.Fatalf("outer window title: %q", got)
 	}

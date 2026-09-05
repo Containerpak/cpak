@@ -126,23 +126,37 @@ func TestXwaylandUsesALazyPrivateDisplay(t *testing.T) {
 		t.Skip("no Wayland display")
 	}
 	original := findX11Server
+	originalDecorations := x11ServerSupportsDecorations
 	findX11Server = func(name string) (string, error) {
 		if name == "Xwayland" {
 			return "/usr/bin/Xwayland", nil
 		}
 		return "", errors.New("not found")
 	}
-	t.Cleanup(func() { findX11Server = original })
+	x11ServerSupportsDecorations = func(string) bool { return true }
+	t.Cleanup(func() {
+		findX11Server = original
+		x11ServerSupportsDecorations = originalDecorations
+	})
 	server, err := x11ServerCommand("/tmp/authority", "cpak-test", types.ClipboardGrant{HostToApp: true, AppToHost: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/Xwayland", "-auth", "/tmp/authority", "-nolisten", "tcp", "-geometry", "1280x800"}
+	want := []string{"/usr/bin/Xwayland", "-auth", "/tmp/authority", "-nolisten", "tcp", "-geometry", "1280x800", "-decorate"}
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xwayland arguments: got %v, want %v", server.command.Args, want)
 	}
 	if !server.privateSocket || !server.lazy || server.hostWindow {
 		t.Fatalf("Xwayland mode: %+v", server)
+	}
+	x11ServerSupportsDecorations = func(string) bool { return false }
+	server, err = x11ServerCommand("/tmp/authority", "cpak-test", types.ClipboardGrant{HostToApp: true, AppToHost: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = want[:len(want)-1]
+	if !reflect.DeepEqual(server.command.Args, want) {
+		t.Fatalf("Xwayland fallback arguments: got %v, want %v", server.command.Args, want)
 	}
 }
 

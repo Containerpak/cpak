@@ -26,6 +26,18 @@ import (
 const x11AuthorityTarget = "/run/cpak/xauthority"
 
 var findX11Server = exec.LookPath
+var x11ServerSupportsDecorations = func(path string) bool {
+	output, err := exec.Command(path, "-help").CombinedOutput()
+	return err == nil && strings.Contains(string(output), "-decorate")
+}
+
+func xwaylandArguments(path, authority string) []string {
+	arguments := []string{"-auth", authority, "-nolisten", "tcp", "-geometry", "1280x800"}
+	if x11ServerSupportsDecorations(path) {
+		arguments = append(arguments, "-decorate")
+	}
+	return arguments
+}
 
 type x11Server struct {
 	command       *exec.Cmd
@@ -238,7 +250,7 @@ func x11ServerCommand(authorityPath, hostWindowName string, clipboard types.Clip
 		server, err := findX11Server("Xwayland")
 		if err == nil {
 			return x11Server{
-				command:       exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-geometry", "1280x800"),
+				command:       exec.Command(server, xwaylandArguments(server, authorityPath)...),
 				privateSocket: true,
 				lazy:          true,
 			}, nil
