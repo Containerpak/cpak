@@ -32,13 +32,17 @@ import (
 // name the container dialled was one any account on the machine could have
 // created first.
 func TestNestedRunReachesTheServiceThroughTheMountedSocket(t *testing.T) {
-	if os.Getenv("CPAK_SERVICE_SOCKET_TEST") == "1" {
+	switch os.Getenv("CPAK_SERVICE_SOCKET_TEST") {
+	case "prepare":
+		prepareNestedServiceSocketTest(t)
+		return
+	case "run":
 		runNestedServiceSocketTest(t)
 		return
 	}
 	base := t.TempDir()
 	command := exec.Command("unshare", "--user", "--map-root-user", "--mount", os.Args[0], "-test.run=^TestNestedRunReachesTheServiceThroughTheMountedSocket$")
-	command.Env = append(os.Environ(), "CPAK_SERVICE_SOCKET_TEST=1", "CPAK_SERVICE_SOCKET_BASE="+base)
+	command.Env = append(os.Environ(), "CPAK_SERVICE_SOCKET_TEST=prepare", "CPAK_SERVICE_SOCKET_BASE="+base)
 	if output, err := command.CombinedOutput(); err != nil {
 		if bytes.Contains(output, []byte("/proc/self/uid_map: Operation not permitted")) {
 			t.Skip("user namespaces are unavailable")
@@ -47,7 +51,7 @@ func TestNestedRunReachesTheServiceThroughTheMountedSocket(t *testing.T) {
 	}
 }
 
-func runNestedServiceSocketTest(t *testing.T) {
+func prepareNestedServiceSocketTest(t *testing.T) {
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		t.Fatalf("make the mount tree private: %v", err)
 	}
@@ -57,6 +61,26 @@ func runNestedServiceSocketTest(t *testing.T) {
 	if err := syscall.Mount(os.Getenv("CPAK_SERVICE_SOCKET_BASE"), "/run", "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
 		t.Fatalf("isolate the runtime directory: %v", err)
 	}
+	executable := "/run/cpak-test"
+	file, err := os.OpenFile(executable, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0700)
+	if err != nil {
+		t.Fatalf("create the stable test executable: %v", err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatalf("close the stable test executable: %v", err)
+	}
+	if err = syscall.Mount("/proc/self/exe", executable, "", syscall.MS_BIND, ""); err != nil {
+		t.Fatalf("bind the test executable: %v", err)
+	}
+	if err = os.Setenv("CPAK_SERVICE_SOCKET_TEST", "run"); err != nil {
+		t.Fatalf("set the nested test stage: %v", err)
+	}
+	if err = syscall.Exec(executable, os.Args, os.Environ()); err != nil {
+		t.Fatalf("re-execute the test from /run: %v", err)
+	}
+}
+
+func runNestedServiceSocketTest(t *testing.T) {
 	defer syscall.Unmount("/run", syscall.MNT_DETACH)
 	for _, directory := range []string{"/run/user", "/run/rootfs"} {
 		if err := os.MkdirAll(directory, 0700); err != nil {

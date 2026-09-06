@@ -132,22 +132,23 @@ exit 1
 		StableAfter: time.Second, StopTimeout: 20 * time.Millisecond, RefreshInterval: 5 * time.Millisecond,
 	}
 	go func() { done <- manager.Run(ctx) }()
+	var response ControlResponse
 	waitForTest(t, 3*time.Second, func() bool {
-		data, err := os.ReadFile(events)
-		return err == nil && len(strings.Fields(string(data))) >= 3
+		current, err := Send(manager.SocketPath, ControlRequest{Action: "status"}, time.Second)
+		if err != nil || len(current.Services) != 1 {
+			return false
+		}
+		response = current
+		return current.Services[0].Restarts >= 2 && current.Services[0].LastError != ""
 	})
-	response, err := Send(manager.SocketPath, ControlRequest{Action: "status"}, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if len(response.Services) != 1 || response.Services[0].Restarts < 2 || response.Services[0].LastError == "" {
 		t.Fatalf("restart status: %#v", response.Services)
 	}
 	cancel()
 	select {
-	case err = <-done:
-		if err != nil {
-			t.Fatal(err)
+	case runErr := <-done:
+		if runErr != nil {
+			t.Fatal(runErr)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("manager did not stop")
