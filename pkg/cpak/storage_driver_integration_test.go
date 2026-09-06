@@ -136,10 +136,13 @@ func TestExternalStorageDriverCommandIsSandboxed(t *testing.T) {
 		t.Fatal("external driver does not use a private network namespace")
 	}
 	arguments := strings.Join(command.Args, " ")
-	for _, expected := range []string{"launch", "--require-sandbox", "--landlock-read-only", cp.fvsRoot(), "--landlock-read-write", cp.storageDriverRoot("external"), "-- /bin/true --probe"} {
+	for _, expected := range []string{"launch", "--require-sandbox", "--landlock-read-write", cp.fvsRoot(), "--landlock-read-write", cp.storageDriverRoot("external"), "-- /bin/true --probe"} {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("external driver command %q does not contain %q", arguments, expected)
 		}
+	}
+	if strings.Contains(arguments, "--landlock-read-only "+cp.fvsRoot()) {
+		t.Fatalf("external driver cannot lock its source repositories: %q", arguments)
 	}
 }
 

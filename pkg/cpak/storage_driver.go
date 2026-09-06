@@ -224,7 +224,7 @@ func (c *Cpak) storageDriverCommand(name, binary string, external bool, socket s
 		return nil, err
 	}
 	launch := []string{"launch", "--require-sandbox"}
-	readOnly := []string{binary, c.fvsRoot()}
+	readOnly := []string{binary}
 	for _, path := range []string{"/usr", "/bin", "/lib", "/lib64", "/etc", "/dev/null", "/dev/urandom"} {
 		if _, err := os.Stat(path); err == nil {
 			readOnly = append(readOnly, path)
@@ -233,7 +233,7 @@ func (c *Cpak) storageDriverCommand(name, binary string, external bool, socket s
 	for _, path := range readOnly {
 		launch = append(launch, "--landlock-read-only", path)
 	}
-	for _, path := range []string{c.storageDriverRoot(name), filepath.Dir(socket)} {
+	for _, path := range []string{c.fvsRoot(), c.storageDriverRoot(name), filepath.Dir(socket)} {
 		launch = append(launch, "--landlock-read-write", path)
 	}
 	launch = append(launch, "--", binary)
