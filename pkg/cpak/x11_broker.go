@@ -379,11 +379,6 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		return fmt.Errorf("connect to isolated X11 display: %w", err)
 	}
 	defer nested.Close()
-	stopProxy, err := startX11ClientProxy(ctx, listener, serverDisplay)
-	if err != nil {
-		return fmt.Errorf("start private X11 proxy: %w", err)
-	}
-	defer stopProxy()
 	var stop sync.Once
 	stopDisplay := func() {
 		stop.Do(func() {
@@ -393,13 +388,23 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 			stopServer()
 		})
 	}
-	return x11bridge.Run(ctx, x11bridge.Options{
+	var stopProxy func()
+	err = x11bridge.Run(ctx, x11bridge.Options{
 		Nested: nested, HostToApp: options.HostToApp, AppToHost: options.AppToHost,
 		ServerAlive: func() bool {
 			return sameRecordedProcess(command.Process.Pid, serverStart) && sameContainerProcess(container, options.ContainerPid)
 		},
 		StopContainer: stopDisplay,
+		Ready: func() error {
+			var proxyErr error
+			stopProxy, proxyErr = startX11ClientProxy(ctx, listener, serverDisplay)
+			return proxyErr
+		},
 	})
+	if stopProxy != nil {
+		stopProxy()
+	}
+	return err
 }
 
 func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string) (func(), error) {
