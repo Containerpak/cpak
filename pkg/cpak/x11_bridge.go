@@ -28,6 +28,7 @@ const (
 	isolatedX11Display         = ":1023"
 	isolatedX11SocketDirectory = "/tmp/.X11-unix"
 	isolatedX11SocketName      = "X1023"
+	x11DisplayStartupTimeout   = 15 * time.Second
 )
 
 var findX11Server = exec.LookPath
@@ -184,7 +185,7 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 	}
 	closePrivateListener(false)
 	displayWriter.Close()
-	display, err := readX11Display(displayReader, 5*time.Second)
+	display, err := readX11Display(displayReader, x11DisplayStartupTimeout)
 	if err != nil {
 		runtime.close()
 		_ = command.Process.Kill()

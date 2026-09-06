@@ -370,7 +370,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 			<-exited
 		}
 	}()
-	_, err = readX11Display(displayReader, 5*time.Second)
+	_, err = readX11Display(displayReader, x11DisplayStartupTimeout)
 	if err != nil {
 		return err
 	}
