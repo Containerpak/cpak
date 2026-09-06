@@ -73,6 +73,7 @@ type CLI struct {
 	Grant              cmd.GrantCmd              `cmd:"grant" help:"Manage persistent file grants"`
 	Discover           cmd.DiscoverCmd           `cmd:"discover" help:"Integrate cpak with software centers"`
 	Environment        cmd.EnvironmentCmd        `cmd:"environment" help:"Manage persistent package environments"`
+	Completion         cmd.CompletionCmd         `cmd:"completion" help:"Generate shell completion"`
 
 	cli.Base
 }
@@ -98,6 +99,7 @@ func main() {
 		os.Exit(1)
 	}
 	app.SetName("cpak")
+	root.Completion.Configure(app, os.Stdout)
 	if err := app.Run(); err != nil {
 		var exitErr *types.ExitError
 		if errors.As(err, &exitErr) {
@@ -214,7 +216,7 @@ func skipUpdateCheck(args []string) bool {
 		}
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" {
 			return true
 		}
 	}
