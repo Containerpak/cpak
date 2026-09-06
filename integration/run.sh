@@ -221,13 +221,7 @@ for attempt in $(seq 1 100); do
 	sleep 0.1
 done
 
-mkdir -p "$work/cli" "$work/helpers"
-cp "$root/out/cpak" "$work/cli/cpak"
-cp "$root/out/cpak-storaged" "$work/helpers/cpak-storaged"
-chmod 0755 "$work/cli/cpak" "$work/helpers/cpak-storaged"
-PATH="$work/helpers:$PATH"
-export PATH
-cpak="$work/cli/cpak"
+cpak="$root/out/cpak"
 restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
 if [ ! -r "$restriction" ] || [ "$(cat "$restriction")" != 1 ]; then
 	echo "Ubuntu AppArmor user namespace restriction is not active" >&2
@@ -254,6 +248,13 @@ if "cpak system setup" not in overlay["detail"]:
     raise SystemExit("doctor did not explain how to install the AppArmor profile")
 PY
 sudo "$cpak" system setup
+mkdir -p "$work/cli" "$work/helpers"
+cp "$root/out/cpak" "$work/cli/cpak"
+cp "$root/out/cpak-storaged" "$work/helpers/cpak-storaged"
+chmod 0755 "$work/cli/cpak" "$work/helpers/cpak-storaged"
+PATH="$work/helpers:$PATH"
+export PATH
+cpak="$work/cli/cpak"
 sudo grep -Fx 'cpak-userns (unconfined)' /sys/kernel/security/apparmor/profiles >/dev/null
 pkaction --action-id it.cpak.system.enrol-anchor >/dev/null
 for iteration in 1 2 3; do
