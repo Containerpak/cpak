@@ -64,6 +64,26 @@ func TestUnpackLayerReadsZstd(t *testing.T) {
 	}
 }
 
+func TestUnpackLayerReadsDockerTar(t *testing.T) {
+	layer := testLayer(t, mediaDockerLayerTar, []testLayerEntry{
+		{name: "/app/value", typeflag: tar.TypeReg, mode: 0755, content: []byte("docker")},
+	})
+	files, err := unpackTestLayer(t, layer, mediaDockerLayerTar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value fvsrepo.FileEntry
+	for _, file := range files {
+		if file.Path == "app/value" {
+			value = file
+			break
+		}
+	}
+	if value.Path == "" || value.Size != 6 {
+		t.Fatalf("files = %+v", files)
+	}
+}
+
 func TestUnpackLayerPathsKeepsSelectedTree(t *testing.T) {
 	layer := testLayer(t, mediaOCILayerGzip, []testLayerEntry{
 		{name: "usr", typeflag: tar.TypeDir, mode: 0755},
@@ -120,12 +140,16 @@ func TestLayerPathsIncludingLinksAddsTargets(t *testing.T) {
 }
 
 func TestUnpackLayerRejectsPathTraversal(t *testing.T) {
-	layer := testLayer(t, mediaOCILayerTar, []testLayerEntry{
-		{name: "../escape", typeflag: tar.TypeReg, mode: 0644, content: []byte("escape")},
-	})
-	_, err := unpackTestLayer(t, layer, mediaOCILayerTar)
-	if err == nil || !strings.Contains(err.Error(), "path escapes root") {
-		t.Fatalf("path traversal was accepted: %v", err)
+	for _, name := range []string{"../escape", "/../escape"} {
+		t.Run(name, func(t *testing.T) {
+			layer := testLayer(t, mediaOCILayerTar, []testLayerEntry{
+				{name: name, typeflag: tar.TypeReg, mode: 0644, content: []byte("escape")},
+			})
+			_, err := unpackTestLayer(t, layer, mediaOCILayerTar)
+			if err == nil || !strings.Contains(err.Error(), "path escapes root") {
+				t.Fatalf("path traversal was accepted: %v", err)
+			}
+		})
 	}
 }
 

@@ -104,7 +104,10 @@ func TestCompactOverlayLowerDirsKeepsMountOptionsBelowOnePage(t *testing.T) {
 	}
 	lowerDirs := strings.Join(paths, ":")
 
-	mountDir, compact := compactOverlayLowerDirs(lowerDirs)
+	mountDir, compact, err := compactOverlayLowerDirs(t.TempDir(), lowerDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if mountDir != base {
 		t.Fatalf("mount directory: got %q, want %q", mountDir, base)
 	}
@@ -118,6 +121,76 @@ func TestCompactOverlayLowerDirsKeepsMountOptionsBelowOnePage(t *testing.T) {
 	}
 }
 
+func TestCompactOverlayLowerDirsAliasesLargeLayerSets(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "storage", "drivers", "fvs", "layers")
+	paths := make([]string, 99)
+	for index := range paths {
+		paths[index] = filepath.Join(base, fmt.Sprintf("%064x", index), "rootfs")
+	}
+	state := t.TempDir()
+	mountDir, compact, err := compactOverlayLowerDirs(state, strings.Join(paths, ":"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mountDir != filepath.Join(state, "overlay-lower") {
+		t.Fatalf("mount directory: got %q", mountDir)
+	}
+	aliases := strings.Split(compact, ":")
+	if len(aliases) != len(paths) || len(compact) >= os.Getpagesize()-512 {
+		t.Fatalf("compact lower directories: %d paths, %d bytes", len(aliases), len(compact))
+	}
+	for index, alias := range aliases {
+		target, readErr := os.Readlink(filepath.Join(mountDir, alias))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if target != paths[index] {
+			t.Fatalf("alias %d: got %q, want %q", index, target, paths[index])
+		}
+	}
+}
+
+func TestCompactOverlayLowerDirsMountsLargeLayerSet(t *testing.T) {
+	requireRootlessOverlay(t)
+	root := t.TempDir()
+	base := filepath.Join(root, "layers")
+	paths := make([]string, 99)
+	for index := range paths {
+		paths[index] = filepath.Join(base, fmt.Sprintf("%064x", index), "rootfs")
+		if err := os.MkdirAll(paths[index], 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(paths[0], "value"), []byte("mounted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "state")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mountDir, lowerDirs, err := compactOverlayLowerDirs(state, strings.Join(paths, ":"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"upper", "work", "merged"} {
+		if err := os.Mkdir(filepath.Join(state, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	options := strings.Join([]string{
+		"lowerdir=" + lowerDirs,
+		"upperdir=" + filepath.Join(state, "upper"),
+		"workdir=" + filepath.Join(state, "work"),
+		"userxattr",
+	}, ",")
+	script := `mount -t overlay overlay -o "$1" "$2" && test "$(cat "$2/value")" = mounted`
+	command := nativeNamespaceCommand("/bin/sh", []string{"-c", script, "sh", options, filepath.Join(state, "merged")}, namespaceOptions{})
+	command.Dir = mountDir
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("mount compact lower directories: %v: %s", err, output)
+	}
+}
+
 func TestCompactOverlayLowerDirsRejectsAnUnrelatedPath(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "layers")
 	lowerDirs := strings.Join([]string{
@@ -125,7 +198,10 @@ func TestCompactOverlayLowerDirsRejectsAnUnrelatedPath(t *testing.T) {
 		filepath.Join(filepath.Dir(base), "elsewhere", "rootfs"),
 	}, ":")
 
-	mountDir, compact := compactOverlayLowerDirs(lowerDirs)
+	mountDir, compact, err := compactOverlayLowerDirs(t.TempDir(), lowerDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if mountDir != "" || compact != lowerDirs {
 		t.Fatalf("unrelated lower directories were compacted: dir=%q paths=%q", mountDir, compact)
 	}

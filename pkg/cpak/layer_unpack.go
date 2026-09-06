@@ -22,6 +22,7 @@ const (
 	mediaOCILayerTar     = "application/vnd.oci.image.layer.v1.tar"
 	mediaOCILayerGzip    = "application/vnd.oci.image.layer.v1.tar+gzip"
 	mediaOCILayerZstd    = "application/vnd.oci.image.layer.v1.tar+zstd"
+	mediaDockerLayerTar  = "application/vnd.docker.image.rootfs.diff.tar"
 	mediaDockerLayerGzip = "application/vnd.docker.image.rootfs.diff.tar.gzip"
 )
 
@@ -199,7 +200,7 @@ func selectedLayerEntry(name string, prefixes []string) (include, direct bool) {
 
 func layerReader(reader io.Reader, mediaType string) (io.Reader, func() error, error) {
 	switch mediaType {
-	case mediaOCILayerTar, "":
+	case mediaOCILayerTar, mediaDockerLayerTar, "":
 		return reader, func() error { return nil }, nil
 	case mediaOCILayerGzip, mediaDockerLayerGzip:
 		decoded, err := gzip.NewReader(reader)
@@ -219,11 +220,12 @@ func layerReader(reader io.Reader, mediaType string) (io.Reader, func() error, e
 }
 
 func layerEntryPath(name string) (string, error) {
-	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.TrimLeft(strings.ReplaceAll(name, "\\", "/"), "/")
+	clean := path.Clean(name)
 	if clean == "." {
 		return "", nil
 	}
-	if strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") {
+	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("unpack layer: path escapes root: %q", name)
 	}
 	if clean == "dev" || strings.HasPrefix(clean, "dev/") {

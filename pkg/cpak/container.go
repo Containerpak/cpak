@@ -611,7 +611,10 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	if mapSystemIDs {
 		cmds = append(cmds, "--map-system-ids")
 	}
-	mountDir, lowerDirs := compactOverlayLowerDirs(container.FVSLayerMountPath)
+	mountDir, lowerDirs, err := compactOverlayLowerDirs(container.StatePath, container.FVSLayerMountPath)
+	if err != nil {
+		return "", 0, "", err
+	}
 	cmds = append(cmds, "--lower-dir", lowerDirs)
 	cmds = append(cmds, "--ready-fd", "3")
 	cmds = append(cmds, "--exec-socket", container.ExecSocketPath)
@@ -939,25 +942,40 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	return
 }
 
-func compactOverlayLowerDirs(lowerDirs string) (string, string) {
+func compactOverlayLowerDirs(statePath, lowerDirs string) (string, string, error) {
 	paths := strings.Split(lowerDirs, ":")
 	if len(paths) < 2 {
-		return "", lowerDirs
+		return "", lowerDirs, nil
 	}
 	base := filepath.Dir(filepath.Dir(paths[0]))
 	compact := make([]string, 0, len(paths))
 	for _, current := range paths {
 		relative, err := filepath.Rel(base, current)
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || strings.Contains(relative, ":") {
-			return "", lowerDirs
+			return "", lowerDirs, nil
 		}
 		compact = append(compact, relative)
 	}
 	joined := strings.Join(compact, ":")
 	if len(joined) >= len(lowerDirs) {
-		return "", lowerDirs
+		return "", lowerDirs, nil
 	}
-	return base, joined
+	if len(joined) < os.Getpagesize()-512 {
+		return base, joined, nil
+	}
+
+	aliasDir := filepath.Join(statePath, "overlay-lower")
+	if err := os.Mkdir(aliasDir, 0o700); err != nil {
+		return "", "", fmt.Errorf("create compact overlay paths: %w", err)
+	}
+	aliases := make([]string, len(paths))
+	for index, current := range paths {
+		aliases[index] = strconv.Itoa(index)
+		if err := os.Symlink(current, filepath.Join(aliasDir, aliases[index])); err != nil {
+			return "", "", fmt.Errorf("create compact overlay path: %w", err)
+		}
+	}
+	return aliasDir, strings.Join(aliases, ":"), nil
 }
 
 func containerNamespaceOptions(override types.Override) namespaceOptions {
