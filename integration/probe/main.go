@@ -65,6 +65,12 @@ func main() {
 		err = openBrowser(argument(2))
 	case "browser-read":
 		err = readBrowserLog()
+	case "open-local-file":
+		err = probeOpenLocalFile("xdg-open")
+	case "gio-open-local-file":
+		err = probeOpenLocalFile("gio")
+	case "open-local-folder":
+		err = probeOpenLocalFolder()
 	case "persistence-write":
 		err = probePersistence(true)
 	case "persistence-read":
@@ -84,6 +90,45 @@ func main() {
 		fail(err.Error())
 	}
 	fmt.Printf("%s probe passed\n", os.Args[1])
+}
+
+func probeOpenLocalFile(commandName string) error {
+	downloads, file, err := prepareLocalOpenFixture()
+	if err != nil {
+		return err
+	}
+	command := exec.Command("/usr/local/bin/"+commandName, file)
+	if commandName == "gio" {
+		command = exec.Command("/usr/local/bin/gio", "open", file)
+	}
+	command.Dir = downloads
+	return command.Run()
+}
+
+func probeOpenLocalFolder() error {
+	downloads, _, err := prepareLocalOpenFixture()
+	if err != nil {
+		return err
+	}
+	command := exec.Command("/usr/local/bin/xdg-open", ".")
+	command.Dir = downloads
+	return command.Run()
+}
+
+func prepareLocalOpenFixture() (string, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", err
+	}
+	downloads := filepath.Join(home, "Downloads")
+	if err = os.MkdirAll(downloads, 0700); err != nil {
+		return "", "", err
+	}
+	file := filepath.Join(downloads, "cpak-open-local-file.txt")
+	if err = os.WriteFile(file, []byte("cpak local file integration\n"), 0600); err != nil {
+		return "", "", err
+	}
+	return downloads, file, nil
 }
 
 func probeSeccomp() error {

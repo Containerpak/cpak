@@ -252,6 +252,15 @@ mkdir -p "$work/cli" "$work/helpers"
 cp "$root/out/cpak" "$work/cli/cpak"
 cp "$root/out/cpak-storaged" "$work/helpers/cpak-storaged"
 chmod 0755 "$work/cli/cpak" "$work/helpers/cpak-storaged"
+cat >"$work/helpers/xdg-open" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+	http://*|https://*|mailto:*) exec /usr/bin/xdg-open "$@" ;;
+esac
+printf '%s\n' "${1:-}" >>"$CPAK_INTEGRATION_OPEN_LOG"
+EOF
+chmod 0755 "$work/helpers/xdg-open"
+export CPAK_INTEGRATION_OPEN_LOG="$work/open-local-paths.log"
 PATH="$work/helpers:$PATH"
 export PATH
 cpak="$work/cli/cpak"
@@ -470,6 +479,47 @@ fi
 xdg_url="https://example.com/cpak-xdg-open"
 gio_url="https://example.com/cpak-gio-open"
 warm_url="https://example.com/cpak-xdg-open-warm"
+run_command "$uri_origin" open-local-file
+run_command "$uri_origin" gio-open-local-file
+run_command "$uri_origin" open-local-folder
+uri_private_home=$(python3 - "$broker_runtime/policies" "$HOME" <<'PY'
+import json
+import pathlib
+import sys
+
+directory = pathlib.Path(sys.argv[1])
+home = sys.argv[2]
+matches = []
+for path in directory.iterdir():
+    policy = json.loads(path.read_text(encoding="utf-8"))
+    if not policy.get("allow_open_uri"):
+        continue
+    for grant in policy.get("open_uri_paths", []):
+        if grant.get("target") == home:
+            matches.append(grant["source"])
+if len(matches) != 1:
+    raise SystemExit(f"expected one URI private home mapping, found {len(matches)}")
+print(matches[0])
+PY
+)
+expected_file="$uri_private_home/Downloads/cpak-open-local-file.txt"
+for attempt in $(seq 1 100); do
+	if [ -f "$CPAK_INTEGRATION_OPEN_LOG" ] && [ "$(wc -l <"$CPAK_INTEGRATION_OPEN_LOG")" -eq 3 ]; then
+		break
+	fi
+	if [ "$attempt" -eq 100 ]; then
+		echo "local file handoff did not reach the host backend" >&2
+		exit 1
+	fi
+	sleep 0.05
+done
+printf '%s\n%s\n%s\n' "$expected_file" "$expected_file" "$uri_private_home/Downloads" >"$work/expected-open-local-paths.log"
+sort "$work/expected-open-local-paths.log" >"$work/expected-open-local-paths.sorted"
+sort "$CPAK_INTEGRATION_OPEN_LOG" >"$work/open-local-paths.sorted"
+if ! cmp "$work/expected-open-local-paths.sorted" "$work/open-local-paths.sorted"; then
+	echo "local file handoff used the wrong host paths" >&2
+	exit 1
+fi
 if ! timeout -k 5s 15s "$cpak" run "$uri_origin" @/usr/local/bin/xdg-open -- "$xdg_url"; then
 	echo "xdg-open URI handoff did not return" >&2
 	exit 1
