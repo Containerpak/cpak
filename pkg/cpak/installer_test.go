@@ -125,7 +125,14 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(entryPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example --test %U\nTryExec=/usr/bin/example\n"), 0644); err != nil {
+	if err := os.WriteFile(entryPath, []byte("[Desktop Entry]\nName=Example\nExec=/usr/bin/example --test %U\nTryExec=/usr/bin/example\nIcon=example-client\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	iconPath := filepath.Join(layerDir, "usr", "share", "example", "icons", "example-linux-128.png")
+	if err := os.MkdirAll(filepath.Dir(iconPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(iconPath, []byte("example icon"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,6 +175,17 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	if !strings.Contains(string(content), "TryExec="+launcher) {
 		t.Fatalf("desktop entry checks guest binary availability: %q", content)
 	}
+	exportedIcon := filepath.Join(os.Getenv("HOME"), ".local", "share", "icons", applicationExportID(app)+".png")
+	if desktopEntryValue(content, "Icon") != exportedIcon {
+		t.Fatalf("desktop entry does not use its exported icon: %q", content)
+	}
+	icon, err := os.ReadFile(exportedIcon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(icon) != "example icon" {
+		t.Fatalf("exported icon: got %q", icon)
+	}
 	alias := originalDesktopEntryExportPath(entry)
 	aliasContent, err := os.ReadFile(alias)
 	if err != nil {
@@ -187,6 +205,30 @@ func TestExportDesktopEntryUsesDiscoverableApplicationID(t *testing.T) {
 	}
 	if _, err := os.Stat(legacyIcon); !os.IsNotExist(err) {
 		t.Fatalf("legacy icon still exists: %s", legacyIcon)
+	}
+}
+
+func TestFindFVSIconMatchesVendorIconNames(t *testing.T) {
+	entries := map[string]fvsViewEntry{
+		"opt/brave.com/brave/product_logo_128.png":              {},
+		"usr/share/code/resources/app/extensions/demo/icon.svg": {},
+		"usr/share/pixmaps/barcode.png":                         {},
+		"usr/share/pixmaps/vscode.png":                          {},
+		"usr/share/spotify/icons/spotify-linux-128.png":         {},
+		"usr/share/spotify/icons/spotify-linux-512.png":         {},
+		"usr/share/applications/not-an-icon.desktop":            {},
+	}
+
+	cases := map[string]string{
+		"brave-browser":      "opt/brave.com/brave/product_logo_128.png",
+		"spotify-client":     "usr/share/spotify/icons/spotify-linux-128.png",
+		"visual-studio-code": "usr/share/pixmaps/vscode.png",
+		"unrelated-client":   "",
+	}
+	for icon, want := range cases {
+		if got := findFVSIcon(entries, icon); got != want {
+			t.Fatalf("icon %q: got %q, want %q", icon, got, want)
+		}
 	}
 }
 

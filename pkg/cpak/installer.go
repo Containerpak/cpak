@@ -740,6 +740,59 @@ func findFVSIcon(entries map[string]fvsViewEntry, iconName string) string {
 			iconScore = score
 		}
 	}
+	if iconPath != "" {
+		return iconPath
+	}
+
+	tokens := strings.FieldsFunc(strings.ToLower(iconName), func(r rune) bool {
+		return r == '-' || r == '_' || r == '.'
+	})
+	aliases := make([]string, 0, len(tokens)+2)
+	for _, token := range tokens {
+		if len(token) >= 3 && token != "app" && token != "browser" && token != "client" && token != "desktop" {
+			aliases = append(aliases, token)
+		}
+	}
+	if len(aliases) > 1 {
+		joined := strings.Join(aliases, "")
+		abbreviated := ""
+		for index, alias := range aliases {
+			if index == len(aliases)-1 {
+				abbreviated += alias
+			} else {
+				abbreviated += alias[:1]
+			}
+		}
+		aliases = append(aliases, joined, abbreviated)
+	}
+	for name := range entries {
+		base := path.Base(name)
+		extension := strings.ToLower(path.Ext(base))
+		if extension != ".png" && extension != ".svg" && extension != ".xpm" {
+			continue
+		}
+		stem := strings.ToLower(strings.TrimSuffix(base, extension))
+		directory := strings.ToLower(path.Dir(name))
+		score := 0
+		for _, alias := range aliases {
+			if stem == alias || strings.HasPrefix(stem, alias+"-") || strings.HasPrefix(stem, alias+"_") {
+				score += 10000 + len(alias)
+			} else if (strings.Contains("/"+directory+"/", "/"+alias+"/") || strings.Contains("/"+directory+"/", "/"+alias+".")) &&
+				(strings.Contains(stem, "icon") || strings.Contains(stem, "logo")) {
+				score += 1000 + len(alias)
+			}
+		}
+		if score == 0 {
+			continue
+		}
+		if directory == "usr/share/pixmaps" || strings.HasPrefix(directory, "usr/share/icons/") {
+			score += 1000000
+		}
+		if score > iconScore || score == iconScore && name < iconPath {
+			iconPath = name
+			iconScore = score
+		}
+	}
 	return iconPath
 }
 
