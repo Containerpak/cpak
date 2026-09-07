@@ -5,6 +5,7 @@
 package cpak
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -251,8 +252,31 @@ func manifestDigest(manifest *types.CpakManifest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return digestBytes(data), nil
+}
+
+func manifestDigests(manifest *types.CpakManifest) ([]string, error) {
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+	digests := []string{digestBytes(data)}
+	if manifest.Override.Clipboard.Enabled() {
+		return digests, nil
+	}
+	// Releases before clipboard grants signed this same struct without its
+	// empty clipboard field. Keep that digest checkable without widening it.
+	if bytes.Count(data, []byte(`,"clipboard":{}`)) != 1 {
+		return digests, nil
+	}
+	legacy := bytes.Replace(data, []byte(`,"clipboard":{}`), nil, 1)
+	digests = append(digests, digestBytes(legacy))
+	return digests, nil
+}
+
+func digestBytes(data []byte) string {
 	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
+	return hex.EncodeToString(digest[:])
 }
 
 func resolveDependencyOrigin(parentOrigin, dependencyOrigin string) (string, error) {

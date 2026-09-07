@@ -135,6 +135,24 @@ func PackageState(origin string, manifest *types.CpakManifest, imageDigest strin
 	return state, nil
 }
 
+func packageStates(origin string, manifest *types.CpakManifest, imageDigest string, lock *types.ManifestLock) ([]signature.State, error) {
+	state, err := PackageState(origin, manifest, imageDigest, lock)
+	if err != nil {
+		return nil, err
+	}
+	digests, err := manifestDigests(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("name the state of %s: %w", origin, err)
+	}
+	states := make([]signature.State, 0, len(digests))
+	for _, digest := range digests {
+		candidate := state
+		candidate.ManifestSHA256 = digest
+		states = append(states, candidate)
+	}
+	return states, nil
+}
+
 // FetchPackageSignature returns the signature bundle a registry holds against
 // one resolved image, and false when it holds none.
 //
