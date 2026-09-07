@@ -858,6 +858,26 @@ func TestPrivateApplicationHomeIsPersistentAndRestricted(t *testing.T) {
 	}
 }
 
+func TestSystemBrokerOpenURIPathsMapThePrivateHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
+	paths, err := cp.systemBrokerOpenURIPaths("application-id", types.Override{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("open URI paths: %+v", paths)
+	}
+	want, err := cp.privateApplicationHome("application-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths[0].Source != want || paths[0].Target != home {
+		t.Fatalf("private home mapping: %+v", paths[0])
+	}
+}
+
 func TestApplicationDataPathRejectsParentDirectory(t *testing.T) {
 	cp := Cpak{Options: Options{StorePath: t.TempDir()}}
 	if _, err := cp.applicationDataPath(".."); err == nil {

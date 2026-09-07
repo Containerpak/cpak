@@ -5,10 +5,33 @@
 package systembroker
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/creack/pty"
 )
+
+func TestOpenURIShimCarriesItsWorkingDirectory(t *testing.T) {
+	directory := t.TempDir()
+	request, err := parseOpenURI([]string{"."}, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.URI != "." || request.WorkingDirectory != filepath.Clean(directory) {
+		t.Fatalf("open URI request: %+v", request)
+	}
+}
+
+func TestGIOOpenCarriesItsWorkingDirectory(t *testing.T) {
+	directory := t.TempDir()
+	request, err := parseGIOOpen([]string{"open", "download.txt"}, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.URI != "download.txt" || request.WorkingDirectory != filepath.Clean(directory) {
+		t.Fatalf("GIO request: %+v", request)
+	}
+}
 
 func TestCpakShimReadsTerminalSize(t *testing.T) {
 	master, slave, err := pty.Open()

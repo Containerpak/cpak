@@ -53,6 +53,7 @@ type Options struct {
 	Token                 string
 	AllowNotify           bool
 	AllowOpenURI          bool
+	OpenURIPaths          []OpenURIPathGrant
 	DesktopEnvironment    []string
 	AllowHostApplications bool
 	OpenURICommand        string
@@ -90,6 +91,11 @@ func (o Options) validate() error {
 	}
 	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && len(o.CpakCapabilities) == 0 && !o.FilePicker.Enabled() {
 		return errors.New("system broker has no enabled operations")
+	}
+	for _, path := range o.OpenURIPaths {
+		if !validOpenURIPathGrant(path) {
+			return errors.New("system broker open URI path is invalid")
+		}
 	}
 	if o.AllowHostApplications {
 		if err := validateRuntimeDirectory(o.RuntimeDirectory); err != nil {
@@ -273,14 +279,15 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 		if err := decodePayload(request.Payload, &openURI); err != nil {
 			return 0, err
 		}
-		if err := validateOpenURI(openURI); err != nil {
+		argument, err := resolveOpenURI(openURI, options.OpenURIPaths)
+		if err != nil {
 			return 0, err
 		}
 		path, err := exec.LookPath(options.openURICommand())
 		if err != nil {
 			return 0, fmt.Errorf("system integration backend is unavailable: %s", options.openURICommand())
 		}
-		command := exec.Command(path, openURI.URI)
+		command := exec.Command(path, argument)
 		environment := append([]string{}, options.DesktopEnvironment...)
 		if openURI.ActivationToken != "" {
 			environment = append(environment, "XDG_ACTIVATION_TOKEN="+openURI.ActivationToken)
@@ -590,19 +597,80 @@ func validateDesktopEnvironment(environment []string) error {
 }
 
 func validateOpenURI(request OpenURIRequest) error {
-	if len(request.URI) > 4096 || strings.ContainsRune(request.URI, '\x00') || len(request.ActivationToken) > 4096 || strings.ContainsAny(request.ActivationToken, "\x00\r\n") {
+	if request.URI == "" || len(request.URI) > 4096 || strings.ContainsRune(request.URI, '\x00') || len(request.WorkingDirectory) > 4096 || strings.ContainsRune(request.WorkingDirectory, '\x00') || len(request.ActivationToken) > 4096 || strings.ContainsAny(request.ActivationToken, "\x00\r\n") {
 		return errors.New("invalid URI request")
 	}
 	parsed, err := url.ParseRequestURI(request.URI)
-	if err != nil || parsed.Scheme == "" {
+	if err == nil && parsed.Scheme != "" {
+		switch strings.ToLower(parsed.Scheme) {
+		case "http", "https", "mailto":
+			return nil
+		default:
+			return errors.New("URI scheme is not permitted")
+		}
+	}
+	if !filepath.IsAbs(request.URI) && (!filepath.IsAbs(request.WorkingDirectory) || filepath.Clean(request.WorkingDirectory) != request.WorkingDirectory) {
 		return errors.New("invalid URI request")
 	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https", "mailto":
-		return nil
-	default:
-		return errors.New("URI scheme is not permitted")
+	return nil
+}
+
+func resolveOpenURI(request OpenURIRequest, paths []OpenURIPathGrant) (string, error) {
+	if err := validateOpenURI(request); err != nil {
+		return "", err
 	}
+	parsed, err := url.ParseRequestURI(request.URI)
+	if err == nil && parsed.Scheme != "" {
+		return request.URI, nil
+	}
+	selected := request.URI
+	if !filepath.IsAbs(selected) {
+		selected = filepath.Join(request.WorkingDirectory, selected)
+	}
+	selected = filepath.Clean(selected)
+	grant, relative, found := matchingOpenURIPathGrant(selected, paths)
+	if !found {
+		return "", errors.New("opening this local path is not permitted")
+	}
+	root, err := filepath.EvalSymlinks(grant.Source)
+	if err != nil {
+		return "", errors.New("opening this local path is not permitted")
+	}
+	candidate := root
+	if relative != "." {
+		candidate = filepath.Join(root, relative)
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil || !pathWithin(root, resolved) {
+		return "", errors.New("opening this local path is not permitted")
+	}
+	return resolved, nil
+}
+
+func validOpenURIPathGrant(grant OpenURIPathGrant) bool {
+	return filepath.IsAbs(grant.Source) && filepath.Clean(grant.Source) == grant.Source && filepath.IsAbs(grant.Target) && filepath.Clean(grant.Target) == grant.Target
+}
+
+func matchingOpenURIPathGrant(selected string, paths []OpenURIPathGrant) (OpenURIPathGrant, string, bool) {
+	var match OpenURIPathGrant
+	matchRelative := ""
+	for _, grant := range paths {
+		relative, err := filepath.Rel(grant.Target, selected)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if match.Target == "" || len(grant.Target) > len(match.Target) {
+			match = grant
+			matchRelative = relative
+		}
+	}
+	return match, matchRelative, match.Target != ""
+
+}
+
+func pathWithin(root, selected string) bool {
+	relative, err := filepath.Rel(root, selected)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func authorizePeer(connection *net.UnixConn) error {

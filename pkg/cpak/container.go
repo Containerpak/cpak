@@ -280,7 +280,11 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 				return types.Container{}, err
 			}
 		}
-		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, app.Name, app.Origin, override, container.StatePath, container.GrantSocketPath)
+		dataID := container.DataID
+		if dataID == "" {
+			dataID = app.CpakId
+		}
+		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, app.Name, app.Origin, dataID, override, container.StatePath, container.GrantSocketPath)
 		if err != nil {
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
@@ -1930,7 +1934,7 @@ func getNested() (token string, nested bool) {
 
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
 const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
-const systemBrokerSocketName = "system-broker-v3.sock"
+const systemBrokerSocketName = "system-broker-v4.sock"
 
 func createSystemBrokerRuntime(statePath string) (string, string, error) {
 	socketPath, err := sharedSystemBrokerSocketPath()
@@ -2147,7 +2151,7 @@ func systemBrokerPolicyDirectory() (string, error) {
 	return directory, nil
 }
 
-func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, filePickerApplication, filePickerOrigin string, override types.Override, statePath, grantSocketPath string) (string, error) {
+func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, filePickerApplication, filePickerOrigin, dataID string, override types.Override, statePath, grantSocketPath string) (string, error) {
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return "", fmt.Errorf("read system broker token: %w", err)
@@ -2176,9 +2180,17 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 			return "", err
 		}
 	}
+	openURIPaths := []systembroker.OpenURIPathGrant(nil)
+	if override.OpenURI {
+		openURIPaths, err = c.systemBrokerOpenURIPaths(dataID, override)
+		if err != nil {
+			return "", err
+		}
+	}
 	policy := systembroker.Policy{
 		AllowNotify:           override.Notification,
 		AllowOpenURI:          override.OpenURI,
+		OpenURIPaths:          openURIPaths,
 		AllowHostApplications: override.HostApplications,
 		Applications:          applications,
 		RuntimeDirectory:      desktopRuntime,
@@ -2207,6 +2219,29 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 		return "", err
 	}
 	return systembroker.PolicyPath(directory, string(token))
+}
+
+func (c *Cpak) systemBrokerOpenURIPaths(dataID string, override types.Override) ([]systembroker.OpenURIPathGrant, error) {
+	filePickerPaths, err := systemBrokerFilePickerPaths(override.Filesystem)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]systembroker.OpenURIPathGrant, 0, len(filePickerPaths)+1)
+	for _, path := range filePickerPaths {
+		paths = append(paths, systembroker.OpenURIPathGrant{Source: path.Source, Target: path.Target})
+	}
+	if filesystemIncludesHostHome(override) {
+		return paths, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve user home: %w", err)
+	}
+	privateHome, err := c.privateApplicationHome(dataID)
+	if err != nil {
+		return nil, err
+	}
+	return append(paths, systembroker.OpenURIPathGrant{Source: privateHome, Target: filepath.Clean(home)}), nil
 }
 
 func systemBrokerFilePickerPaths(permissions []types.FilesystemPermission) ([]systembroker.FilePickerPathGrant, error) {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -74,6 +75,25 @@ func TestCatalogPreservesFilePickerApplication(t *testing.T) {
 	}
 	if options.FilePickerApplication != policy.FilePickerApplication {
 		t.Fatalf("application: %q", options.FilePickerApplication)
+	}
+}
+
+func TestCatalogPreservesOpenURIPaths(t *testing.T) {
+	directory := t.TempDir()
+	token := strings.Repeat("j", 64)
+	policy := Policy{
+		AllowOpenURI: true,
+		OpenURIPaths: []OpenURIPathGrant{{Source: "/private/home", Target: "/home/user"}},
+	}
+	if err := WritePolicy(directory, token, policy); err != nil {
+		t.Fatal(err)
+	}
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(options.OpenURIPaths, policy.OpenURIPaths) {
+		t.Fatalf("open URI paths: %+v", options.OpenURIPaths)
 	}
 }
 
