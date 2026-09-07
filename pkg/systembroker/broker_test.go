@@ -71,11 +71,140 @@ func TestCallUsesOnlyPermittedOperations(t *testing.T) {
 	if err := client.OpenURI(context.Background(), OpenURIRequest{URI: "https://usecpak.org"}); err != nil {
 		t.Fatalf("URI request: %v", err)
 	}
-	if err := client.OpenURI(context.Background(), OpenURIRequest{URI: "file:///home/user/private"}); err == nil {
-		t.Fatal("file URI was accepted")
+	if err := client.OpenURI(context.Background(), OpenURIRequest{URI: "/home/user/private"}); err == nil {
+		t.Fatal("unmapped local path was accepted")
 	}
 	if err := client.call(context.Background(), "exec", map[string]string{"command": "id"}); err == nil {
 		t.Fatal("arbitrary operation was accepted")
+	}
+}
+
+func TestOpenURIShimsOpenMappedContainerFiles(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		shim string
+		args []string
+	}{
+		{name: "xdg-open", shim: "xdg-open", args: []string{"/home/user/Downloads/report.txt"}},
+		{name: "gio open", shim: "gio", args: []string{"open", "/home/user/Downloads/report.txt"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			source := filepath.Join(directory, "private-home")
+			if err := os.MkdirAll(filepath.Join(source, "Downloads"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			selected := filepath.Join(source, "Downloads", "report.txt")
+			if err := os.WriteFile(selected, []byte("report"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(directory, "opened")
+			backend := filepath.Join(directory, "open-uri")
+			if err := os.WriteFile(backend, []byte("#!/bin/sh\nprintf '%s' \"$1\" > \""+output+"\"\n"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			options := testOptions(t)
+			options.OpenURICommand = backend
+			options.OpenURIPaths = []OpenURIPathGrant{{Source: source, Target: "/home/user"}}
+			startBroker(t, options)
+			if err := InvokeShim(context.Background(), options.SocketPath, options.Token, test.shim, test.args, nil, nil, io.Discard, io.Discard, false); err != nil {
+				t.Fatal(err)
+			}
+			waitForFileContent(t, output, selected)
+		})
+	}
+}
+
+func TestOpenURIOpensMappedWorkingDirectory(t *testing.T) {
+	directory := t.TempDir()
+	downloads := filepath.Join(directory, "private-home", "Downloads")
+	if err := os.MkdirAll(downloads, 0700); err != nil {
+		t.Fatal(err)
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(directory, "opened")
+	backend := filepath.Join(directory, "open-uri")
+	if err := os.WriteFile(backend, []byte("#!/bin/sh\nprintf '%s' \"$1\" > \""+output+"\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	options := testOptions(t)
+	options.OpenURICommand = backend
+	options.OpenURIPaths = []OpenURIPathGrant{{Source: downloads, Target: workingDirectory}}
+	startBroker(t, options)
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "xdg-open", []string{"."}, nil, nil, io.Discard, io.Discard, false); err != nil {
+		t.Fatal(err)
+	}
+	waitForFileContent(t, output, downloads)
+}
+
+func TestOpenURIRejectsMappedPathEscapes(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "private-home")
+	outside := filepath.Join(directory, "outside.txt")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(source, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	options := testOptions(t)
+	options.OpenURIPaths = []OpenURIPathGrant{{Source: source, Target: "/home/user"}}
+	startBroker(t, options)
+	for _, request := range []OpenURIRequest{
+		{URI: "/home/user/../outside.txt", WorkingDirectory: "/home/user"},
+		{URI: "/home/user/escape", WorkingDirectory: "/home/user"},
+	} {
+		if err := testClient(options).OpenURI(context.Background(), request); err == nil {
+			t.Fatalf("mapped path escape was accepted: %+v", request)
+		}
+	}
+}
+
+func TestOpenURIUsesTheMostSpecificPathMapping(t *testing.T) {
+	directory := t.TempDir()
+	privateHome := filepath.Join(directory, "private-home")
+	hostDownloads := filepath.Join(directory, "host-downloads")
+	if err := os.MkdirAll(privateHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(hostDownloads, 0700); err != nil {
+		t.Fatal(err)
+	}
+	selected := filepath.Join(hostDownloads, "report.txt")
+	if err := os.WriteFile(selected, []byte("report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	paths := []OpenURIPathGrant{
+		{Source: privateHome, Target: "/home/user"},
+		{Source: hostDownloads, Target: "/home/user/Downloads"},
+	}
+	resolved, err := resolveOpenURI(OpenURIRequest{URI: "/home/user/Downloads/report.txt"}, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != selected {
+		t.Fatalf("mapped path: got %q, want %q", resolved, selected)
+	}
+}
+
+func waitForFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		content, err := os.ReadFile(path)
+		if err == nil && string(content) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("file content: got %q, want %q", content, want)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -340,10 +469,16 @@ func TestValidateURIArgs(t *testing.T) {
 			t.Fatalf("valid URI %q: %v", value, err)
 		}
 	}
-	for _, value := range []string{"/tmp/file", "file:///tmp/file", "javascript:alert(1)", "https://example.com\x00bad"} {
+	for _, value := range []string{"file:///tmp/file", "javascript:alert(1)", "https://example.com\x00bad"} {
 		if err := validateOpenURI(OpenURIRequest{URI: value}); err == nil {
 			t.Fatalf("invalid URI %q was accepted", value)
 		}
+	}
+	if err := validateOpenURI(OpenURIRequest{URI: "/tmp/file", WorkingDirectory: "/tmp"}); err != nil {
+		t.Fatalf("valid local path: %v", err)
+	}
+	if err := validateOpenURI(OpenURIRequest{URI: ".", WorkingDirectory: "/tmp"}); err != nil {
+		t.Fatalf("valid relative path: %v", err)
 	}
 	if err := validateOpenURI(OpenURIRequest{URI: "https://example.com", ActivationToken: "bad\ntoken"}); err == nil {
 		t.Fatal("invalid activation token was accepted")
@@ -351,7 +486,7 @@ func TestValidateURIArgs(t *testing.T) {
 }
 
 func TestParseGIOOpen(t *testing.T) {
-	request, err := parseGIOOpen([]string{"open", "https://usecpak.org"})
+	request, err := parseGIOOpen([]string{"open", "https://usecpak.org"}, "/tmp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +498,7 @@ func TestParseGIOOpen(t *testing.T) {
 		{"open", "https://one.example", "https://two.example"},
 		{"mime", "x-scheme-handler/https"},
 	} {
-		if _, err = parseGIOOpen(args); err == nil {
+		if _, err = parseGIOOpen(args, "/tmp"); err == nil {
 			t.Fatalf("accepted gio arguments %v", args)
 		}
 	}

@@ -184,7 +184,7 @@ func TestSpawnArgumentsPairTheHostSocketWithTheContainerAddress(t *testing.T) {
 	}
 }
 
-func TestSystemBrokerSocketDoesNotReuseTheLegacyProtocol(t *testing.T) {
+func TestSystemBrokerSocketDoesNotReuseAnOlderProtocol(t *testing.T) {
 	runtimeDirectory := t.TempDir()
 	if err := os.Chmod(runtimeDirectory, 0700); err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestSystemBrokerSocketDoesNotReuseTheLegacyProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("system broker socket path: %v", err)
 	}
-	if filepath.Base(path) != "system-broker-v3.sock" {
+	if filepath.Base(path) != "system-broker-v4.sock" {
 		t.Fatalf("system broker socket can reuse an incompatible service: %s", path)
 	}
 }

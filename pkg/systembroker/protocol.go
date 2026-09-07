@@ -7,7 +7,7 @@ package systembroker
 import "encoding/json"
 
 const (
-	ProtocolVersion = 2
+	ProtocolVersion = 3
 
 	ActionNotify            = "desktop.notify"
 	ActionOpenURI           = "desktop.open-uri"
@@ -49,8 +49,14 @@ type NotificationRequest struct {
 }
 
 type OpenURIRequest struct {
-	URI             string `json:"uri"`
-	ActivationToken string `json:"activation_token,omitempty"`
+	URI              string `json:"uri"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+	ActivationToken  string `json:"activation_token,omitempty"`
+}
+
+type OpenURIPathGrant struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
 }
 
 type LaunchApplicationRequest struct {

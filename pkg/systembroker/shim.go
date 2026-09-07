@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"golang.org/x/term"
@@ -24,14 +25,14 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 		}
 		return client.Notify(ctx, request)
 	case "xdg-open":
-		request, err := parseOpenURI(args)
+		request, err := parseOpenURI(args, currentWorkingDirectory())
 		if err != nil {
 			return err
 		}
 		request.ActivationToken = environment["XDG_ACTIVATION_TOKEN"]
 		return client.OpenURI(ctx, request)
 	case "gio":
-		request, err := parseGIOOpen(args)
+		request, err := parseGIOOpen(args, currentWorkingDirectory())
 		if err != nil {
 			return err
 		}
@@ -82,6 +83,11 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 	default:
 		return errors.New("unsupported system integration shim")
 	}
+}
+
+func currentWorkingDirectory() string {
+	directory, _ := os.Getwd()
+	return directory
 }
 
 func shimTerminalSize(input io.Reader, interactive bool) (uint16, uint16) {
@@ -147,18 +153,18 @@ func parseFilePicker(args []string) (FilePickerRequest, error) {
 	return request, nil
 }
 
-func parseGIOOpen(args []string) (OpenURIRequest, error) {
+func parseGIOOpen(args []string, workingDirectory string) (OpenURIRequest, error) {
 	if len(args) != 2 || args[0] != "open" {
 		return OpenURIRequest{}, errors.New("gio broker access is limited to one URI passed to gio open")
 	}
-	return parseOpenURI(args[1:])
+	return parseOpenURI(args[1:], workingDirectory)
 }
 
-func parseOpenURI(args []string) (OpenURIRequest, error) {
+func parseOpenURI(args []string, workingDirectory string) (OpenURIRequest, error) {
 	if len(args) != 1 {
 		return OpenURIRequest{}, errors.New("opening a URI requires one argument")
 	}
-	request := OpenURIRequest{URI: args[0]}
+	request := OpenURIRequest{URI: args[0], WorkingDirectory: workingDirectory}
 	if err := validateOpenURI(request); err != nil {
 		return OpenURIRequest{}, err
 	}
