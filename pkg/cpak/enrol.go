@@ -351,6 +351,22 @@ func (c *Cpak) enrolApplication(app types.Application, published PublishedPackag
 		return unsignedEnrolment(enrolment, fmt.Errorf("%w: %w", systemauthority.ErrSignatureRequired, found.Reason))
 	}
 	reportSignature(app.Origin, enrolment.UID, enrolment.Signature)
+	if signed != nil && published.Manifest != nil && signed.State.ManifestSHA256 != anchor.ManifestDigest {
+		digests, digestErr := manifestDigests(published.Manifest)
+		if digestErr != nil {
+			return undescribedEnrolment(enrolment, fmt.Errorf("hash the manifest of %s: %w", app.Origin, digestErr), "")
+		}
+		for _, digest := range digests {
+			if signed.State.ManifestSHA256 == digest {
+				anchor.ManifestDigest = digest
+				break
+			}
+		}
+		if anchor.ManifestDigest != signed.State.ManifestSHA256 {
+			return undescribedEnrolment(enrolment, fmt.Errorf("bind the signature of %s to its manifest", app.Origin), "")
+		}
+	}
+	enrolment.Anchor = anchor
 
 	if err = recordAnchor(anchor, &policy, signed); err != nil {
 		if errors.Is(err, systemauthority.ErrSignatureRequired) {
@@ -457,7 +473,7 @@ func (c *Cpak) heldSignature(origin string, uid uint32) EnrolmentSignature {
 // the signature then has to cover, so a wrong value produces a state no bundle
 // covers, which is a refusal and never an acceptance.
 func (c *Cpak) verifiedPackageSignature(app types.Application, published PublishedPackage) (*systemauthority.SignedState, error) {
-	state, err := PackageState(app.Origin, published.Manifest, app.ImageDigest, published.Lock)
+	states, err := packageStates(app.Origin, published.Manifest, app.ImageDigest, published.Lock)
 	if err != nil {
 		return nil, err
 	}
@@ -476,27 +492,30 @@ func (c *Cpak) verifiedPackageSignature(app types.Application, published Publish
 	var madeByAnother bool
 	var refusal error
 	for _, candidate := range attached {
-		state.Generation = candidate.generation
-		verified, verifyErr := verifySignature(candidate.bundle, state)
-		if verifyErr != nil {
-			if identity, mismatched := publisherMismatch(verifyErr); mismatched {
-				if !madeByAnother {
-					madeByAnother = true
-					foreign = identity.Repo
+		for _, unsigned := range states {
+			state := unsigned
+			state.Generation = candidate.generation
+			verified, verifyErr := verifySignature(candidate.bundle, state)
+			if verifyErr != nil {
+				if identity, mismatched := publisherMismatch(verifyErr); mismatched {
+					if !madeByAnother {
+						madeByAnother = true
+						foreign = identity.Repo
+					}
+					continue
+				}
+				if refusal == nil {
+					refusal = verifyErr
 				}
 				continue
 			}
-			if refusal == nil {
-				refusal = verifyErr
+			if verified.Identity.MatchesOrigin(app.Origin) {
+				return &systemauthority.SignedState{State: state, Bundle: candidate.bundle}, nil
 			}
-			continue
-		}
-		if verified.Identity.MatchesOrigin(app.Origin) {
-			return &systemauthority.SignedState{State: state, Bundle: candidate.bundle}, nil
-		}
-		if !madeByAnother {
-			madeByAnother = true
-			foreign = verified.Identity.Repo
+			if !madeByAnother {
+				madeByAnother = true
+				foreign = verified.Identity.Repo
+			}
 		}
 	}
 	// A signature that holds and was made by somebody else outranks one that
