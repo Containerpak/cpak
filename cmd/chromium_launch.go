@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -36,17 +37,47 @@ func (c *ChromiumLaunchCmd) Run() error {
 	if !filepath.IsAbs(userDataDir) {
 		return errors.New("Chromium user data directory must be absolute")
 	}
-	if !filepath.IsAbs(c.Executable) {
-		return errors.New("Chromium executable must be absolute")
+	cp, err := cpak.NewCpak()
+	if err != nil {
+		return err
 	}
-	forwarded, err := forwardChromiumSingleton(userDataDir, c.Executable, c.ExtraArgs)
+	executable, err := resolveChromiumExecutable(c.Executable, cp.Options.StorePath)
+	if err != nil {
+		return err
+	}
+	forwarded, err := forwardChromiumSingleton(userDataDir, executable, c.ExtraArgs)
 	if err != nil {
 		return err
 	}
 	if forwarded {
 		return nil
 	}
-	return syscall.Exec(c.Executable, append([]string{c.Executable}, c.ExtraArgs...), os.Environ())
+	return syscall.Exec(executable, append([]string{executable}, c.ExtraArgs...), os.Environ())
+}
+
+func resolveChromiumExecutable(executable, store string) (string, error) {
+	if !filepath.IsAbs(executable) {
+		return "", errors.New("Chromium executable must be absolute")
+	}
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve Chromium executable: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect Chromium executable: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+		return "", errors.New("Chromium executable must be an executable regular file")
+	}
+	store, err = filepath.EvalSymlinks(store)
+	if err != nil {
+		return "", fmt.Errorf("resolve cpak store: %w", err)
+	}
+	if pathWithin(store, resolved) {
+		return "", errors.New("Chromium executable cannot come from the cpak store; launch that package with cpak run")
+	}
+	return resolved, nil
 }
 
 func expandUserPath(path string) (string, error) {

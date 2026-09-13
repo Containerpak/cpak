@@ -394,7 +394,13 @@ func (c *Cpak) contentTree(root, path string) bool {
 		return true
 	case len(parts) >= 3 && parts[0] == "containers" && parts[2] == "rootfs":
 		return true
+	case len(parts) >= 3 && parts[0] == "application-data" && parts[2] == "home":
+		return true
+	case len(parts) >= 4 && parts[0] == "environments" && parts[2] == "root" && (parts[3] == "up" || parts[3] == "work"):
+		return true
 	case len(parts) >= 3 && parts[0] == "states" && (parts[2] == "up" || parts[2] == "work"):
+		return true
+	case len(parts) >= 6 && parts[0] == "storage" && parts[1] == "drivers" && parts[3] == "layers" && parts[5] == "rootfs":
 		return true
 	}
 	return false

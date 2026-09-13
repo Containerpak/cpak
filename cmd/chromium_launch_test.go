@@ -119,3 +119,45 @@ func TestExpandUserPath(t *testing.T) {
 		}
 	}
 }
+
+func TestChromiumExecutableCannotComeFromTheCpakStore(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "store")
+	executable := filepath.Join(store, "storage", "drivers", "fvs", "layers", "layer", "rootfs", "opt", "chrome")
+	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, nil, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveChromiumExecutable(executable, store); err == nil {
+		t.Fatal("an executable inside the cpak store was accepted")
+	}
+
+	link := filepath.Join(root, "chrome")
+	if err := os.Symlink(executable, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveChromiumExecutable(link, store); err == nil {
+		t.Fatal("a symlink into the cpak store was accepted")
+	}
+}
+
+func TestChromiumExecutableOutsideTheCpakStoreIsAccepted(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "store")
+	if err := os.Mkdir(store, 0700); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(root, "chrome")
+	if err := os.WriteFile(executable, nil, 0700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveChromiumExecutable(executable, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != executable {
+		t.Fatalf("resolved executable = %q, want %q", resolved, executable)
+	}
+}
