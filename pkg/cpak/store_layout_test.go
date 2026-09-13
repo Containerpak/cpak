@@ -155,13 +155,20 @@ func TestAuditTightensWhatTheStoreHelpersNeverWalk(t *testing.T) {
 	// by the installer: neither is a directory the store helpers walk.
 	deduplicated := c.Options.DaBaDeeStoreOptions.Root
 	exported := filepath.Join(c.Options.ExportsPath, "github.com", "containerpak")
-	// A container rootfs is the image's own tree, and the audit has no
-	// business deciding what the application sees inside it.
-	rootfs := c.GetInStoreDir("containers", "demo-container", "rootfs", "usr", "bin")
-	for _, path := range []string{deduplicated, exported, rootfs} {
+	content := []string{
+		c.GetInStoreDir("containers", "demo-container", "rootfs", "usr", "bin"),
+		c.GetInStoreDir("application-data", "demo-application", "home", ".config"),
+		c.GetInStoreDir("environments", "demo-environment", "root", "up", "var", "cache"),
+		c.GetInStoreDir("storage", "drivers", "fvs", "layers", "demo-layer", "rootfs", "usr", "bin"),
+	}
+	for _, path := range append([]string{deduplicated, exported}, content...) {
 		if err := os.MkdirAll(path, 0755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	blocked := filepath.Join(content[2], "partial")
+	if err := os.Mkdir(blocked, 0); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := c.Audit(true); err != nil {
@@ -169,12 +176,14 @@ func TestAuditTightensWhatTheStoreHelpersNeverWalk(t *testing.T) {
 	}
 
 	refuseOpenDirectories(t, deduplicated, exported, filepath.Dir(exported))
-	info, err := os.Stat(rootfs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0755 {
-		t.Fatalf("the audit rewrote what a container rootfs carries: %04o", info.Mode().Perm())
+	for _, path := range content {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0755 {
+			t.Fatalf("the audit rewrote what application content carries at %s: %04o", path, info.Mode().Perm())
+		}
 	}
 }
 
