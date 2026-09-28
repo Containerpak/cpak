@@ -36,9 +36,16 @@ var x11ServerSupportsDecorations = func(path string) bool {
 	output, err := exec.Command(path, "-help").CombinedOutput()
 	return err == nil && strings.Contains(string(output), "-decorate")
 }
+var x11ServerSupportsHiDPI = func(path string) bool {
+	output, err := exec.Command(path, "-help").CombinedOutput()
+	return err == nil && strings.Contains(string(output), "-hidpi")
+}
 
 func xwaylandArguments(path, authority string) []string {
 	arguments := []string{"-auth", authority, "-nolisten", "tcp", "-noreset", "-geometry", "1280x800"}
+	if x11ServerSupportsHiDPI(path) {
+		arguments = append(arguments, "-hidpi")
+	}
 	if x11ServerSupportsDecorations(path) {
 		arguments = append(arguments, "-decorate")
 	}
