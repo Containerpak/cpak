@@ -419,6 +419,21 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	probe := connectTestX11(t, container)
+	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor").CombinedOutput(); commandErr != nil {
+		t.Fatalf("wait for probe X11 display: %v\n%s", commandErr, output)
+	}
+	probe.Close()
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if exec.Command(wlrctl, "toplevel", "find").Run() != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if exec.Command(wlrctl, "toplevel", "find").Run() == nil {
+		t.Fatal("unused Xwayland display remained visible")
+	}
 	connection := connectTestX11(t, container)
 	screen := xproto.Setup(connection).DefaultScreen(connection)
 	window, err := xproto.NewWindowId(connection)
@@ -475,7 +490,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 		t.Fatalf("close isolated X11 display: %v\n%s", commandErr, output)
 	}
 	connection.Close()
-	deadline := time.Now().Add(4 * time.Second)
+	deadline = time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		if exec.Command(wlrctl, "toplevel", "find").Run() != nil {
 			break

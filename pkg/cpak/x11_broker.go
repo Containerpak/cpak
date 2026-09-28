@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -389,15 +390,21 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		})
 	}
 	var stopProxy func()
+	var activeClients atomic.Int64
+	var clientsAlive func() bool
+	if options.MixedWayland {
+		clientsAlive = func() bool { return activeClients.Load() > 0 }
+	}
 	err = x11bridge.Run(ctx, x11bridge.Options{
 		Nested: nested, HostToApp: options.HostToApp, AppToHost: options.AppToHost,
 		ServerAlive: func() bool {
 			return sameRecordedProcess(command.Process.Pid, serverStart) && sameContainerProcess(container, options.ContainerPid)
 		},
+		ClientsAlive:  clientsAlive,
 		StopContainer: stopDisplay,
 		Ready: func() error {
 			var proxyErr error
-			stopProxy, proxyErr = startX11ClientProxy(ctx, listener, serverDisplay)
+			stopProxy, proxyErr = startX11ClientProxy(ctx, listener, serverDisplay, &activeClients)
 			return proxyErr
 		},
 	})
@@ -407,7 +414,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 	return err
 }
 
-func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string) (func(), error) {
+func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string, active *atomic.Int64) (func(), error) {
 	proxy, err := net.FileListener(listener)
 	if err != nil {
 		return nil, err
@@ -420,12 +427,17 @@ func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string
 			if acceptErr != nil {
 				return
 			}
+			active.Add(1)
 			server, dialErr := net.Dial("unix", upstream)
 			if dialErr != nil {
 				_ = client.Close()
+				active.Add(-1)
 				continue
 			}
-			go proxyX11Connection(proxyContext, client, server)
+			go func() {
+				defer active.Add(-1)
+				proxyX11Connection(proxyContext, client, server)
+			}()
 		}
 	}()
 	return func() {

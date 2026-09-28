@@ -28,6 +28,7 @@ type Options struct {
 	HostToApp     bool
 	AppToHost     bool
 	ServerAlive   func() bool
+	ClientsAlive  func() bool
 	StopContainer func()
 	Ready         func() error
 }
@@ -305,12 +306,14 @@ func (b *broker) tick() bool {
 		b.primary = windows[0]
 		b.fitWindow(b.primary)
 		b.syncHostWindow()
-	} else if b.seenWindow {
+	} else if b.seenWindow || b.options.ClientsAlive != nil && !b.options.ClientsAlive() {
 		if b.closeAt.IsZero() {
 			b.closeAt = time.Now().Add(windowCloseGrace)
 		} else if time.Now().After(b.closeAt) {
 			return true
 		}
+	} else {
+		b.closeAt = time.Time{}
 	}
 	b.clipboard.poll()
 	return false
