@@ -62,6 +62,7 @@ type connectionState struct {
 	uniqueName       string
 	helloSerial      uint32
 	bluetoothReplies map[uint32]string
+	serviceReplies   map[uint32]string
 }
 
 func Serve(ctx context.Context, options Options) error {
@@ -174,7 +175,7 @@ func (p *Proxy) serveConnection(parent context.Context, raw *net.UnixConn) {
 	defer cancel()
 	client := &serializedConn{UnixConn: raw}
 	client.serial.Store(1 << 30)
-	state := &connectionState{bluetoothReplies: map[uint32]string{}}
+	state := &connectionState{bluetoothReplies: map[uint32]string{}, serviceReplies: map[uint32]string{}}
 	errorsChannel := make(chan error, 2)
 	go func() {
 		for {
@@ -313,6 +314,24 @@ func watchBusNameOwner(address, name string) (*dbus.Conn, chan *dbus.Signal, str
 func (p *Proxy) intercept(ctx context.Context, client *serializedConn, state *connectionState, message *dbus.Message) bool {
 	if p.options.Bluetooth {
 		return p.interceptBluetooth(client, state, message)
+	}
+	if state != nil && (message.Type == dbus.TypeMethodReply || message.Type == dbus.TypeError) {
+		// The answer to a call this proxy let in. Matched by serial and by the
+		// caller it is addressed to, so this carries nothing the client was not
+		// asked for.
+		replySerial, _ := headerValue[uint32](message, dbus.FieldReplySerial)
+		destination, _ := headerValue[string](message, dbus.FieldDestination)
+		if state.takeServiceReply(replySerial, destination) {
+			return false
+		}
+	}
+	if message.Type == dbus.TypeSignal && len(p.options.Policy.Own) > 0 {
+		// A published service reports its own changes by signal, and a peer
+		// that reads its properties once and never hears again shows stale
+		// state forever: a tray icon that never updates, a player stuck on one
+		// track. The bus stamps the real sender, so this cannot be used to
+		// impersonate anything, and a client owning nothing still emits none.
+		return false
 	}
 	if message.Type != dbus.TypeMethodCall {
 		// Default-deny used to cover method calls and nothing else, so a
@@ -520,7 +539,17 @@ func policyBusCallAllowed(policy types.DBusPolicy, destination string, path dbus
 		}
 		if (member == "ReleaseName" || member == "GetNameOwner" || member == "NameHasOwner") && len(body) == 1 {
 			name, ok := body[0].(string)
-			return ok && policy.AllowsOwn(name)
+			if !ok {
+				return false
+			}
+			// Asking whether a name has an owner tells the client nothing it
+			// could not learn by calling the name and reading the error, so a
+			// talk grant already implies it, and refusing it breaks callers
+			// that check before they call. Qt is one: it asks the daemon
+			// whether org.kde.StatusNotifierWatcher has an owner and, on no,
+			// builds no tray icon at all, so a granted talk to the watcher
+			// could never be used.
+			return policy.AllowsOwn(name) || policy.AllowsTalkTo(name)
 		}
 	}
 	return policy.AllowsCall(destination, string(path), interfaceName, member)
@@ -550,8 +579,42 @@ func restrictedUpstreamMessage(message *dbus.Message, policy types.DBusPolicy, n
 	return ok && (strings.HasPrefix(name, ":") || policy.AllowsOwn(name))
 }
 
+// Whether an inbound call is one the application asked to receive.
+//
+// Owning a bus name is the manifest saying the application publishes a
+// service, and a service exists to be called: a StatusNotifierItem is read
+// back by the tray host, an MPRIS player is read by the shell, a menu is read
+// by whatever draws it. Each of those is a method call travelling INTO the
+// sandbox, and dropping them leaves the application registered and mute:
+// a tray icon that is listed by the watcher, draws blank and ignores clicks.
+//
+// So a call is forwarded when the policy owns at least one name and the call
+// is addressed to this client: either a name it is allowed to own, or the
+// unique name the bus gave it, which is how a peer addresses a connection it
+// learned about by being handed it. Nothing else changes; a client owning
+// nothing still receives no calls at all.
+func (p *Proxy) inboundServiceCallAllowed(state *connectionState, message *dbus.Message) bool {
+	if state == nil || len(p.options.Policy.Own) == 0 {
+		return false
+	}
+	destination, _ := headerValue[string](message, dbus.FieldDestination)
+	if destination == "" {
+		return false
+	}
+	if p.options.Policy.AllowsOwn(destination) {
+		return true
+	}
+	client := state.clientName()
+	return client != "" && destination == client
+}
+
 func (p *Proxy) upstreamMessageAllowed(state *connectionState, message *dbus.Message) bool {
 	if !p.options.Bluetooth {
+		if message.Type == dbus.TypeMethodCall && p.inboundServiceCallAllowed(state, message) {
+			sender, _ := headerValue[string](message, dbus.FieldSender)
+			state.allowServiceReply(message.Serial(), sender)
+			return true
+		}
 		return restrictedUpstreamMessage(message, p.options.Policy, p.options.NetworkMonitor, p.currentPortalSender())
 	}
 	sender, _ := headerValue[string](message, dbus.FieldSender)
@@ -735,6 +798,24 @@ func (s *connectionState) clientName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.uniqueName
+}
+
+// A service the policy lets the application own is answered the same way a
+// BlueZ call is: the inbound call's serial is remembered with the caller that
+// sent it, and only a reply carrying that serial and addressed back to that
+// caller is allowed out. An unsolicited message still has nothing to travel on.
+func (s *connectionState) allowServiceReply(serial uint32, sender string) {
+	s.mu.Lock()
+	s.serviceReplies[serial] = sender
+	s.mu.Unlock()
+}
+
+func (s *connectionState) takeServiceReply(serial uint32, destination string) bool {
+	s.mu.Lock()
+	expected := s.serviceReplies[serial]
+	delete(s.serviceReplies, serial)
+	s.mu.Unlock()
+	return expected != "" && destination == expected
 }
 
 func (s *connectionState) allowBluetoothReply(serial uint32, sender string) {
