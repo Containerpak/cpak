@@ -280,6 +280,31 @@ func TestCreateSystemBrokerShimIsExecutable(t *testing.T) {
 	}
 }
 
+func TestCreateSystemBrokerSecretsShim(t *testing.T) {
+	rootfs := t.TempDir()
+	if err := (&SpawnCmd{}).createSystemBrokerShimAndLinks(rootfs, []string{"cpak-secrets"}); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(rootfs, "usr/local/bin/cpak-secrets")
+	target, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(rootfs, systemBrokerShimPath); target != want {
+		t.Fatalf("secrets shim: got %s, want %s", target, want)
+	}
+}
+
+func TestCreateSystemBrokerShimRejectsUnknownNames(t *testing.T) {
+	rootfs := t.TempDir()
+	if err := (&SpawnCmd{}).createSystemBrokerShimAndLinks(rootfs, []string{"cpak-secrets-other"}); err == nil {
+		t.Fatal("unknown system broker shim was accepted")
+	}
+	if _, err := os.Lstat(filepath.Join(rootfs, "usr/local/bin/cpak-secrets-other")); !os.IsNotExist(err) {
+		t.Fatalf("unknown shim left a link: %v", err)
+	}
+}
+
 func TestInstallOpenURIHandlerCreatesPrivateDesktopEntry(t *testing.T) {
 	rootfs := t.TempDir()
 	command := &SpawnCmd{}
