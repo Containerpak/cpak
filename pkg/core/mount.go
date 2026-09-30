@@ -176,6 +176,9 @@ func SystemBrokerShims(o types.Override) []string {
 	if len(types.HostActionCapabilities(o.HostActions, types.HostActionProviderCpak)) > 0 {
 		shims = append(shims, "cpak-host")
 	}
+	if len(types.HostActionCapabilities(o.HostActions, types.HostActionProviderSecrets)) > 0 {
+		shims = append(shims, "cpak-secrets")
+	}
 	return shims
 }
 

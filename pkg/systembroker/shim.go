@@ -6,6 +6,7 @@ package systembroker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -80,6 +81,23 @@ func InvokeShim(ctx context.Context, socketPath, token, shim string, args []stri
 			Rows:        rows,
 			Columns:     columns,
 		})
+	case "cpak-secrets":
+		if len(args) != 0 || stdin == nil {
+			return errors.New("secret requests must be passed through stdin")
+		}
+		data, err := io.ReadAll(io.LimitReader(stdin, maxRequestSize+1))
+		if err != nil || len(data) > maxRequestSize {
+			return errors.New("invalid secret request")
+		}
+		var request SecretRequest
+		if err := decodePayload(data, &request); err != nil {
+			return errors.New("invalid secret request")
+		}
+		result, err := client.Secrets(ctx, request)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(result)
 	default:
 		return errors.New("unsupported system integration shim")
 	}

@@ -21,6 +21,9 @@ func TestRenderSystemBrokerShimUsesOnlyTypedHostActions(t *testing.T) {
 	if !strings.Contains(shim, "cpak-host") {
 		t.Fatal("system broker shim does not expose typed cpak host actions")
 	}
+	if !strings.Contains(shim, "cpak-secrets") {
+		t.Fatal("system broker shim does not expose scoped secret actions")
+	}
 	if strings.Contains(shim, "hostexec-client") || strings.Contains(shim, "system-broker-client --operation") {
 		t.Fatal("system broker shim exposes the host command bridge")
 	}

@@ -448,8 +448,8 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 7
-const loginSessionRuntimePolicyVersion = 8
+const containerRuntimePolicyVersion = 8
+const loginSessionRuntimePolicyVersion = 9
 
 func containerRuntimeVersion(instance string) int {
 	if isSessionInstance(instance) {
@@ -2198,6 +2198,8 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 		ContainerCapabilities: capabilities,
 		ContainerPaths:        paths,
 		CpakCapabilities:      cpakCapabilities,
+		SecretCapabilities:    types.HostActionCapabilities(override.HostActions, types.HostActionProviderSecrets),
+		SecretOrigin:          filePickerOrigin,
 		FilePicker: systembroker.FilePickerPolicy{
 			OpenFile:         override.FilePicker.OpenFile,
 			OpenFolder:       override.FilePicker.OpenFolder,

@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	maxRequestSize = 16 << 10
+	maxRequestSize = 128 << 10
 )
 
 var desktopEnvironmentNames = []string{
@@ -65,6 +65,9 @@ type Options struct {
 	ContainerCapabilities map[string]bool
 	ContainerPaths        []ContainerPathGrant
 	CpakCapabilities      map[string]bool
+	SecretCapabilities    map[string]bool
+	SecretOrigin          string
+	Secrets               func(context.Context, string, SecretRequest) (SecretResult, error)
 	FilePicker            FilePickerPolicy
 	FilePickerPaths       []FilePickerPathGrant
 	FilePickerApplication string
@@ -89,7 +92,7 @@ func (o Options) validate() error {
 	if err := validateDesktopEnvironment(o.DesktopEnvironment); err != nil {
 		return err
 	}
-	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && len(o.CpakCapabilities) == 0 && !o.FilePicker.Enabled() {
+	if !o.AllowNotify && !o.AllowOpenURI && !o.AllowHostApplications && len(o.ContainerCapabilities) == 0 && len(o.CpakCapabilities) == 0 && len(o.SecretCapabilities) == 0 && !o.FilePicker.Enabled() {
 		return errors.New("system broker has no enabled operations")
 	}
 	for _, path := range o.OpenURIPaths {
@@ -135,6 +138,16 @@ func (o Options) validate() error {
 	for capability := range o.CpakCapabilities {
 		if capability != "read" && capability != "manage" && capability != "exec" {
 			return fmt.Errorf("unsupported cpak capability: %s", capability)
+		}
+	}
+	if len(o.SecretCapabilities) > 0 {
+		if o.SecretOrigin == "" || len(o.SecretOrigin) > 512 || strings.ContainsAny(o.SecretOrigin, "\x00\r\n") {
+			return errors.New("system broker secret origin is invalid")
+		}
+		for capability := range o.SecretCapabilities {
+			if capability != "read-owned" && capability != "write-owned" {
+				return errors.New("unsupported secret capability")
+			}
 		}
 	}
 	for _, path := range o.ContainerPaths {
@@ -206,6 +219,10 @@ func handleResolved(connection *net.UnixConn, authorize func(*net.UnixConn) erro
 		writer.fail("invalid system broker request")
 		return
 	}
+	if request.Action != ActionSecrets && len(line) > 16<<10 {
+		writer.fail("invalid system broker request")
+		return
+	}
 	options, err := resolve(request)
 	if err != nil {
 		writer.fail("system broker denied the request")
@@ -243,7 +260,7 @@ func authorizeRequest(request Request, token string) error {
 	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(token)) != 1 {
 		return errors.New("invalid system broker token")
 	}
-	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionFilePicker && request.Action != ActionContainers && request.Action != ActionCpak {
+	if request.Action != ActionNotify && request.Action != ActionOpenURI && request.Action != ActionLaunchApplication && request.Action != ActionFilePicker && request.Action != ActionContainers && request.Action != ActionCpak && request.Action != ActionSecrets {
 		return errors.New("unsupported system broker operation")
 	}
 	return nil
@@ -338,6 +355,8 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 		return 0, nil
 	case ActionFilePicker:
 		return executeFilePicker(ctx, request.Payload, options, writer)
+	case ActionSecrets:
+		return executeSecrets(ctx, request.Payload, options, writer)
 	case ActionContainers:
 		if len(options.ContainerCapabilities) == 0 {
 			return 0, errors.New("host container actions are not permitted")

@@ -15,25 +15,28 @@ import (
 const (
 	HostActionProviderContainers = "containers"
 	HostActionProviderCpak       = "cpak"
+	HostActionProviderSecrets    = "secrets"
 
 	HostActionContainersRead        = "read"
 	HostActionContainersManageOwned = "manage-owned"
 	HostActionContainersExecOwned   = "exec-owned"
 
-	HostActionCpakRead   = "read"
-	HostActionCpakManage = "manage"
-	HostActionCpakExec   = "exec"
+	HostActionCpakRead     = "read"
+	HostActionCpakManage   = "manage"
+	HostActionCpakExec     = "exec"
+	HostActionSecretsRead  = "read-owned"
+	HostActionSecretsWrite = "write-owned"
 )
 
 type HostActionGrant struct {
-	Provider     string   `json:"provider" jsonschema:"enum=containers,enum=cpak,description=Built-in host service provider"`
+	Provider     string   `json:"provider" jsonschema:"enum=containers,enum=cpak,enum=secrets,description=Built-in host service provider"`
 	Capabilities []string `json:"capabilities" jsonschema:"minItems=1,description=Provider capabilities"`
 }
 
 func ValidateHostActions(grants []HostActionGrant) error {
 	providers := map[string]bool{}
 	for _, grant := range grants {
-		if grant.Provider != HostActionProviderContainers && grant.Provider != HostActionProviderCpak {
+		if grant.Provider != HostActionProviderContainers && grant.Provider != HostActionProviderCpak && grant.Provider != HostActionProviderSecrets {
 			return fmt.Errorf("unsupported host action provider: %s", grant.Provider)
 		}
 		if providers[grant.Provider] {
@@ -124,6 +127,8 @@ func validHostActionCapability(provider, capability string) bool {
 		case HostActionCpakRead, HostActionCpakManage, HostActionCpakExec:
 			return true
 		}
+	case HostActionProviderSecrets:
+		return capability == HostActionSecretsRead || capability == HostActionSecretsWrite
 	}
 	return false
 }

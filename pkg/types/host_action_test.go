@@ -65,3 +65,22 @@ func TestDecodeHostActionsRejectsUnknownFields(t *testing.T) {
 		t.Fatal("unknown host action field was accepted")
 	}
 }
+
+func TestSecretPermissionsCannotEscalateOrCrossProviders(t *testing.T) {
+	parent := []HostActionGrant{{Provider: HostActionProviderSecrets, Capabilities: []string{HostActionSecretsRead}}}
+	child := []HostActionGrant{
+		{Provider: HostActionProviderSecrets, Capabilities: []string{HostActionSecretsRead, HostActionSecretsWrite}},
+		{Provider: HostActionProviderCpak, Capabilities: []string{HostActionCpakRead}},
+	}
+	if err := ValidateHostActions(child); err != nil {
+		t.Fatal(err)
+	}
+	if got := IntersectHostActions(parent, child); !reflect.DeepEqual(got, parent) {
+		t.Fatalf("secret grant escalated: %+v", got)
+	}
+	for _, capability := range []string{"read", "write", "all", "read-host"} {
+		if err := ValidateHostActions([]HostActionGrant{{Provider: HostActionProviderSecrets, Capabilities: []string{capability}}}); err == nil {
+			t.Fatal("unscoped secret permission was accepted")
+		}
+	}
+}

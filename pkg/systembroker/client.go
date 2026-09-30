@@ -61,6 +61,21 @@ func (c Client) Cpak(ctx context.Context, request CpakRequest) error {
 	return c.call(ctx, ActionCpak, request)
 }
 
+func (c Client) Secrets(ctx context.Context, request SecretRequest) (SecretResult, error) {
+	var output bytes.Buffer
+	client := c
+	client.Stdout = &output
+	client.Stdin = nil
+	if err := client.call(ctx, ActionSecrets, request); err != nil {
+		return SecretResult{}, err
+	}
+	var result SecretResult
+	if err := decodePayload(output.Bytes(), &result); err != nil {
+		return SecretResult{}, err
+	}
+	return result, nil
+}
+
 func (c Client) call(ctx context.Context, action string, payload any) error {
 	if c.SocketPath == "" {
 		return errors.New("system broker socket path is required")

@@ -278,7 +278,8 @@
           "type": "string",
           "enum": [
             "containers",
-            "cpak"
+            "cpak",
+            "secrets"
           ],
           "description": "Built-in host service provider"
         },

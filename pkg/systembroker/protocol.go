@@ -15,6 +15,7 @@ const (
 	ActionFilePicker        = "desktop.file-picker"
 	ActionContainers        = "containers"
 	ActionCpak              = "cpak"
+	ActionSecrets           = "secrets"
 
 	FrameStdout = "stdout"
 	FrameStderr = "stderr"

@@ -60,6 +60,20 @@ func TestLearnCoreManifestValidationMatchesRuntime(t *testing.T) {
 	}
 }
 
+func TestSecretShimsRequireAnExplicitGrant(t *testing.T) {
+	o := types.NewOverride()
+	if strings.Contains(strings.Join(systemBrokerShims(o), ","), "cpak-secrets") {
+		t.Fatal("default runtime exposed the keyring shim")
+	}
+	o.HostActions = []types.HostActionGrant{{Provider: types.HostActionProviderSecrets, Capabilities: []string{types.HostActionSecretsRead}}}
+	if !reflect.DeepEqual(systemBrokerShims(o), core.SystemBrokerShims(o)) {
+		t.Fatal("runtime and core disagree on the secret grant")
+	}
+	if !strings.Contains(strings.Join(systemBrokerShims(o), ","), "cpak-secrets") {
+		t.Fatal("explicit grant did not expose the keyring shim")
+	}
+}
+
 func TestLearnCoreManifestDecodingAndMigrationMatchRuntime(t *testing.T) {
 	contents := []string{
 		`{"manifest_version":"2.0","name":"Example","description":"Example","image":"ghcr.io/example/app:latest","binaries":["/usr/bin/example"]}`,
