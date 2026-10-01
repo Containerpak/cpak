@@ -25,6 +25,40 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
+func TestLazyX11BridgeKeepsItsBrokerIdentity(t *testing.T) {
+	started, err := processStartTime(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(directory, isolatedX11SocketName), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	container := types.Container{
+		X11SocketPath: directory, X11SocketTarget: isolatedX11SocketDirectory,
+		X11BrokerPid: os.Getpid(), X11BrokerStartTime: started, X11BrokerRequired: true,
+	}
+	if !containerX11BridgeAlive(container) {
+		t.Fatal("a live lazy broker was treated as a stopped X11 display")
+	}
+	container.X11BrokerStartTime++
+	if containerX11BridgeAlive(container) {
+		t.Fatal("a reused broker PID was accepted")
+	}
+	container.X11BrokerStartTime = started
+	container.X11BrokerRequired = false
+	if containerX11BridgeAlive(container) {
+		t.Fatal("an unrecorded display was treated as a lazy broker")
+	}
+	container.X11BrokerRequired = true
+	container.X11SocketTarget = "/other"
+	if containerX11BridgeAlive(container) {
+		t.Fatal("a broker was accepted for a non-lazy display")
+	}
+}
+
 func TestX11AuthorityCoversEveryDisplayWithOneCookie(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "xauthority")
 	if err := writeX11Authority(path); err != nil {

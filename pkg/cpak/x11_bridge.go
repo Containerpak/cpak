@@ -405,7 +405,12 @@ func containerX11BridgeAlive(container types.Container) bool {
 	if container.X11SocketPath == "" {
 		return true
 	}
-	if !sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime) || validateSocketOwner(x11SocketEndpoint(container)) != nil {
+	pid, started := container.X11BridgePid, container.X11BridgeStartTime
+	// Lazy displays record their supervisor as the broker when runtime state is saved.
+	if pid == 0 && container.X11BrokerRequired && container.X11SocketTarget == isolatedX11SocketDirectory {
+		pid, started = container.X11BrokerPid, container.X11BrokerStartTime
+	}
+	if !sameRecordedProcess(pid, started) || validateSocketOwner(x11SocketEndpoint(container)) != nil {
 		return false
 	}
 	return !container.X11BrokerRequired || sameRecordedProcess(container.X11BrokerPid, container.X11BrokerStartTime)
