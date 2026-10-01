@@ -492,12 +492,12 @@ import os
 import sys
 
 before, after = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
-if len(before) != 1 or len(after) != 1:
+if not isinstance(before, dict) or not isinstance(after, dict):
     raise SystemExit("display change lost the URI container")
 for key in ("container_id", "container_pid"):
-    if before[0][key] != after[0][key]:
+    if before[key] != after[key]:
         raise SystemExit("display change replaced the URI container")
-os.kill(after[0]["container_pid"], 0)
+os.kill(after["container_pid"], 0)
 PY
 "$cpak" stop "$uri_origin"
 run_command "$uri_origin" open-local-file
