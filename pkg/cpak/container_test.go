@@ -561,6 +561,58 @@ func TestRecordedProcessRequiresTheSameStartTime(t *testing.T) {
 	}
 }
 
+func TestContainerReplacementPreservesRecordedProcess(t *testing.T) {
+	started, err := processStartTime(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := types.Container{CpakId: "other-namespace", Pid: os.Getpid(), ProcessStartTime: started}
+	if err = checkContainerReplacement(container); err == nil {
+		t.Fatal("replacement accepted a live recorded process without a visible container marker")
+	}
+	container.ProcessStartTime++
+	if err = checkContainerReplacement(container); err != nil {
+		t.Fatalf("replacement refused a stale process identity: %v", err)
+	}
+}
+
+func TestContainerReplacementPreservesLegacyProcess(t *testing.T) {
+	container := types.Container{CpakId: "replacement-test"}
+	command := exec.Command("sleep", "30")
+	command.Env = append(os.Environ(), "CPAK_CONTAINER_ID="+container.CpakId)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	})
+	container.Pid = command.Process.Pid
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, verified := verifiedContainerProcess(container); verified {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("legacy process did not expose its container marker")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := checkContainerReplacement(container); err == nil {
+		t.Fatal("replacement accepted a live legacy container")
+	}
+	if err := command.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("replacement stopped the process: %v", err)
+	}
+}
+
+func TestContainerReplacementAcceptsStoppedProcess(t *testing.T) {
+	container := types.Container{CpakId: "stopped", Pid: -1, ProcessStartTime: 1}
+	if err := checkContainerReplacement(container); err != nil {
+		t.Fatalf("replacement refused a stopped container: %v", err)
+	}
+}
+
 func TestContainerPolicyHashChangesWithPermissions(t *testing.T) {
 	first := types.NewOverride()
 	second := first

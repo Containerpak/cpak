@@ -172,10 +172,10 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
 		if container.PolicyHash != policyHash || !containerProcessRunning(container) || !containerNetworkAlive(container, override) || !containerDesktopBusAlive(container) || !containerBluetoothBusAlive(container, override) || !containerX11BridgeAlive(container) || !c.containerLayerMountAlive(container) {
-			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
-			if containerProcessRunning(container) {
-				terminateContainerProcess(container)
+			if err = checkContainerReplacement(container); err != nil {
+				return types.Container{}, err
 			}
+			logger.Println("Container cannot be reused, cleaning it up:", container.CpakId)
 			if err = store.Close(); err != nil {
 				return
 			}
@@ -1035,6 +1035,16 @@ func (c *Cpak) StopContainerInstance(app types.Application, instance string) (er
 		}
 	}
 	return
+}
+
+func checkContainerReplacement(container types.Container) error {
+	_, verified := verifiedContainerProcess(container)
+	// Another mount namespace may hide the runtime sockets or process environment.
+	// That is not evidence that the recorded process has stopped.
+	if verified || sameRecordedProcess(container.Pid, container.ProcessStartTime) {
+		return fmt.Errorf("container %s is still running but cannot be reused; run cpak from its original host environment or stop the application explicitly before restarting", container.CpakId)
+	}
+	return nil
 }
 
 func terminateContainerProcess(container types.Container) {
