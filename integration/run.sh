@@ -479,6 +479,27 @@ fi
 xdg_url="https://example.com/cpak-xdg-open"
 gio_url="https://example.com/cpak-gio-open"
 warm_url="https://example.com/cpak-xdg-open-warm"
+"$cpak" inspect "$uri_origin" >"$work/uri-before-display-change.json"
+if run_command "$uri_origin" open-local-file >"$work/uri-display-change.log" 2>&1; then
+	echo "display change replaced a running URI container" >&2
+	exit 1
+fi
+grep -F 'is still running but cannot be reused' "$work/uri-display-change.log" >/dev/null
+"$cpak" inspect "$uri_origin" >"$work/uri-after-display-change.json"
+python3 - "$work/uri-before-display-change.json" "$work/uri-after-display-change.json" <<'PY'
+import json
+import os
+import sys
+
+before, after = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+if len(before) != 1 or len(after) != 1:
+    raise SystemExit("display change lost the URI container")
+for key in ("container_id", "container_pid"):
+    if before[0][key] != after[0][key]:
+        raise SystemExit("display change replaced the URI container")
+os.kill(after[0]["container_pid"], 0)
+PY
+"$cpak" stop "$uri_origin"
 run_command "$uri_origin" open-local-file
 run_command "$uri_origin" gio-open-local-file
 run_command "$uri_origin" open-local-folder
