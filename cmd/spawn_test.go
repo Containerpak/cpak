@@ -15,9 +15,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/types"
@@ -219,6 +221,90 @@ func TestContainerHostnameIsStableAndPrivate(t *testing.T) {
 	if current, err := os.Hostname(); err != nil || current != hostname {
 		t.Fatalf("host hostname changed: got %q, want %q, error %v", current, hostname, err)
 	}
+}
+
+func TestOrphanedZombiePIDsOnlyReturnsUntrackedInitChildren(t *testing.T) {
+	procRoot := t.TempDir()
+	for pid, status := range map[string]string{
+		"10": "Name:\tworker process (old)\nState:\tZ (zombie)\nPPid:\t1\n",
+		"20": "Name:\tdirect\nState:\tZ (zombie)\nPPid:\t1\n",
+		"30": "Name:\trunning\nState:\tS (sleeping)\nPPid:\t1\n",
+		"40": "Name:\tnested\nState:\tZ (zombie)\nPPid:\t12\n",
+		"50": "invalid\n",
+	} {
+		directory := filepath.Join(procRoot, pid)
+		if err := os.Mkdir(directory, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "status"), []byte(status), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := orphanedZombiePIDs(procRoot, map[int]struct{}{20: {}})
+	want := []int{10}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("orphaned zombies: got %v, want %v", got, want)
+	}
+}
+
+func TestProcessStateAcceptsProcessNamesWithSpacesAndParentheses(t *testing.T) {
+	state, parent := processState([]byte("Name:\tworker process (old)\nState:\tZ (zombie)\nPPid:\t1\n"))
+	if state != "Z" || parent != 1 {
+		t.Fatalf("process state: got %q with parent %d", state, parent)
+	}
+}
+
+func TestChildReaperCollectsOrphanedDescendants(t *testing.T) {
+	if os.Getenv("CPAK_CHILD_REAPER_TEST") != "1" {
+		command := exec.Command(
+			"unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc",
+			os.Args[0], "-test.run=^TestChildReaperCollectsOrphanedDescendants$",
+		)
+		command.Env = append(os.Environ(), "CPAK_CHILD_REAPER_TEST=1")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			if bytes.Contains(output, []byte("Operation not permitted")) {
+				t.Skip("user namespaces are unavailable")
+			}
+			t.Fatalf("child reaper subprocess: %v\n%s", err, output)
+		}
+		return
+	}
+	if os.Getpid() != 1 {
+		t.Fatalf("test process is not namespace init: pid %d", os.Getpid())
+	}
+
+	root := t.TempDir()
+	marker := filepath.Join(root, "finished")
+	pidFile := filepath.Join(root, "pid")
+	reaper := newChildReaper("/proc")
+	defer reaper.close()
+	command := exec.Command("/bin/sh", "-c", `(sleep 0.05; touch "$1") & echo $! > "$2"`, "sh", marker, pidFile)
+	if err := reaper.start(command, command.Start); err != nil {
+		t.Fatal(err)
+	}
+	if err := reaper.wait(command); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		_, markerErr := os.Stat(marker)
+		_, processErr := os.Stat(filepath.Join("/proc", strconv.Itoa(pid)))
+		if markerErr == nil && os.IsNotExist(processErr) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("orphaned child %d was not reaped", pid)
 }
 
 func TestLandlockArgumentsKeepAccessModes(t *testing.T) {

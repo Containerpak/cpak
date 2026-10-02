@@ -16,11 +16,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -1638,6 +1640,121 @@ func setContainerHostname() error {
 	return nil
 }
 
+type childReaper struct {
+	mu       sync.Mutex
+	tracked  map[int]struct{}
+	signals  chan os.Signal
+	stop     chan struct{}
+	stopped  chan struct{}
+	procRoot string
+}
+
+func newChildReaper(procRoot string) *childReaper {
+	reaper := &childReaper{
+		tracked:  make(map[int]struct{}),
+		signals:  make(chan os.Signal, 1),
+		stop:     make(chan struct{}),
+		stopped:  make(chan struct{}),
+		procRoot: procRoot,
+	}
+	signal.Notify(reaper.signals, syscall.SIGCHLD)
+	go reaper.run()
+	return reaper
+}
+
+func (r *childReaper) run() {
+	defer close(r.stopped)
+	for {
+		select {
+		case <-r.signals:
+			r.reap()
+		case <-r.stop:
+			return
+		}
+	}
+}
+
+func (r *childReaper) close() {
+	signal.Stop(r.signals)
+	close(r.stop)
+	<-r.stopped
+}
+
+func (r *childReaper) start(command *exec.Cmd, start func() error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := start(); err != nil {
+		return err
+	}
+	r.tracked[command.Process.Pid] = struct{}{}
+	return nil
+}
+
+func (r *childReaper) wait(command *exec.Cmd) error {
+	err := command.Wait()
+	r.mu.Lock()
+	delete(r.tracked, command.Process.Pid)
+	r.reapLocked()
+	r.mu.Unlock()
+	return err
+}
+
+func (r *childReaper) reap() {
+	r.mu.Lock()
+	r.reapLocked()
+	r.mu.Unlock()
+}
+
+func (r *childReaper) reapLocked() {
+	for _, pid := range orphanedZombiePIDs(r.procRoot, r.tracked) {
+		_, _ = syscall.Wait4(pid, nil, syscall.WNOHANG, nil)
+	}
+}
+
+func orphanedZombiePIDs(procRoot string, tracked map[int]struct{}) []int {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		if _, ok := tracked[pid]; ok {
+			continue
+		}
+		status, err := os.ReadFile(filepath.Join(procRoot, entry.Name(), "status"))
+		if err != nil {
+			continue
+		}
+		state, parent := processState(status)
+		if state == "Z" && parent == 1 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func processState(status []byte) (string, int) {
+	var state string
+	var parent int
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[0] {
+		case "State:":
+			state = fields[1]
+		case "PPid:":
+			parent, _ = strconv.Atoi(fields[1])
+		}
+	}
+	return state, parent
+}
+
 func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Listener, grantMounts *grantMountWorker, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
 	if err := setContainerHostname(); err != nil {
 		return err
@@ -1651,6 +1768,8 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Liste
 		return err
 	}
 	go c.serveGrantMounts(grantListener, grantMounts)
+	reaper := newChildReaper("/proc")
+	defer reaper.close()
 	c.spawnVerbose("Container init is ready")
 	lastActivity := time.Now()
 	var active atomic.Int64
@@ -1690,7 +1809,7 @@ func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Liste
 		go func() {
 			defer active.Add(-1)
 			defer func() { completed.Store(time.Now().UnixNano()) }()
-			c.handleRuntimeConnection(connection, envVars, grants)
+			c.handleRuntimeConnection(connection, envVars, grants, reaper)
 		}()
 	}
 }
@@ -1828,7 +1947,7 @@ func (w runtimeOutputWriter) Write(payload []byte) (int, error) {
 	return len(payload), nil
 }
 
-func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string, grants []sandbox.PathGrant) {
+func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string, grants []sandbox.PathGrant, reaper *childReaper) {
 	defer connection.Close()
 	kind, payload, err := runtimeproto.Read(connection)
 	writer := runtimeproto.NewWriter(connection)
@@ -1868,9 +1987,12 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 			columns = 80
 		}
 		command.SysProcAttr.Setpgid = false
-		terminal, err = pty.StartWithSize(command, &pty.Winsize{
-			Rows: rows,
-			Cols: columns,
+		err = reaper.start(command, func() error {
+			terminal, err = pty.StartWithSize(command, &pty.Winsize{
+				Rows: rows,
+				Cols: columns,
+			})
+			return err
 		})
 		if err == nil {
 			input = terminal
@@ -1885,7 +2007,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 		if err == nil {
 			command.Stdout = output
 			command.Stderr = output
-			err = command.Start()
+			err = reaper.start(command, command.Start)
 		}
 	}
 	if err != nil {
@@ -1927,7 +2049,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 		}
 	}()
 
-	waitErr := command.Wait()
+	waitErr := reaper.wait(command)
 	_ = input.Close()
 	if outputDone != nil {
 		<-outputDone
