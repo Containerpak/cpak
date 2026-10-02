@@ -284,7 +284,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		if dataID == "" {
 			dataID = app.CpakId
 		}
-		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, app.Name, app.Origin, dataID, override, container.StatePath, container.GrantSocketPath)
+		container.SystemBrokerPolicyPath, err = c.registerSystemBrokerPolicy(container.SystemBrokerTokenPath, desktopRuntime, app.CpakId, app.Name, app.Origin, container.Instance, dataID, override, container.StatePath, container.GrantSocketPath)
 		if err != nil {
 			cleanupSystemBrokerRuntime(container)
 			os.RemoveAll(c.GetInStoreDir("containers", container.CpakId))
@@ -448,8 +448,8 @@ func (c *Cpak) lockContainerScope(scope string) (func(), error) {
 	}, nil
 }
 
-const containerRuntimePolicyVersion = 8
-const loginSessionRuntimePolicyVersion = 9
+const containerRuntimePolicyVersion = 9
+const loginSessionRuntimePolicyVersion = 10
 
 func containerRuntimeVersion(instance string) int {
 	if isSessionInstance(instance) {
@@ -1113,6 +1113,7 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 		return err
 	}
 	envVars = applyRuntimeEnvironment(envVars, c.runtimeEnvironment)
+	envVars = c.applyDesktopActivationToken(envVars)
 
 	execSocketPath := container.ExecSocketPath
 	if execSocketPath == "" {
@@ -1944,7 +1945,7 @@ func getNested() (token string, nested bool) {
 
 const systemBrokerSocketTarget = "/run/cpak/system-broker.sock"
 const systemBrokerTokenTarget = "/run/cpak/system-broker.token"
-const systemBrokerSocketName = "system-broker-v4.sock"
+const systemBrokerSocketName = "system-broker-v5.sock"
 
 func createSystemBrokerRuntime(statePath string) (string, string, error) {
 	socketPath, err := sharedSystemBrokerSocketPath()
@@ -2161,7 +2162,7 @@ func systemBrokerPolicyDirectory() (string, error) {
 	return directory, nil
 }
 
-func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, filePickerApplication, filePickerOrigin, dataID string, override types.Override, statePath, grantSocketPath string) (string, error) {
+func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, filePickerApplication, filePickerOrigin, applicationInstance, dataID string, override types.Override, statePath, grantSocketPath string) (string, error) {
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return "", fmt.Errorf("read system broker token: %w", err)
@@ -2191,8 +2192,17 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 		}
 	}
 	openURIPaths := []systembroker.OpenURIPathGrant(nil)
+	desktopCallbackDir := ""
+	applicationOrigin := ""
+	desktopCallbackInstance := ""
 	if override.OpenURI {
 		openURIPaths, err = c.systemBrokerOpenURIPaths(dataID, override)
+		if err != nil {
+			return "", err
+		}
+		applicationOrigin = filePickerOrigin
+		desktopCallbackInstance = applicationInstance
+		desktopCallbackDir, err = desktopCallbackDirectory()
 		if err != nil {
 			return "", err
 		}
@@ -2201,6 +2211,9 @@ func (c *Cpak) registerSystemBrokerPolicy(tokenPath, desktopRuntime, owner, file
 		AllowNotify:           override.Notification,
 		AllowOpenURI:          override.OpenURI,
 		OpenURIPaths:          openURIPaths,
+		DesktopCallbackDir:    desktopCallbackDir,
+		ApplicationOrigin:     applicationOrigin,
+		ApplicationInstance:   desktopCallbackInstance,
 		AllowHostApplications: override.HostApplications,
 		Applications:          applications,
 		RuntimeDirectory:      desktopRuntime,

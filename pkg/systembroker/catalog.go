@@ -31,9 +31,12 @@ const (
 var loadUserManagerEnvironment = userManagerEnvironment
 
 type Policy struct {
-	AllowNotify  bool               `json:"allow_notify,omitempty"`
-	AllowOpenURI bool               `json:"allow_open_uri,omitempty"`
-	OpenURIPaths []OpenURIPathGrant `json:"open_uri_paths,omitempty"`
+	AllowNotify         bool               `json:"allow_notify,omitempty"`
+	AllowOpenURI        bool               `json:"allow_open_uri,omitempty"`
+	OpenURIPaths        []OpenURIPathGrant `json:"open_uri_paths,omitempty"`
+	DesktopCallbackDir  string             `json:"desktop_callback_directory,omitempty"`
+	ApplicationOrigin   string             `json:"application_origin,omitempty"`
+	ApplicationInstance string             `json:"application_instance,omitempty"`
 	// Kept so old policy files remain readable. The broker does not trust a
 	// container policy to select the host desktop used for URI handlers.
 	DesktopEnvironment    []string              `json:"desktop_environment,omitempty"`
@@ -189,6 +192,9 @@ func resolveCatalogPolicy(socketPath, directory string, desktopEnvironment []str
 		AllowNotify:           policy.AllowNotify,
 		AllowOpenURI:          policy.AllowOpenURI,
 		OpenURIPaths:          policy.OpenURIPaths,
+		DesktopCallbackDir:    policy.DesktopCallbackDir,
+		ApplicationOrigin:     policy.ApplicationOrigin,
+		ApplicationInstance:   policy.ApplicationInstance,
 		DesktopEnvironment:    desktopEnvironment,
 		AllowHostApplications: policy.AllowHostApplications,
 		Applications:          policy.Applications,

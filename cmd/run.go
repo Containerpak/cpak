@@ -64,6 +64,9 @@ func (c *RunCmd) Run() error {
 		return c.runError(err)
 	}
 	cp.SetDesktopLaunch(c.DesktopLaunch)
+	if err := cp.SetDesktopActivationToken(desktopActivationToken(c.DesktopLaunch)); err != nil {
+		return c.runError(err)
+	}
 	if err := cp.SetDesktopFileSpan(c.DesktopFileSpan); err != nil {
 		return c.runError(err)
 	}
@@ -73,6 +76,15 @@ func (c *RunCmd) Run() error {
 		return c.runError(err)
 	}
 	logger.Println("Running cpak from remote:", remote)
+	if c.DesktopLaunch && c.Instance == "" {
+		instance, found, callbackErr := cp.ResolveDesktopCallbackInstance(remote, c.Extra)
+		if callbackErr != nil {
+			return c.runError(callbackErr)
+		}
+		if found {
+			c.Instance = instance
+		}
+	}
 
 	err = cp.RunInstance(remote, "", c.Branch, c.Commit, c.Release, c.Instance, c.Binary, c.Verbose, c.Extra...)
 	if err != nil {
@@ -80,6 +92,13 @@ func (c *RunCmd) Run() error {
 	}
 
 	return nil
+}
+
+func desktopActivationToken(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return os.Getenv("XDG_ACTIVATION_TOKEN")
 }
 
 func (c *RunCmd) Configure(icon []byte) {

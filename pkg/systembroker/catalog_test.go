@@ -97,6 +97,29 @@ func TestCatalogPreservesOpenURIPaths(t *testing.T) {
 	}
 }
 
+func TestCatalogPreservesDesktopCallbackTarget(t *testing.T) {
+	directory := t.TempDir()
+	token := strings.Repeat("k", 64)
+	policy := Policy{
+		AllowOpenURI:        true,
+		DesktopCallbackDir:  filepath.Join(directory, "callbacks"),
+		ApplicationOrigin:   "github.com/example/app",
+		ApplicationInstance: "office-test",
+	}
+	if err := WritePolicy(directory, token, policy); err != nil {
+		t.Fatal(err)
+	}
+	options, err := resolveCatalogPolicy("/tmp/broker.sock", directory, nil, Request{Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.DesktopCallbackDir != policy.DesktopCallbackDir ||
+		options.ApplicationOrigin != policy.ApplicationOrigin ||
+		options.ApplicationInstance != policy.ApplicationInstance {
+		t.Fatalf("desktop callback target: %+v", options)
+	}
+}
+
 func TestCatalogUsesTheBrokerDesktopEnvironment(t *testing.T) {
 	directory := t.TempDir()
 	token := strings.Repeat("i", 64)

@@ -54,6 +54,9 @@ type Options struct {
 	AllowNotify           bool
 	AllowOpenURI          bool
 	OpenURIPaths          []OpenURIPathGrant
+	DesktopCallbackDir    string
+	ApplicationOrigin     string
+	ApplicationInstance   string
 	DesktopEnvironment    []string
 	AllowHostApplications bool
 	OpenURICommand        string
@@ -98,6 +101,14 @@ func (o Options) validate() error {
 	for _, path := range o.OpenURIPaths {
 		if !validOpenURIPathGrant(path) {
 			return errors.New("system broker open URI path is invalid")
+		}
+	}
+	if o.DesktopCallbackDir != "" || o.ApplicationOrigin != "" || o.ApplicationInstance != "" {
+		if !filepath.IsAbs(o.DesktopCallbackDir) || filepath.Clean(o.DesktopCallbackDir) != o.DesktopCallbackDir {
+			return errors.New("system broker desktop callback directory is invalid")
+		}
+		if err := validateDesktopCallbackTarget(o.ApplicationOrigin, o.ApplicationInstance); err != nil {
+			return err
 		}
 	}
 	if o.AllowHostApplications {
@@ -158,11 +169,23 @@ func (o Options) validate() error {
 	return nil
 }
 
-func (o Options) openURICommand() string {
-	if o.OpenURICommand != "" {
-		return o.OpenURICommand
+func (o Options) openURICommand(argument string) (*exec.Cmd, string, error) {
+	backend := o.OpenURICommand
+	arguments := []string{argument}
+	if backend == "" {
+		backend = "gio"
+		arguments = []string{"open", argument}
 	}
-	return "xdg-open"
+	path, err := exec.LookPath(backend)
+	if err != nil && o.OpenURICommand == "" {
+		backend = "xdg-open"
+		arguments = []string{argument}
+		path, err = exec.LookPath(backend)
+	}
+	if err != nil {
+		return nil, backend, err
+	}
+	return exec.Command(path, arguments...), backend, nil
 }
 
 func (o Options) commandTimeout() time.Duration {
@@ -300,11 +323,18 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 		if err != nil {
 			return 0, err
 		}
-		path, err := exec.LookPath(options.openURICommand())
-		if err != nil {
-			return 0, fmt.Errorf("system integration backend is unavailable: %s", options.openURICommand())
+		if err = RegisterDesktopCallback(
+			options.DesktopCallbackDir,
+			argument,
+			options.ApplicationOrigin,
+			options.ApplicationInstance,
+		); err != nil {
+			return 0, fmt.Errorf("prepare desktop callback: %w", err)
 		}
-		command := exec.Command(path, argument)
+		command, backend, err := options.openURICommand(argument)
+		if err != nil {
+			return 0, fmt.Errorf("system integration backend is unavailable: %s", backend)
+		}
 		environment := append([]string{}, options.DesktopEnvironment...)
 		if openURI.ActivationToken != "" {
 			environment = append(environment, "XDG_ACTIVATION_TOKEN="+openURI.ActivationToken)
@@ -312,10 +342,10 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 		command.Env = mergeEnvironment(os.Environ(), environment)
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := command.Start(); err != nil {
-			return 0, fmt.Errorf("system integration backend failed: %s", options.openURICommand())
+			return 0, fmt.Errorf("system integration backend failed: %s", backend)
 		}
 		if err := command.Process.Release(); err != nil {
-			return 0, fmt.Errorf("release system integration backend: %s", options.openURICommand())
+			return 0, fmt.Errorf("release system integration backend: %s", backend)
 		}
 		return 0, nil
 	case ActionLaunchApplication:

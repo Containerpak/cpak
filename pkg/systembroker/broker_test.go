@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -112,6 +113,58 @@ func TestOpenURIShimsOpenMappedContainerFiles(t *testing.T) {
 			}
 			waitForFileContent(t, output, selected)
 		})
+	}
+}
+
+func TestOpenURIPrefersGIO(t *testing.T) {
+	directory := t.TempDir()
+	opened := filepath.Join(directory, "opened")
+	gio := filepath.Join(directory, "gio")
+	if err := os.WriteFile(gio, []byte("#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\" > \""+opened+"\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	xdgOpen := filepath.Join(directory, "xdg-open")
+	if err := os.WriteFile(xdgOpen, []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+
+	selected := filepath.Join(directory, "report.txt")
+	if err := os.WriteFile(selected, []byte("report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := testOptions(t)
+	options.OpenURICommand = ""
+	options.OpenURIPaths = []OpenURIPathGrant{{Source: directory, Target: directory}}
+	startBroker(t, options)
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "xdg-open", []string{selected}, nil, nil, io.Discard, io.Discard, false); err != nil {
+		t.Fatal(err)
+	}
+	waitForFileContent(t, opened, "open|"+resolved)
+}
+
+func TestOpenURIFallsBackToXDGOpen(t *testing.T) {
+	directory := t.TempDir()
+	backendPath := filepath.Join(directory, "xdg-open")
+	if err := os.WriteFile(backendPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+
+	command, backend, err := (Options{}).openURICommand("/tmp/report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend != "xdg-open" {
+		t.Fatalf("backend: got %q, want xdg-open", backend)
+	}
+	want := []string{backendPath, "/tmp/report.txt"}
+	if !reflect.DeepEqual(command.Args, want) {
+		t.Fatalf("arguments: got %v, want %v", command.Args, want)
 	}
 }
 
@@ -256,6 +309,25 @@ func TestOpenURIUsesTheConfiguredDesktopEnvironment(t *testing.T) {
 			t.Fatalf("URI backend did not record its desktop environment:\n%s", environment)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestOpenURIRegistersItsDesktopCallbackTarget(t *testing.T) {
+	options := testOptions(t)
+	options.DesktopCallbackDir = filepath.Join(t.TempDir(), "callbacks")
+	options.ApplicationOrigin = "github.com/example/app"
+	options.ApplicationInstance = "office-test"
+	startBroker(t, options)
+	authorization, callback := desktopCallbackPair("s" + strings.Repeat("t", 42))
+	if err := testClient(options).OpenURI(context.Background(), OpenURIRequest{URI: authorization}); err != nil {
+		t.Fatal(err)
+	}
+	instance, found, err := ResolveDesktopCallback(options.DesktopCallbackDir, callback, options.ApplicationOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || instance != options.ApplicationInstance {
+		t.Fatalf("desktop callback target: found %t, instance %q", found, instance)
 	}
 }
 

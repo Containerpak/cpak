@@ -6,6 +6,7 @@ package cpak
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -33,6 +34,7 @@ type Cpak struct {
 	storagePreparation StoragePreparationHandler
 	storageDriver      storage.Handler
 	desktopLaunch      bool
+	desktopActivation  string
 	terminalSession    bool
 	fileSpan           *desktopFileSpan
 	runtimeEnvironment []string
@@ -43,6 +45,39 @@ type Cpak struct {
 // SetDesktopLaunch enables file grants for exported desktop entries.
 func (c *Cpak) SetDesktopLaunch(enabled bool) {
 	c.desktopLaunch = enabled
+	if !enabled {
+		c.desktopActivation = ""
+	}
+}
+
+// SetDesktopActivationToken passes compositor focus permission to a desktop launch.
+func (c *Cpak) SetDesktopActivationToken(token string) error {
+	if token == "" {
+		c.desktopActivation = ""
+		return nil
+	}
+	if !c.desktopLaunch {
+		return errors.New("desktop activation token requires a desktop launch")
+	}
+	if len(token) > 4096 || strings.ContainsAny(token, "\x00\r\n") {
+		return errors.New("invalid desktop activation token")
+	}
+	c.desktopActivation = token
+	return nil
+}
+
+func (c *Cpak) applyDesktopActivationToken(environment []string) []string {
+	prefix := "XDG_ACTIVATION_TOKEN="
+	result := make([]string, 0, len(environment)+1)
+	for _, variable := range environment {
+		if !strings.HasPrefix(variable, prefix) {
+			result = append(result, variable)
+		}
+	}
+	if !c.desktopLaunch || c.desktopActivation == "" {
+		return result
+	}
+	return append(result, prefix+c.desktopActivation)
 }
 
 // SetTerminalSession requests a PTY even when a caller proxies standard I/O.
