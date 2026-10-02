@@ -24,6 +24,7 @@ type X11BrokerCmd struct {
 	ListenPath         string `cli:"listen-path" help:"private X11 listener path"`
 	X11Server          string `cli:"x11-server" help:"nested X11 server executable"`
 	MixedWayland       bool   `cli:"mixed-wayland" help:"keep the Wayland application alive when X11 closes"`
+	DeviceDri          bool   `cli:"device-dri" help:"allow the package's granted DRI device access"`
 	HostToApp          bool   `cli:"host-to-app" help:"allow host clipboard reads"`
 	AppToHost          bool   `cli:"app-to-host" help:"allow host clipboard writes"`
 
@@ -39,5 +40,6 @@ func (c *X11BrokerCmd) Run() error {
 		ContainerID: c.ContainerID, ReadyFD: c.ReadyFD,
 		ListenFD: c.ListenFD, ListenPath: c.ListenPath, X11Server: c.X11Server, MixedWayland: c.MixedWayland,
 		HostToApp: c.HostToApp, AppToHost: c.AppToHost,
+		DeviceDri: c.DeviceDri,
 	})
 }

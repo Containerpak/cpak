@@ -392,7 +392,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		return types.Container{}, fmt.Errorf("identify container process: %w", err)
 	}
 	if container.X11SocketPath != "" {
-		container, err = startX11Broker(container, override.Clipboard, &x11Runtime)
+		container, err = startX11Broker(container, override, &x11Runtime)
 		if err != nil {
 			terminateContainerProcess(container)
 			c.CleanupContainer(container)

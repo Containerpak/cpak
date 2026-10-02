@@ -28,7 +28,7 @@ import (
 
 const x11BrokerStartupTimeout = 5 * time.Second
 
-func startX11Broker(container types.Container, clipboard types.ClipboardGrant, runtime *x11BridgeRuntime) (types.Container, error) {
+func startX11Broker(container types.Container, override types.Override, runtime *x11BridgeRuntime) (types.Container, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return container, fmt.Errorf("find cpak binary for X11 broker: %w", err)
@@ -61,10 +61,13 @@ func startX11Broker(container types.Container, clipboard types.ClipboardGrant, r
 	if container.X11HostWindowName != "" {
 		arguments = append(arguments, "--host-display", os.Getenv("DISPLAY"), "--host-window", container.X11HostWindowName)
 	}
-	if clipboard.HostToApp {
+	if override.DeviceDri || override.DeviceAll {
+		arguments = append(arguments, "--device-dri")
+	}
+	if override.Clipboard.HostToApp {
 		arguments = append(arguments, "--host-to-app")
 	}
-	if clipboard.AppToHost {
+	if override.Clipboard.AppToHost {
 		arguments = append(arguments, "--app-to-host")
 	}
 	command := exec.Command(executable, arguments...)
@@ -154,6 +157,7 @@ type X11BrokerOptions struct {
 	ListenPath         string
 	X11Server          string
 	MixedWayland       bool
+	DeviceDri          bool
 	HostToApp          bool
 	AppToHost          bool
 }
@@ -333,7 +337,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		_ = serverListener.Close()
 		_ = os.Remove(serverDisplay)
 	}()
-	arguments := xwaylandArguments(options.X11Server, options.NestedAuthority)
+	arguments := x11BrokerServerArguments(options)
 	arguments = append(arguments, "-listenfd", "3", "-displayfd", "4")
 	command := exec.Command(options.X11Server, arguments...)
 	command.Env = setEnvironmentValue(os.Environ(), "NO_AT_BRIDGE", "1")
@@ -446,24 +450,105 @@ func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string
 	}, nil
 }
 
+func x11BrokerServerArguments(options X11BrokerOptions) []string {
+	arguments := xwaylandArguments(options.X11Server, options.NestedAuthority)
+	if !options.DeviceDri {
+		arguments = append(arguments, "-extension", "DRI3")
+	}
+	return arguments
+}
+
 func proxyX11Connection(ctx context.Context, client, server net.Conn) {
-	var close sync.Once
+	var closed sync.Once
 	closeBoth := func() {
-		close.Do(func() {
+		closed.Do(func() {
 			_ = client.Close()
 			_ = server.Close()
 		})
 	}
+	clientSocket, clientOK := client.(*net.UnixConn)
+	serverSocket, serverOK := server.(*net.UnixConn)
+	if !clientOK || !serverOK {
+		closeBoth()
+		return
+	}
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		select {
 		case <-ctx.Done():
 			closeBoth()
+		case <-done:
 		}
 	}()
+	forwarded := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(server, client)
+		defer close(forwarded)
+		_ = copyX11Messages(serverSocket, clientSocket)
 		closeBoth()
 	}()
-	_, _ = io.Copy(client, server)
+	_ = copyX11Messages(clientSocket, serverSocket)
 	closeBoth()
+	<-forwarded
+}
+
+func copyX11Messages(destination, source *net.UnixConn) error {
+	data := make([]byte, 32*1024)
+	// Linux permits at most 253 descriptors in one SCM_RIGHTS message.
+	ancillary := make([]byte, unix.CmsgSpace(253*4))
+	for {
+		if err := forwardX11Message(destination, source, data, ancillary); err != nil {
+			return err
+		}
+	}
+}
+
+func forwardX11Message(destination, source *net.UnixConn, data, ancillary []byte) error {
+	n, oobn, flags, _, readErr := source.ReadMsgUnix(data, ancillary)
+	messages, err := syscall.ParseSocketControlMessage(ancillary[:oobn])
+	var fds []int
+	defer func() {
+		for _, fd := range fds {
+			syscall.Close(fd)
+		}
+	}()
+	for _, message := range messages {
+		rights, rightsErr := syscall.ParseUnixRights(&message)
+		if rightsErr != nil {
+			err = rightsErr
+			continue
+		}
+		fds = append(fds, rights...)
+	}
+	if err != nil {
+		return err
+	}
+	if flags&unix.MSG_CTRUNC != 0 {
+		return errors.New("truncated X11 file descriptors")
+	}
+	if readErr != nil {
+		return readErr
+	}
+	if n == 0 {
+		return io.EOF
+	}
+	var control []byte
+	if len(fds) > 0 {
+		control = syscall.UnixRights(fds...)
+	}
+	written, _, err := destination.WriteMsgUnix(data[:n], control, nil)
+	if err != nil {
+		return err
+	}
+	for written < n {
+		count, writeErr := destination.Write(data[written:n])
+		if writeErr != nil {
+			return writeErr
+		}
+		if count == 0 {
+			return io.ErrShortWrite
+		}
+		written += count
+	}
+	return nil
 }
