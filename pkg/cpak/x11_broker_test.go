@@ -212,6 +212,127 @@ func TestX11BrokerMirrorsWindowIdentityAndFullscreen(t *testing.T) {
 	}
 }
 
+func TestX11BrokerPublishesWindowState(t *testing.T) {
+	host, nested, runtime := testX11Displays(t)
+	stop := startTestX11Broker(t, host, nested, runtime, false, false)
+	defer stop()
+	application := connectTestX11(t, nested)
+	defer application.Close()
+	screen := xproto.Setup(application).DefaultScreen(application)
+	window, err := xproto.NewWindowId(application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(application, screen.RootDepth, window, screen.Root, 20, 30, 320, 240, 0, xproto.WindowClassInputOutput, screen.RootVisual, 0, nil).Check(); err != nil {
+		t.Fatal(err)
+	}
+	state := testAtom(t, application, "WM_STATE")
+	xproto.MapWindow(application, window)
+	application.Sync()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reply, readErr := xproto.GetProperty(application, false, window, state, state, 0, 2).Reply()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if reply.Type == state && reply.Format == 32 && len(reply.Value) == 8 && xgb.Get32(reply.Value) == 1 && xgb.Get32(reply.Value[4:]) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("mapped window has no ICCCM NormalState: %+v", reply)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for index := 0; index < 16; index++ {
+		popup, idErr := xproto.NewWindowId(application)
+		if idErr != nil {
+			t.Fatal(idErr)
+		}
+		if err = xproto.CreateWindowChecked(application, screen.RootDepth, popup, screen.Root, 20, 30, 320, 240, 0, xproto.WindowClassInputOutput, screen.RootVisual, 0, nil).Check(); err != nil {
+			t.Fatal(err)
+		}
+		xproto.MapWindow(application, popup)
+		xproto.DestroyWindow(application, popup)
+	}
+	xproto.UnmapWindow(application, window)
+	application.Sync()
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		reply, readErr := xproto.GetProperty(application, false, window, state, state, 0, 2).Reply()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if reply.Type == xproto.AtomNone {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("withdrawn window retains WM_STATE: %+v", reply)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestX11BrokerAcknowledgesUnchangedGeometry(t *testing.T) {
+	host, nested, runtime := testX11Displays(t)
+	stop := startTestX11Broker(t, host, nested, runtime, false, false)
+	defer stop()
+	application := connectTestX11(t, nested)
+	defer application.Close()
+	screen := xproto.Setup(application).DefaultScreen(application)
+	window, err := xproto.NewWindowId(application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(application, screen.RootDepth, window, screen.Root, 0, 0, screen.WidthInPixels, screen.HeightInPixels, 0, xproto.WindowClassInputOutput, screen.RootVisual, xproto.CwEventMask, []uint32{xproto.EventMaskStructureNotify}).Check(); err != nil {
+		t.Fatal(err)
+	}
+	xproto.MapWindow(application, window)
+	application.Sync()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		attributes, readErr := xproto.GetWindowAttributes(application, window).Reply()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if attributes.MapState == xproto.MapStateViewable {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("application window was not mapped")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for {
+		event, eventErr := application.PollForEvent()
+		if eventErr != nil {
+			t.Fatal(eventErr)
+		}
+		if event == nil {
+			break
+		}
+	}
+	if err = xproto.ConfigureWindowChecked(application, window, xproto.ConfigWindowX|xproto.ConfigWindowY, []uint32{20, 30}).Check(); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		event, eventErr := application.PollForEvent()
+		if eventErr != nil {
+			t.Fatal(eventErr)
+		}
+		if notification, ok := event.(xproto.ConfigureNotifyEvent); ok && notification.Window == window {
+			if notification.Event != window || notification.X != 0 || notification.Y != 0 || notification.Width != screen.WidthInPixels || notification.Height != screen.HeightInPixels || notification.BorderWidth != 0 || notification.OverrideRedirect {
+				t.Fatalf("acknowledged geometry differs from the unchanged window: %+v", notification)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ignored configure request received no ConfigureNotify")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func testX11Displays(t *testing.T) (types.Container, types.Container, x11BridgeRuntime) {
 	t.Helper()
 	if os.Getenv("WAYLAND_DISPLAY") == "" || !socketIsLive(waylandSocketPath(strconv.Itoa(os.Getuid()))) {

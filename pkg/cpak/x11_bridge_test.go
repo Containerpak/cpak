@@ -176,7 +176,7 @@ func TestXwaylandUsesALazyPrivateDisplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/Xwayland", "-auth", "/tmp/authority", "-nolisten", "tcp", "-noreset", "-geometry", "1x1", "-hidpi"}
+	want := []string{"/usr/bin/Xwayland", "-auth", "/tmp/authority", "-nolisten", "tcp", "-noreset", "-hidpi"}
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xwayland arguments: got %v, want %v", server.command.Args, want)
 	}

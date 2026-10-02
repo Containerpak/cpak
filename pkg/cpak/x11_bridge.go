@@ -38,7 +38,7 @@ var x11ServerSupportsHiDPI = func(path string) bool {
 }
 
 func xwaylandArguments(path, authority string) []string {
-	arguments := []string{"-auth", authority, "-nolisten", "tcp", "-noreset", "-geometry", "1x1"}
+	arguments := []string{"-auth", authority, "-nolisten", "tcp", "-noreset"}
 	if x11ServerSupportsHiDPI(path) {
 		arguments = append(arguments, "-hidpi")
 	}

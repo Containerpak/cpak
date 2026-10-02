@@ -62,6 +62,7 @@ type endpointAtoms struct {
 	netWMSupportingWM    xproto.Atom
 	netWMActiveWindow    xproto.Atom
 	wmSelection          xproto.Atom
+	wmState              xproto.Atom
 }
 
 type broker struct {
@@ -213,7 +214,7 @@ func loadAtoms(connection *xgb.Conn) (endpointAtoms, error) {
 		"_NET_WM_NAME", "_NET_WM_ICON", "_NET_WM_STATE", "_NET_WM_STATE_FULLSCREEN",
 		"_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_MAXIMIZED_VERT",
 		"_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NORMAL", "_NET_WM_WINDOW_TYPE_DIALOG",
-		"_NET_SUPPORTED", "_NET_SUPPORTING_WM_CHECK", "_NET_ACTIVE_WINDOW", "WM_S0",
+		"_NET_SUPPORTED", "_NET_SUPPORTING_WM_CHECK", "_NET_ACTIVE_WINDOW", "WM_S0", "WM_STATE",
 	}
 	values := make([]xproto.Atom, len(names))
 	for index, name := range names {
@@ -228,7 +229,7 @@ func loadAtoms(connection *xgb.Conn) (endpointAtoms, error) {
 		netWMName: values[5], netWMIcon: values[6], netWMState: values[7], netWMStateFullscreen: values[8],
 		netWMStateMaxHorz: values[9], netWMStateMaxVert: values[10], netWMWindowType: values[11],
 		netWMWindowNormal: values[12], netWMWindowDialog: values[13], netWMSupported: values[14], netWMSupportingWM: values[15],
-		netWMActiveWindow: values[16], wmSelection: values[17],
+		netWMActiveWindow: values[16], wmSelection: values[17], wmState: values[18],
 	}, nil
 }
 
@@ -262,12 +263,12 @@ func (b *broker) watch(display *endpoint) {
 	go func() {
 		for {
 			event, err := display.connection.WaitForEvent()
+			if err != nil {
+				xgb.Logger.Printf("X11 broker request failed: %v", err)
+				continue
+			}
 			if event == nil {
-				connectionErr := error(err)
-				if connectionErr == nil {
-					connectionErr = errors.New("X11 connection closed")
-				}
-				b.events <- endpointEvent{endpoint: display, err: connectionErr}
+				b.events <- endpointEvent{endpoint: display, err: errors.New("X11 connection closed")}
 				return
 			}
 			b.events <- endpointEvent{endpoint: display, event: event}
@@ -291,8 +292,11 @@ func (b *broker) handleEvent(received endpointEvent) {
 	case xproto.MapRequestEvent:
 		b.resizeRootForWindow(event.Window)
 		xproto.MapWindow(b.nested.connection, event.Window)
+		setProperty32(b.nested.connection, event.Window, b.nested.atoms.wmState, b.nested.atoms.wmState, 1, 0)
 		b.fitWindow(event.Window)
 		b.focusWindow(event.Window)
+	case xproto.UnmapNotifyEvent:
+		_ = xproto.DeletePropertyChecked(b.nested.connection, event.Window, b.nested.atoms.wmState).Check()
 	case xproto.ConfigureRequestEvent:
 		b.configureWindow(event)
 	case xproto.ClientMessageEvent:
@@ -452,6 +456,7 @@ func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {
 		}
 		b.resizeRoot(width, height)
 		b.fitWindow(event.Window)
+		b.notifyWindowGeometry(event.Window)
 		return
 	}
 	mask := uint16(0)
@@ -472,6 +477,20 @@ func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {
 	if mask != 0 {
 		xproto.ConfigureWindow(b.nested.connection, event.Window, mask, values)
 	}
+}
+
+func (b *broker) notifyWindowGeometry(window xproto.Window) {
+	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(window)).Reply()
+	if err != nil {
+		return
+	}
+	// A denied configure request produces no server event, but still needs a reply.
+	notification := xproto.ConfigureNotifyEvent{
+		Event: window, Window: window,
+		X: geometry.X, Y: geometry.Y,
+		Width: geometry.Width, Height: geometry.Height, BorderWidth: geometry.BorderWidth,
+	}
+	_ = xproto.SendEventChecked(b.nested.connection, false, window, xproto.EventMaskStructureNotify, string(notification.Bytes())).Check()
 }
 
 func (b *broker) resizeRootForWindow(window xproto.Window) {
