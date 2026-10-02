@@ -160,7 +160,6 @@ func TestXwaylandUsesALazyPrivateDisplay(t *testing.T) {
 		t.Skip("no Wayland display")
 	}
 	original := findX11Server
-	originalDecorations := x11ServerSupportsDecorations
 	originalHiDPI := x11ServerSupportsHiDPI
 	findX11Server = func(name string) (string, error) {
 		if name == "Xwayland" {
@@ -168,31 +167,28 @@ func TestXwaylandUsesALazyPrivateDisplay(t *testing.T) {
 		}
 		return "", errors.New("not found")
 	}
-	x11ServerSupportsDecorations = func(string) bool { return true }
-	x11ServerSupportsHiDPI = func(string) bool { return true }
 	t.Cleanup(func() {
 		findX11Server = original
-		x11ServerSupportsDecorations = originalDecorations
 		x11ServerSupportsHiDPI = originalHiDPI
 	})
+	x11ServerSupportsHiDPI = func(string) bool { return true }
 	server, err := x11ServerCommand("/tmp/authority", "cpak-test", types.ClipboardGrant{HostToApp: true, AppToHost: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/Xwayland", "-auth", "/tmp/authority", "-nolisten", "tcp", "-noreset", "-geometry", "1280x800", "-hidpi", "-decorate"}
+	want := []string{"/usr/bin/Xwayland", "-auth", "/tmp/authority", "-nolisten", "tcp", "-noreset", "-geometry", "1x1", "-hidpi"}
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xwayland arguments: got %v, want %v", server.command.Args, want)
 	}
 	if !server.privateSocket || !server.lazy || server.hostWindow {
 		t.Fatalf("Xwayland mode: %+v", server)
 	}
-	x11ServerSupportsDecorations = func(string) bool { return false }
 	x11ServerSupportsHiDPI = func(string) bool { return false }
 	server, err = x11ServerCommand("/tmp/authority", "cpak-test", types.ClipboardGrant{HostToApp: true, AppToHost: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = want[:len(want)-2]
+	want = want[:len(want)-1]
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xwayland fallback arguments: got %v, want %v", server.command.Args, want)
 	}
@@ -357,6 +353,13 @@ func TestX11BrokerStopsTheContainerAfterItsLastWindowCloses(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	geometry, err := xproto.GetGeometry(connection, xproto.Drawable(window)).Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if geometry.Width != 640 || geometry.Height != 480 {
+		t.Fatalf("display window geometry: got %dx%d, want 640x480", geometry.Width, geometry.Height)
+	}
 	time.Sleep(250 * time.Millisecond)
 	xproto.DestroyWindow(connection, window)
 	connection.Sync()
@@ -450,7 +453,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 		t.Fatalf("broker readiness: %v, %v", ready, err)
 	}
 	readyReader.Close()
-	if err = exec.Command(wlrctl, "toplevel", "find").Run(); err == nil {
+	if err = exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run(); err == nil {
 		t.Fatal("Xwayland created a host window before an X11 client connected")
 	}
 	publicSocket, err := os.Stat(x11SocketEndpoint(container))
@@ -458,18 +461,19 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := connectTestX11(t, container)
-	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor").CombinedOutput(); commandErr != nil {
-		t.Fatalf("wait for probe X11 display: %v\n%s", commandErr, output)
+	time.Sleep(250 * time.Millisecond)
+	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() != nil {
+		t.Fatal("Xwayland did not create its hidden technical surface")
 	}
 	probe.Close()
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		if exec.Command(wlrctl, "toplevel", "find").Run() != nil {
+		if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() != nil {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if exec.Command(wlrctl, "toplevel", "find").Run() == nil {
+	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() == nil {
 		t.Fatal("unused Xwayland display remained visible")
 	}
 	connection := connectTestX11(t, container)
@@ -488,19 +492,21 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	xproto.ChangeProperty(connection, xproto.PropModeReplace, window, name, utf8, 8, uint32(len(title)), []byte(title))
 	xproto.MapWindow(connection, window)
 	connection.Sync()
-	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor").CombinedOutput(); commandErr != nil {
-		t.Fatalf("wait for isolated X11 window: %v\n%s", commandErr, output)
-	}
-	commands := [][]string{
-		{"toplevel", "focus"},
-		{"pointer", "move", "-10000", "-10000"},
-		{"pointer", "move", "100", "100"},
-		{"pointer", "click"},
-	}
-	for _, arguments := range commands {
-		if output, commandErr := exec.Command(wlrctl, arguments...).CombinedOutput(); commandErr != nil {
-			t.Fatalf("wlrctl %v: %v\n%s", arguments, commandErr, output)
+	deadline = time.Now().Add(2 * time.Second)
+	viewable := false
+	for time.Now().Before(deadline) {
+		attributes, attributesErr := xproto.GetWindowAttributes(connection, window).Reply()
+		if attributesErr == nil && attributes.MapState == xproto.MapStateViewable {
+			viewable = true
+			break
 		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !viewable {
+		t.Fatal("isolated X11 window did not become viewable")
+	}
+	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor", "app_id:org.freedesktop.Xwayland").CombinedOutput(); commandErr != nil {
+		t.Fatalf("wait for isolated X11 window: %v\n%s", commandErr, output)
 	}
 	received := make(chan bool, 1)
 	go func() {
@@ -516,6 +522,26 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 			}
 		}
 	}()
+	windowCommands := [][]string{
+		{"toplevel", "focus", "app_id:org.freedesktop.Xwayland"},
+		{"toplevel", "maximize", "app_id:org.freedesktop.Xwayland"},
+	}
+	for _, arguments := range windowCommands {
+		if output, commandErr := exec.Command(wlrctl, arguments...).CombinedOutput(); commandErr != nil {
+			t.Fatalf("wlrctl %v: %v\n%s", arguments, commandErr, output)
+		}
+	}
+	time.Sleep(time.Second)
+	pointerCommands := [][]string{
+		{"pointer", "move", "-10000", "-10000"},
+		{"pointer", "move", "500", "300"},
+		{"pointer", "click"},
+	}
+	for _, arguments := range pointerCommands {
+		if output, commandErr := exec.Command(wlrctl, arguments...).CombinedOutput(); commandErr != nil {
+			t.Fatalf("wlrctl %v: %v\n%s", arguments, commandErr, output)
+		}
+	}
 	select {
 	case ok := <-received:
 		if !ok {
@@ -524,18 +550,18 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Wayland pointer click did not reach the X11 application")
 	}
-	if output, commandErr := exec.Command(wlrctl, "toplevel", "close").CombinedOutput(); commandErr != nil {
+	if output, commandErr := exec.Command(wlrctl, "toplevel", "close", "app_id:org.freedesktop.Xwayland").CombinedOutput(); commandErr != nil {
 		t.Fatalf("close isolated X11 display: %v\n%s", commandErr, output)
 	}
 	connection.Close()
 	deadline = time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		if exec.Command(wlrctl, "toplevel", "find").Run() != nil {
+		if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() != nil {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if exec.Command(wlrctl, "toplevel", "find").Run() == nil {
+	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() == nil {
 		t.Fatal("isolated X11 display remained visible after its host window closed")
 	}
 	if !sameContainerProcess(container, container.Pid) {
@@ -559,7 +585,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	}
 	xproto.MapWindow(restarted, restartedWindow)
 	restarted.Sync()
-	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor").CombinedOutput(); commandErr != nil {
+	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor", "app_id:org.freedesktop.Xwayland").CombinedOutput(); commandErr != nil {
 		t.Fatalf("wait for restarted X11 display: %v\n%s", commandErr, output)
 	}
 	restarted.Close()

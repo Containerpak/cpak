@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jezek/xgb"
+	"github.com/jezek/xgb/randr"
 	"github.com/jezek/xgb/xproto"
 )
 
@@ -277,6 +278,7 @@ func (b *broker) handleEvent(received endpointEvent) {
 	}
 	switch event := received.event.(type) {
 	case xproto.MapRequestEvent:
+		b.resizeRootForWindow(event.Window)
 		xproto.MapWindow(b.nested.connection, event.Window)
 		b.fitWindow(event.Window)
 		b.focusWindow(event.Window)
@@ -425,6 +427,19 @@ func (b *broker) focusWindow(window xproto.Window) {
 
 func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {
 	if b.windowCanFillRoot(event.Window) {
+		width, height := event.Width, event.Height
+		if event.ValueMask&xproto.ConfigWindowWidth == 0 || event.ValueMask&xproto.ConfigWindowHeight == 0 {
+			geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(event.Window)).Reply()
+			if err == nil {
+				if event.ValueMask&xproto.ConfigWindowWidth == 0 {
+					width = geometry.Width
+				}
+				if event.ValueMask&xproto.ConfigWindowHeight == 0 {
+					height = geometry.Height
+				}
+			}
+		}
+		b.resizeRoot(width, height)
 		b.fitWindow(event.Window)
 		return
 	}
@@ -446,6 +461,85 @@ func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {
 	if mask != 0 {
 		xproto.ConfigureWindow(b.nested.connection, event.Window, mask, values)
 	}
+}
+
+func (b *broker) resizeRootForWindow(window xproto.Window) {
+	if !b.windowCanFillRoot(window) {
+		return
+	}
+	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(window)).Reply()
+	if err == nil {
+		b.resizeRoot(geometry.Width, geometry.Height)
+	}
+}
+
+func (b *broker) resizeRoot(width, height uint16) {
+	if width < 32 || height < 32 {
+		return
+	}
+	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(b.nested.root)).Reply()
+	if err != nil || geometry.Width == width && geometry.Height == height {
+		return
+	}
+	if err = randr.Init(b.nested.connection); err != nil {
+		return
+	}
+	resources, err := randr.GetScreenResourcesCurrent(b.nested.connection, b.nested.root).Reply()
+	if err != nil {
+		return
+	}
+	mode, ok := smallestMode(resources.Modes, width, height)
+	if !ok {
+		return
+	}
+	for _, output := range resources.Outputs {
+		info, infoErr := randr.GetOutputInfo(b.nested.connection, output, resources.ConfigTimestamp).Reply()
+		if infoErr != nil || info.Connection != randr.ConnectionConnected || info.Crtc == 0 || !containsMode(info.Modes, randr.Mode(mode.Id)) {
+			continue
+		}
+		mmWidth := max(uint32(mode.Width)*254/960, 1)
+		mmHeight := max(uint32(mode.Height)*254/960, 1)
+		if randr.SetScreenSizeChecked(b.nested.connection, b.nested.root, mode.Width, mode.Height, mmWidth, mmHeight).Check() != nil {
+			return
+		}
+		_, _ = randr.SetCrtcConfig(
+			b.nested.connection,
+			info.Crtc,
+			xproto.TimeCurrentTime,
+			resources.ConfigTimestamp,
+			0,
+			0,
+			randr.Mode(mode.Id),
+			randr.RotationRotate0,
+			[]randr.Output{output},
+		).Reply()
+		return
+	}
+}
+
+func smallestMode(modes []randr.ModeInfo, width, height uint16) (randr.ModeInfo, bool) {
+	var selected randr.ModeInfo
+	var area uint64
+	for _, mode := range modes {
+		if mode.Width < width || mode.Height < height {
+			continue
+		}
+		candidateArea := uint64(mode.Width) * uint64(mode.Height)
+		if area == 0 || candidateArea < area {
+			selected = mode
+			area = candidateArea
+		}
+	}
+	return selected, area != 0
+}
+
+func containsMode(modes []randr.Mode, mode randr.Mode) bool {
+	for _, candidate := range modes {
+		if candidate == mode {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *broker) updateWindowState(event xproto.ClientMessageEvent) {

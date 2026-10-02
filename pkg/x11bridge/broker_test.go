@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/jezek/xgb/randr"
 	"github.com/jezek/xgb/xproto"
 )
 
@@ -108,5 +109,34 @@ func TestWindowStateActionsAreAppliedExactly(t *testing.T) {
 	states = applyState(states, second, 2)
 	if len(states) != 0 {
 		t.Fatalf("toggle state off: %v", states)
+	}
+}
+
+func TestSmallestModeFitsTheRequestedWindow(t *testing.T) {
+	modes := []randr.ModeInfo{
+		{Id: 1, Width: 640, Height: 480},
+		{Id: 2, Width: 800, Height: 600},
+		{Id: 3, Width: 640, Height: 350},
+	}
+	mode, ok := smallestMode(modes, 484, 316)
+	if !ok || mode.Id != 3 {
+		t.Fatalf("smallest fitting mode: got %+v, available=%t", mode, ok)
+	}
+	mode, ok = smallestMode(modes, 700, 500)
+	if !ok || mode.Id != 2 {
+		t.Fatalf("larger fitting mode: got %+v, available=%t", mode, ok)
+	}
+	if _, ok = smallestMode(modes, 900, 700); ok {
+		t.Fatal("unsupported size was reported as available")
+	}
+}
+
+func TestContainsModeMatchesAnExactIdentifier(t *testing.T) {
+	modes := []randr.Mode{1, 3, 5}
+	if !containsMode(modes, 3) {
+		t.Fatal("available mode was not found")
+	}
+	if containsMode(modes, 4) {
+		t.Fatal("missing mode was reported as available")
 	}
 }
