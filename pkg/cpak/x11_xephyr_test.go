@@ -96,6 +96,7 @@ func TestX11BrokerIntegratesXephyrWithTheHostDesktop(t *testing.T) {
 	if ready[0] != 1 {
 		t.Fatalf("X11 broker readiness response: %v", ready)
 	}
+	eventDecoders, errorDecoders := len(xgb.NewEventFuncs), len(xgb.NewErrorFuncs)
 	readyReader.Close()
 	defer func() {
 		cleanupX11Bridge(container)
@@ -228,6 +229,9 @@ func TestX11BrokerIntegratesXephyrWithTheHostDesktop(t *testing.T) {
 	waitTestCondition(t, 4*time.Second, func() bool {
 		return !sameContainerProcess(container, container.Pid) && !sameRecordedProcess(container.X11BridgePid, container.X11BridgeStartTime)
 	}, "closing the last window did not stop the cpak instance")
+	if len(xgb.NewEventFuncs) != eventDecoders || len(xgb.NewErrorFuncs) != errorDecoders {
+		t.Fatal("X11 broker changed shared decoders after selecting events")
+	}
 }
 
 func connectHostX11(t *testing.T) *xgb.Conn {

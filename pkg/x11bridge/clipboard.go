@@ -116,7 +116,10 @@ func (b *clipboardBridge) watchSelectionChanges(display *endpoint) {
 	if display == nil {
 		return
 	}
-	if err := xfixes.Init(display.connection); err != nil {
+	display.connection.ExtLock.RLock()
+	_, available := display.connection.Extensions["XFIXES"]
+	display.connection.ExtLock.RUnlock()
+	if !available {
 		return
 	}
 	if _, err := xfixes.QueryVersion(display.connection, 5, 0).Reply(); err != nil {

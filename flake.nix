@@ -19,7 +19,7 @@
             pname = "cpak";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-cgqb2AY06Ru+JJIK7vyaLSPyjJqiLvNytvSQCgDOASc=";
+            vendorHash = "sha256-Sqakbm9QulHh05lxZ4CGvIdHVTIziCTr4SxfIslwIU0=";
 
             nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [

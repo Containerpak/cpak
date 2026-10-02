@@ -14,6 +14,7 @@ import (
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/randr"
+	"github.com/jezek/xgb/xfixes"
 	"github.com/jezek/xgb/xproto"
 )
 
@@ -75,6 +76,7 @@ type broker struct {
 	lastIcon   []byte
 	fullscreen bool
 	maximized  bool
+	randr      bool
 	clipboard  *clipboardBridge
 	events     chan endpointEvent
 }
@@ -88,6 +90,14 @@ type endpointEvent struct {
 func Run(ctx context.Context, options Options) error {
 	if options.Nested == nil || options.ServerAlive == nil || options.StopContainer == nil {
 		return errors.New("invalid X11 broker configuration")
+	}
+	// XGB shares its decoder tables across connections. Register before selecting events.
+	resize := options.Host == nil && randr.Init(options.Nested) == nil
+	if options.HostToApp && options.Host != nil {
+		_ = xfixes.Init(options.Host)
+	}
+	if options.AppToHost {
+		_ = xfixes.Init(options.Nested)
 	}
 	nested, err := newEndpoint(options.Nested, true)
 	if err != nil {
@@ -104,6 +114,7 @@ func Run(ctx context.Context, options Options) error {
 		options: options,
 		nested:  nested,
 		host:    host,
+		randr:   resize,
 		events:  make(chan endpointEvent, 128),
 	}
 	b.clipboard = newClipboardBridge(nested, host, options.HostToApp, options.AppToHost)
@@ -474,14 +485,11 @@ func (b *broker) resizeRootForWindow(window xproto.Window) {
 }
 
 func (b *broker) resizeRoot(width, height uint16) {
-	if width < 32 || height < 32 {
+	if !b.randr || width < 32 || height < 32 {
 		return
 	}
 	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(b.nested.root)).Reply()
 	if err != nil || geometry.Width == width && geometry.Height == height {
-		return
-	}
-	if err = randr.Init(b.nested.connection); err != nil {
 		return
 	}
 	resources, err := randr.GetScreenResourcesCurrent(b.nested.connection, b.nested.root).Reply()
