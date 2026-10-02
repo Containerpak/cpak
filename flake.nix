@@ -6,6 +6,7 @@
   outputs = { self, nixpkgs }:
     let
       version = "2.14.2";
+      vendorHash = "sha256-Sqakbm9QulHh05lxZ4CGvIdHVTIziCTr4SxfIslwIU0=";
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
@@ -19,7 +20,7 @@
             pname = "cpak";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-Sqakbm9QulHh05lxZ4CGvIdHVTIziCTr4SxfIslwIU0=";
+            inherit vendorHash;
 
             nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [
@@ -127,7 +128,7 @@
                 pname = "cpak-sandbox-test";
                 inherit version;
                 src = ./.;
-                vendorHash = "sha256-cgqb2AY06Ru+JJIK7vyaLSPyjJqiLvNytvSQCgDOASc=";
+                inherit vendorHash;
                 doCheck = false;
                 buildPhase = ''
                   runHook preBuild
