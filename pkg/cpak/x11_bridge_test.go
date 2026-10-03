@@ -251,7 +251,7 @@ func TestX11BrokerStopsTheContainerAfterItsLastWindowCloses(t *testing.T) {
 	if _, err := exec.LookPath("Xwayland"); err != nil {
 		t.Skip("Xwayland is not installed")
 	}
-	state := t.TempDir()
+	state := filepath.Dir(tempSocketPath(t))
 	container, runtime, err := startX11Bridge(types.Container{CpakId: "broker-test", StatePath: state, LogPath: filepath.Join(state, "x11.log")}, types.ClipboardGrant{HostToApp: true, AppToHost: true})
 	if err != nil {
 		t.Fatal(err)
