@@ -535,6 +535,40 @@ func TestContainerCallRejectsUnknownPayloadFields(t *testing.T) {
 	}
 }
 
+func TestOpenURIIdentityCallback(t *testing.T) {
+	directory := t.TempDir()
+	output := filepath.Join(directory, "callback")
+	backend := filepath.Join(directory, "open-uri")
+	content := "#!/bin/sh\nprintf '%s' \"$1\" > \"" + output + "\"\n"
+	if err := os.WriteFile(backend, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	uri := "ms-appx-web://microsoft.aad.brokerplugin/d3590ed6-52b3-4102-aeff-aad2292ab01c?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&code=test-code"
+	options := testOptions(t)
+	options.OpenURICommand = backend
+	startBroker(t, options)
+	if err := testClient(options).OpenURI(context.Background(), OpenURIRequest{URI: uri}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		data, err := os.ReadFile(output)
+		if err == nil && string(data) == uri {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("identity callback did not reach the desktop backend unchanged")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	denied := testOptions(t)
+	denied.AllowOpenURI = false
+	startBroker(t, denied)
+	if err := testClient(denied).OpenURI(context.Background(), OpenURIRequest{URI: uri}); err == nil {
+		t.Fatal("identity callback bypassed the open URI permission")
+	}
+}
+
 func TestValidateURIArgs(t *testing.T) {
 	for _, value := range []string{"https://example.com", "mailto:user@example.com"} {
 		if err := validateOpenURI(OpenURIRequest{URI: value}); err != nil {

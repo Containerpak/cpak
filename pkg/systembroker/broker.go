@@ -645,6 +645,8 @@ func validateDesktopEnvironment(environment []string) error {
 	return nil
 }
 
+var microsoftIdentityPath = regexp.MustCompile(`^/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 func validateOpenURI(request OpenURIRequest) error {
 	if request.URI == "" || len(request.URI) > 4096 || strings.ContainsRune(request.URI, '\x00') || len(request.WorkingDirectory) > 4096 || strings.ContainsRune(request.WorkingDirectory, '\x00') || len(request.ActivationToken) > 4096 || strings.ContainsAny(request.ActivationToken, "\x00\r\n") {
 		return errors.New("invalid URI request")
@@ -653,6 +655,14 @@ func validateOpenURI(request OpenURIRequest) error {
 	if err == nil && parsed.Scheme != "" {
 		switch strings.ToLower(parsed.Scheme) {
 		case "http", "https", "mailto":
+			return nil
+		case "ms-appx-web":
+			if !strings.EqualFold(parsed.Host, "microsoft.aad.brokerplugin") || parsed.User != nil || parsed.Opaque != "" || strings.ContainsRune(request.URI, '#') || !microsoftIdentityPath.MatchString(parsed.EscapedPath()) {
+				return errors.New("invalid Microsoft identity callback")
+			}
+			if _, err := url.ParseQuery(parsed.RawQuery); err != nil {
+				return errors.New("invalid Microsoft identity callback query")
+			}
 			return nil
 		default:
 			return errors.New("URI scheme is not permitted")
