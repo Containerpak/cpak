@@ -25,6 +25,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 // ContainerServiceSocketPath is where the service is exposed inside containers.
@@ -431,7 +432,7 @@ func (c *Cpak) StopOwnedService() error {
 
 // socketIsLive reports whether something is accepting connections on path.
 func socketIsLive(path string) bool {
-	conn, err := net.DialTimeout("unix", path, socketDialTimeout)
+	conn, err := unixsocket.DialTimeout("unix", path, socketDialTimeout)
 	if err != nil {
 		return false
 	}
@@ -575,7 +576,7 @@ func (c *Cpak) serveSocketContext(ctx context.Context, socketPath string) (err e
 		return err
 	}
 
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := unixsocket.Listen("unix", socketPath)
 	if err != nil {
 		return err
 	}
@@ -865,7 +866,7 @@ func (c *Cpak) RunNested(nestedToken string, origin string, version string, bran
 
 	// start a connection to the socket
 	socketPath := nestedServiceSocketPath()
-	conn, err := net.DialTimeout("unix", socketPath, socketDialTimeout)
+	conn, err := unixsocket.DialTimeout("unix", socketPath, socketDialTimeout)
 	if err != nil {
 		return fmt.Errorf("cannot reach the cpak service on %s: %w", socketPath, err)
 	}

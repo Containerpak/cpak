@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 const (
@@ -80,7 +80,7 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 	}
 	command := server.command
 	socketPath := ""
-	var listener *net.UnixListener
+	var listener *unixsocket.Listener
 	var listenerFile *os.File
 	closePrivateListener := func(remove bool) {
 		if listenerFile != nil {
@@ -137,7 +137,7 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 	defer displayReader.Close()
 	if server.privateSocket {
 		socketPath = filepath.Join(container.StatePath, "x11.sock")
-		listener, err = net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+		listener, err = unixsocket.Listen("unix", socketPath)
 		if err != nil {
 			displayWriter.Close()
 			_ = os.Remove(authorityPath)
@@ -243,7 +243,7 @@ func startX11Bridge(container types.Container, clipboard types.ClipboardGrant) (
 }
 
 func createPrivateX11Listener(path string) (*os.File, error) {
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	listener, err := unixsocket.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("create private X11 socket: %w", err)
 	}

@@ -5,7 +5,9 @@
 package cpak
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/jezek/xgb"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"github.com/mirkobrombin/cpak/pkg/x11bridge"
 	"golang.org/x/sys/unix"
 )
@@ -228,11 +231,18 @@ func x11BrokerConnection(options X11BrokerOptions) (*xgb.Conn, error) {
 }
 
 func x11Connection(display, authority string) (*xgb.Conn, error) {
+	descriptor, address, err := unixsocket.Address(display)
+	if err != nil {
+		return nil, err
+	}
+	if descriptor != nil {
+		defer descriptor.Close()
+	}
 	previousAuthority, hadAuthority := os.LookupEnv("XAUTHORITY")
 	if err := os.Setenv("XAUTHORITY", authority); err != nil {
 		return nil, fmt.Errorf("select isolated X11 authority: %w", err)
 	}
-	connection, err := xgb.NewConnDisplay(display)
+	connection, err := xgb.NewConnDisplay(address)
 	if hadAuthority {
 		_ = os.Setenv("XAUTHORITY", previousAuthority)
 	} else {
@@ -293,7 +303,70 @@ func validatePrivateX11Listener(listener *os.File, path string) error {
 		return fmt.Errorf("inspect private X11 listener: %w", err)
 	}
 	unixAddress, ok := address.(*unix.SockaddrUnix)
-	if !ok || filepath.Clean(unixAddress.Name) != filepath.Clean(path) {
+	if !ok {
+		return errors.New("private X11 listener is not a Unix socket")
+	}
+	if filepath.Clean(unixAddress.Name) == filepath.Clean(path) {
+		return nil
+	}
+	if len(path) < 108 {
+		return errors.New("private X11 listener does not match its socket path")
+	}
+	return provePrivateX11ListenerConnection(listener, path)
+}
+
+// The directory descriptor used by bind may have closed before this handoff.
+// Prove the new listener receives a private probe before announcing readiness.
+func provePrivateX11ListenerConnection(listener *os.File, path string) error {
+	probe := make([]byte, 16)
+	if _, err := rand.Read(probe); err != nil {
+		return err
+	}
+	proxy, err := net.FileListener(listener)
+	if err != nil {
+		return err
+	}
+	defer proxy.Close()
+	server, ok := proxy.(*net.UnixListener)
+	if !ok {
+		return errors.New("private X11 listener is not a Unix socket")
+	}
+	server.SetUnlinkOnClose(false)
+	deadline := time.Now().Add(time.Second)
+	if err = server.SetDeadline(deadline); err != nil {
+		return err
+	}
+	client, err := unixsocket.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	pending, err := pendingX11Client(listener, client)
+	if err != nil {
+		return fmt.Errorf("verify private X11 listener queue: %w", err)
+	}
+	if !pending {
+		return errors.New("private X11 listener does not match its socket path")
+	}
+	if err = client.SetDeadline(deadline); err != nil {
+		return err
+	}
+	if _, err = client.Write(probe); err != nil {
+		return err
+	}
+	connection, err := server.AcceptUnix()
+	if err != nil {
+		return fmt.Errorf("verify private X11 listener: %w", err)
+	}
+	defer connection.Close()
+	if err = connection.SetReadDeadline(deadline); err != nil {
+		return err
+	}
+	got := make([]byte, len(probe))
+	if _, err = io.ReadFull(connection, got); err != nil {
+		return err
+	}
+	if !bytes.Equal(got, probe) {
 		return errors.New("private X11 listener does not match its socket path")
 	}
 	return nil
@@ -432,7 +505,7 @@ func startX11ClientProxy(ctx context.Context, listener *os.File, upstream string
 				return
 			}
 			active.Add(1)
-			server, dialErr := net.Dial("unix", upstream)
+			server, dialErr := unixsocket.DialTimeout("unix", upstream, 0)
 			if dialErr != nil {
 				_ = client.Close()
 				active.Add(-1)

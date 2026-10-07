@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/desktopui"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"golang.org/x/sys/unix"
 )
 
@@ -768,7 +769,7 @@ func removeSocket(path string) error {
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Getuid()) {
 		return errors.New("system broker socket has an unexpected owner")
 	}
-	connection, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	connection, err := unixsocket.DialTimeout("unix", path, 100*time.Millisecond)
 	if err == nil {
 		_ = connection.Close()
 		return errors.New("system broker socket is already active")
