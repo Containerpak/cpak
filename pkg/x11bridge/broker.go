@@ -318,20 +318,23 @@ func (b *broker) handleEvent(received endpointEvent) {
 }
 
 func (b *broker) tick() bool {
-	if !b.displayShown && b.options.ShowDisplay != nil && b.hasVisibleWindow() {
-		if err := b.options.ShowDisplay(); err != nil {
-			xgb.Logger.Printf("show isolated X11 display: %v", err)
-			return true
-		}
-		b.displayShown = true
-	}
 	windows := b.applicationWindows()
-	if len(windows) > 0 {
+	visible := len(windows) > 0 || b.options.ShowDisplay != nil && b.hasVisibleWindow()
+	if visible {
+		if !b.displayShown && b.options.ShowDisplay != nil {
+			if err := b.options.ShowDisplay(); err != nil {
+				xgb.Logger.Printf("show isolated X11 display: %v", err)
+				return true
+			}
+			b.displayShown = true
+		}
 		b.seenWindow = true
 		b.closeAt = time.Time{}
-		b.primary = windows[0]
-		b.fitWindow(b.primary)
-		b.syncHostWindow()
+		if len(windows) > 0 {
+			b.primary = windows[0]
+			b.fitWindow(b.primary)
+			b.syncHostWindow()
+		}
 	} else if b.seenWindow || b.options.ClientsAlive != nil && !b.options.ClientsAlive() {
 		if b.closeAt.IsZero() {
 			b.closeAt = time.Now().Add(windowCloseGrace)

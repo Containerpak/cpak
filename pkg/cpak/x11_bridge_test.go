@@ -596,10 +596,30 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	if restartErr = xproto.CreateWindowChecked(restarted, restartedScreen.RootDepth, restartedWindow, restartedScreen.Root, 0, 0, 320, 240, 0, xproto.WindowClassInputOutput, restartedScreen.RootVisual, 0, nil).Check(); restartErr != nil {
 		t.Fatal(restartErr)
 	}
+	transientFor := make([]byte, 4)
+	binary.NativeEndian.PutUint32(transientFor, uint32(restartedScreen.Root))
+	xproto.ChangeProperty(restarted, xproto.PropModeReplace, restartedWindow, xproto.AtomWmTransientFor, xproto.AtomWindow, 32, 1, transientFor)
 	xproto.MapWindow(restarted, restartedWindow)
 	restarted.Sync()
 	if output, commandErr := exec.Command(wlrctl, "toplevel", "waitfor", "app_id:org.freedesktop.Xwayland").CombinedOutput(); commandErr != nil {
 		t.Fatalf("wait for restarted X11 display: %v\n%s", commandErr, output)
+	}
+	time.Sleep(2300 * time.Millisecond)
+	attributes, attributesErr := xproto.GetWindowAttributes(restarted, restartedWindow).Reply()
+	if attributesErr != nil || attributes.MapState != xproto.MapStateViewable {
+		t.Fatalf("a standalone dialog stopped its display while still visible: %v", attributesErr)
+	}
+	xproto.DestroyWindow(restarted, restartedWindow)
+	restarted.Sync()
+	deadline = time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() == nil {
+		t.Fatal("a closed standalone dialog left an empty Xwayland display")
 	}
 	restarted.Close()
 	_ = process.Process.Kill()
