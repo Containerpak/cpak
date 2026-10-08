@@ -414,7 +414,15 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 	arguments = append(arguments, "-listenfd", "3", "-displayfd", "4")
 	command := exec.Command(options.X11Server, arguments...)
 	command.Env = setEnvironmentValue(os.Environ(), "NO_AT_BRIDGE", "1")
-	command.ExtraFiles = []*os.File{serverListener, displayWriter}
+	display, displayFile, err := startXwaylandDisplay()
+	if err != nil {
+		displayWriter.Close()
+		return fmt.Errorf("connect isolated X11 display to Wayland: %w", err)
+	}
+	defer display.close()
+	defer displayFile.Close()
+	command.Env = setEnvironmentValue(command.Env, "WAYLAND_SOCKET", "5")
+	command.ExtraFiles = []*os.File{serverListener, displayWriter, displayFile}
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
@@ -422,6 +430,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 		displayWriter.Close()
 		return fmt.Errorf("start isolated X11 display: %w", err)
 	}
+	_ = displayFile.Close()
 	_ = serverListener.Close()
 	displayWriter.Close()
 	serverStart, err := processStartTime(command.Process.Pid)
@@ -474,6 +483,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 	}
 	err = x11bridge.Run(ctx, x11bridge.Options{
 		Nested: nested, HostToApp: options.HostToApp, AppToHost: options.AppToHost,
+		ShowDisplay: display.show,
 		ServerAlive: func() bool {
 			return sameRecordedProcess(command.Process.Pid, serverStart) && sameContainerProcess(container, options.ContainerPid)
 		},

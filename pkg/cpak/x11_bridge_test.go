@@ -461,9 +461,22 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := connectTestX11(t, container)
-	time.Sleep(250 * time.Millisecond)
-	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() != nil {
-		t.Fatal("Xwayland did not create its hidden technical surface")
+	probeScreen := xproto.Setup(probe).DefaultScreen(probe)
+	helper, err := xproto.NewWindowId(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(probe, probeScreen.RootDepth, helper, probeScreen.Root, 0, 0, 8, 8, 0, xproto.WindowClassInputOutput, probeScreen.RootVisual, 0, nil).Check(); err != nil {
+		t.Fatal(err)
+	}
+	xproto.MapWindow(probe, helper)
+	probe.Sync()
+	time.Sleep(3 * time.Second)
+	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() == nil {
+		t.Fatal("an X11 connection without a window exposed the technical surface")
+	}
+	if _, err = xproto.GetInputFocus(probe).Reply(); err != nil {
+		t.Fatalf("hidden display disconnected its X11 client: %v", err)
 	}
 	probe.Close()
 	deadline := time.Now().Add(4 * time.Second)
@@ -483,7 +496,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	mask := uint32(xproto.EventMaskButtonPress | xproto.EventMaskPointerMotion | xproto.EventMaskStructureNotify)
-	if err = xproto.CreateWindowChecked(connection, screen.RootDepth, window, screen.Root, 0, 0, 640, 480, 0, xproto.WindowClassInputOutput, screen.RootVisual, xproto.CwEventMask, []uint32{mask}).Check(); err != nil {
+	if err = xproto.CreateWindowChecked(connection, screen.RootDepth, window, screen.Root, 0, 0, 640, 480, 0, xproto.WindowClassInputOutput, screen.RootVisual, xproto.CwBackPixel|xproto.CwEventMask, []uint32{0x2468ac, mask}).Check(); err != nil {
 		t.Fatal(err)
 	}
 	title := "cpak-pointer-test"

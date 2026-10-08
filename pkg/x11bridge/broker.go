@@ -33,6 +33,7 @@ type Options struct {
 	ClientsAlive  func() bool
 	StopContainer func()
 	Ready         func() error
+	ShowDisplay   func() error
 }
 
 type endpoint struct {
@@ -66,20 +67,21 @@ type endpointAtoms struct {
 }
 
 type broker struct {
-	options    Options
-	nested     *endpoint
-	host       *endpoint
-	hostWindow xproto.Window
-	primary    xproto.Window
-	seenWindow bool
-	closeAt    time.Time
-	lastTitle  string
-	lastIcon   []byte
-	fullscreen bool
-	maximized  bool
-	randr      bool
-	clipboard  *clipboardBridge
-	events     chan endpointEvent
+	options      Options
+	nested       *endpoint
+	host         *endpoint
+	hostWindow   xproto.Window
+	primary      xproto.Window
+	seenWindow   bool
+	displayShown bool
+	closeAt      time.Time
+	lastTitle    string
+	lastIcon     []byte
+	fullscreen   bool
+	maximized    bool
+	randr        bool
+	clipboard    *clipboardBridge
+	events       chan endpointEvent
 }
 
 type endpointEvent struct {
@@ -316,6 +318,13 @@ func (b *broker) handleEvent(received endpointEvent) {
 }
 
 func (b *broker) tick() bool {
+	if !b.displayShown && b.options.ShowDisplay != nil && b.hasVisibleWindow() {
+		if err := b.options.ShowDisplay(); err != nil {
+			xgb.Logger.Printf("show isolated X11 display: %v", err)
+			return true
+		}
+		b.displayShown = true
+	}
 	windows := b.applicationWindows()
 	if len(windows) > 0 {
 		b.seenWindow = true
@@ -333,6 +342,27 @@ func (b *broker) tick() bool {
 		b.closeAt = time.Time{}
 	}
 	b.clipboard.poll()
+	return false
+}
+
+func (b *broker) hasVisibleWindow() bool {
+	tree, err := xproto.QueryTree(b.nested.connection, b.nested.root).Reply()
+	if err != nil {
+		return false
+	}
+	for _, window := range tree.Children {
+		if window == b.nested.window {
+			continue
+		}
+		attributes, err := xproto.GetWindowAttributes(b.nested.connection, window).Reply()
+		if err != nil || attributes.Class != xproto.WindowClassInputOutput || attributes.MapState != xproto.MapStateViewable {
+			continue
+		}
+		geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(window)).Reply()
+		if err == nil && geometry.Width >= 32 && geometry.Height >= 32 {
+			return true
+		}
+	}
 	return false
 }
 
@@ -410,6 +440,10 @@ func (b *broker) fitWindow(window xproto.Window) {
 func (b *broker) windowCanFillRoot(window xproto.Window) bool {
 	attributes, err := xproto.GetWindowAttributes(b.nested.connection, window).Reply()
 	if err != nil || attributes.OverrideRedirect || b.windowIsTransient(window) {
+		return false
+	}
+	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(window)).Reply()
+	if err != nil || geometry.Width < 32 || geometry.Height < 32 {
 		return false
 	}
 	types := propertyAtoms(b.nested.connection, window, b.nested.atoms.netWMWindowType)
