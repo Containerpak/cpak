@@ -5,7 +5,7 @@
 
   outputs = { self, nixpkgs }:
     let
-      version = "2.14.3";
+      version = "2.14.4";
       vendorHash = "sha256-Sqakbm9QulHh05lxZ4CGvIdHVTIziCTr4SxfIslwIU0=";
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
