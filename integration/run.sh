@@ -337,6 +337,16 @@ run_probe() {
 	"$cpak" stop "$origin"
 }
 
+check_application_namespace() {
+	origin=$1
+	first=$(run_command "$origin" application-namespace | sed -n 's/^application-userns=//p')
+	second=$(run_command "$origin" application-namespace | sed -n 's/^application-userns=//p')
+	if [ -z "$first" ] || [ "$first" != "$second" ]; then
+		echo "application launches did not share their isolated user namespace" >&2
+		exit 1
+	fi
+}
+
 wait_browser_url() {
 	origin=$1
 	url=$2
@@ -391,8 +401,10 @@ install "$manifest_host/integration/session-bus"
 run_probe "$manifest_host/integration/session-bus" session-bus-own
 
 install "$manifest_host/integration/nested-sandbox"
+check_application_namespace "$manifest_host/integration/nested-sandbox"
 run_probe "$manifest_host/integration/nested-sandbox" nested-mount
 install "$manifest_host/integration/nested-sandbox-disabled"
+check_application_namespace "$manifest_host/integration/nested-sandbox-disabled"
 run_probe "$manifest_host/integration/nested-sandbox-disabled" blocked-mount
 
 browser_origin="$manifest_host/integration/browser"
@@ -724,6 +736,7 @@ fi
 "$cpak" stop "$offline_origin"
 
 install "$manifest_host/integration/environment"
+check_application_namespace "$manifest_host/integration/environment"
 run_probe "$manifest_host/integration/environment" root-identity
 "$cpak" environment create --name system-identities --origin "$manifest_host/integration/environment" --package-version main
 "$cpak" environment shell --environment system-identities --command /usr/local/bin/cpak-integration-probe -- persistence-write

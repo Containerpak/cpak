@@ -53,6 +53,8 @@ func main() {
 		err = probeGuestEnvironment()
 	case "seccomp":
 		err = probeSeccomp()
+	case "application-namespace":
+		err = probeApplicationNamespace()
 	case "nested-mount":
 		err = probeNestedMount(true)
 	case "blocked-mount":
@@ -90,6 +92,33 @@ func main() {
 		fail(err.Error())
 	}
 	fmt.Printf("%s probe passed\n", os.Args[1])
+}
+
+func probeApplicationNamespace() error {
+	namespace, err := os.Readlink("/proc/self/ns/user")
+	if err != nil {
+		return err
+	}
+	tasks, err := os.ReadDir("/proc/1/task")
+	if err != nil {
+		return err
+	}
+	denied := 0
+	for _, task := range tasks {
+		_, err = os.ReadDir(filepath.Join("/proc/1/task", task.Name(), "root"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("init thread %s root access: %v, want permission denied", task.Name(), err)
+		}
+		denied++
+	}
+	if denied == 0 {
+		return fmt.Errorf("no live init thread roots checked")
+	}
+	fmt.Printf("application-userns=%s\n", namespace)
+	return nil
 }
 
 func probeOpenLocalFile(commandName string) error {

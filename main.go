@@ -25,6 +25,7 @@ import (
 )
 
 type CLI struct {
+	ApplicationRuntime cmd.ApplicationRuntimeCmd `cmd:"application-runtime" help:"Serve commands inside the application namespace"`
 	Install            cmd.InstallCmd            `cmd:"install" help:"Install a package from a remote Git repository"`
 	Update             cmd.UpdateCmd             `cmd:"update" help:"Update one or all the packages in the local store"`
 	Rollback           cmd.RollbackCmd           `cmd:"rollback" help:"Restore the previous installed version of a package"`

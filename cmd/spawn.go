@@ -1765,13 +1765,15 @@ func (c *SpawnCmd) serveInit(listener *unixsocket.Listener, grantListener net.Li
 			c.spawnVerbose("CPAK env var found: ", env)
 		}
 	}
-	if err := c.signalReady(); err != nil {
-		return err
-	}
 	go c.serveGrantMounts(grantListener, grantMounts)
 	reaper := newChildReaper("/proc")
 	defer reaper.close()
-	c.spawnVerbose("Container init is ready")
+	return c.startApplicationRuntime(listener, envVars, grants, idleTimeout, reaper)
+}
+
+func (c *SpawnCmd) serveRuntime(listener *net.UnixListener, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
+	reaper := newChildReaper("/proc")
+	defer reaper.close()
 	lastActivity := time.Now()
 	var active atomic.Int64
 	var completed atomic.Int64
@@ -1973,7 +1975,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	args = append(args, landlockArguments(grants)...)
 	args = append(args, "--")
 	args = append(args, request.Args...)
-	command := c.applicationCommand(args, append(append([]string{}, baseEnv...), request.Env...))
+	command := runtimeLaunchCommand(args, append(append([]string{}, baseEnv...), request.Env...))
 	output := runtimeOutputWriter{writer: writer}
 	var input io.WriteCloser
 	var terminal *os.File
