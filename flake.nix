@@ -5,8 +5,17 @@
 
   outputs = { self, nixpkgs }:
     let
-      version = "2.14.4";
-      vendorHash = "sha256-Sqakbm9QulHh05lxZ4CGvIdHVTIziCTr4SxfIslwIU0=";
+      version = "2.14.5";
+      vendorHash = "sha256-+JB2fxN/EAABtzh1o+S/SOxpNa0VQ2LHEEg18Z6KtA8=";
+      buildGoModuleFor = pkgs: pkgs.buildGoModule.override {
+        go = pkgs.go.overrideAttrs (final: previous: {
+          version = "1.26.9";
+          src = pkgs.fetchurl {
+            url = "https://go.dev/dl/go${final.version}.src.tar.gz";
+            hash = "sha256-lzXX3Ntls10/pXfwQGRzfAO4nPGitx5uaf4vPG+f1Mo=";
+          };
+        });
+      };
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
@@ -16,7 +25,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          cpak = pkgs.buildGoModule {
+          cpak = buildGoModuleFor pkgs {
             pname = "cpak";
             inherit version;
             src = ./.;
@@ -124,7 +133,7 @@
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           nixos-module =
             let
-              sandbox-test = pkgs.buildGoModule {
+              sandbox-test = buildGoModuleFor pkgs {
                 pname = "cpak-sandbox-test";
                 inherit version;
                 src = ./.;
