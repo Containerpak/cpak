@@ -50,7 +50,8 @@ func TestApplicationRuntimeCannotReadParentRoot(t *testing.T) {
 		"-test.run=^TestApplicationRuntimeCannotReadParentRoot$")
 	command.Env = append(os.Environ(), "CPAK_RUNTIME_ISOLATION_TEST=parent")
 	if output, err := command.CombinedOutput(); err != nil {
-		if bytes.Contains(output, []byte("unshare failed: Operation not permitted")) {
+		if bytes.HasPrefix(output, []byte("unshare: unshare failed: Operation not permitted")) ||
+			bytes.HasPrefix(output, []byte("unshare: write failed /proc/self/uid_map: Operation not permitted")) {
 			t.Skip("user namespaces are unavailable")
 		}
 		t.Fatalf("application namespace fixture: %v\n%s", err, output)
