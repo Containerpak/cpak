@@ -339,6 +339,7 @@ run_probe() {
 
 check_application_namespace() {
 	origin=$1
+	run_command "$origin" application-namespace >/dev/null
 	first=$(run_command "$origin" application-namespace | sed -n 's/^application-userns=//p')
 	second=$(run_command "$origin" application-namespace | sed -n 's/^application-userns=//p')
 	if [ -z "$first" ] || [ "$first" != "$second" ]; then
