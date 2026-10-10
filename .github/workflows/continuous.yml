@@ -173,6 +173,7 @@ jobs:
           DISPLAY=:90 openbox --sm-disable >/tmp/cpak-openbox.log 2>&1 &
           openbox_pid=$!
           trap 'kill "${openbox_pid}" "${xvfb_pid}" 2>/dev/null || true' EXIT
+          CPAK_TEST_RANDR_DISPLAY=:90 go test -race ./pkg/x11bridge -run TestWindowSizeLimits -count=1 -v
           gecko_driver="$(command -v geckodriver || true)"
           if [ -z "${gecko_driver}" ] && [ -x "${GECKOWEBDRIVER:-}/geckodriver" ]; then
             gecko_driver="${GECKOWEBDRIVER}/geckodriver"
