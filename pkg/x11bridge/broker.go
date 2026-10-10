@@ -563,10 +563,15 @@ func (b *broker) resizeRoot(width, height uint16) {
 		}
 		mmWidth := max(uint32(mode.Width)*254/960, 1)
 		mmHeight := max(uint32(mode.Height)*254/960, 1)
-		if randr.SetScreenSizeChecked(b.nested.connection, b.nested.root, mode.Width, mode.Height, mmWidth, mmHeight).Check() != nil {
-			return
+		width, height := max(geometry.Width, mode.Width), max(geometry.Height, mode.Height)
+		// Both the old and new CRTC must fit while the mode is changed.
+		if width != geometry.Width || height != geometry.Height {
+			if randr.SetScreenSizeChecked(b.nested.connection, b.nested.root, width, height,
+				max(uint32(width)*254/960, 1), max(uint32(height)*254/960, 1)).Check() != nil {
+				return
+			}
 		}
-		_, _ = randr.SetCrtcConfig(
+		reply, err := randr.SetCrtcConfig(
 			b.nested.connection,
 			info.Crtc,
 			xproto.TimeCurrentTime,
@@ -577,6 +582,13 @@ func (b *broker) resizeRoot(width, height uint16) {
 			randr.RotationRotate0,
 			[]randr.Output{output},
 		).Reply()
+		if err != nil || reply.Status != randr.SetConfigSuccess {
+			return
+		}
+		if width != mode.Width || height != mode.Height {
+			_ = randr.SetScreenSizeChecked(b.nested.connection, b.nested.root,
+				mode.Width, mode.Height, mmWidth, mmHeight).Check()
+		}
 		return
 	}
 }
