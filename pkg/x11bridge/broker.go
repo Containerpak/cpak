@@ -428,15 +428,16 @@ func (b *broker) fitWindow(window xproto.Window) {
 	if err != nil || root.Width == 0 || root.Height == 0 {
 		return
 	}
+	width, height := b.windowSizeWithinLimits(window, root.Width, root.Height)
 	geometry, err := xproto.GetGeometry(b.nested.connection, xproto.Drawable(window)).Reply()
-	if err == nil && geometry.X == 0 && geometry.Y == 0 && geometry.Width == root.Width && geometry.Height == root.Height && geometry.BorderWidth == 0 {
+	if err == nil && geometry.X == 0 && geometry.Y == 0 && geometry.Width == width && geometry.Height == height && geometry.BorderWidth == 0 {
 		return
 	}
 	_ = xproto.ConfigureWindowChecked(
 		b.nested.connection,
 		window,
 		xproto.ConfigWindowX|xproto.ConfigWindowY|xproto.ConfigWindowWidth|xproto.ConfigWindowHeight|xproto.ConfigWindowBorderWidth,
-		[]uint32{0, 0, uint32(root.Width), uint32(root.Height), 0},
+		[]uint32{0, 0, uint32(width), uint32(height), 0},
 	).Check()
 }
 
@@ -449,8 +450,30 @@ func (b *broker) windowCanFillRoot(window xproto.Window) bool {
 	if err != nil || geometry.Width < 32 || geometry.Height < 32 {
 		return false
 	}
+	width, height := b.windowSizeWithinLimits(window, geometry.Width, geometry.Height)
+	if width < 32 || height < 32 {
+		return false
+	}
 	types := propertyAtoms(b.nested.connection, window, b.nested.atoms.netWMWindowType)
 	return len(types) == 0 || containsAtom(types, b.nested.atoms.netWMWindowNormal)
+}
+
+func (b *broker) windowSizeWithinLimits(window xproto.Window, width, height uint16) (uint16, uint16) {
+	reply, err := xproto.GetProperty(b.nested.connection, false, window, xproto.AtomWmNormalHints, xproto.AtomWmSizeHints, 0, 9).Reply()
+	if err != nil || reply.Format != 32 || len(reply.Value) < 36 || xgb.Get32(reply.Value)&32 == 0 {
+		return width, height
+	}
+	maxWidth, maxHeight := int32(xgb.Get32(reply.Value[28:])), int32(xgb.Get32(reply.Value[32:]))
+	if maxWidth <= 0 || maxHeight <= 0 {
+		return width, height
+	}
+	if int32(width) > maxWidth {
+		width = uint16(maxWidth)
+	}
+	if int32(height) > maxHeight {
+		height = uint16(maxHeight)
+	}
+	return width, height
 }
 
 func (b *broker) windowIsTransient(window xproto.Window) bool {
