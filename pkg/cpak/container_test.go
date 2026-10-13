@@ -1135,3 +1135,48 @@ func TestContainerEnvironmentAppliesTheHostLocaleOverTheManifest(t *testing.T) {
 		t.Fatalf("the manifest locale survived: %v", environment)
 	}
 }
+
+func TestContainerEnvironmentDoesNotInheritUnavailableQtDisplay(t *testing.T) {
+	socket := tempSocketPath(t)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv("QT_QPA_PLATFORM", "xcb")
+	t.Setenv("DISPLAY", ":0")
+	container := types.Container{
+		CpakId:            "container-id",
+		WaylandDisplay:    "wayland-stored",
+		WaylandSocketPath: socket,
+	}
+	cases := []struct {
+		name     string
+		config   string
+		override types.Override
+		x11      bool
+		want     string
+	}{
+		{"wayland", `{"config":{}}`, types.Override{SocketWayland: true}, false, "wayland"},
+		{"image", `{"config":{"Env":["QT_QPA_PLATFORM=offscreen"]}}`, types.Override{SocketWayland: true}, false, "offscreen"},
+		{"override", `{"config":{}}`, types.Override{SocketWayland: true, Env: []string{"QT_QPA_PLATFORM=minimal"}}, false, "minimal"},
+		{"x11", `{"config":{}}`, types.Override{SocketWayland: true}, true, "xcb"},
+		{"no display", `{"config":{}}`, types.Override{}, false, "xcb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := container
+			if tc.x11 {
+				c.X11SocketPath = "/private/x11.sock"
+				c.X11Display = ":42"
+			}
+			env, err := containerEnvironment(types.Application{Config: tc.config}, tc.override, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := environmentValue(env, "QT_QPA_PLATFORM"); got != tc.want {
+				t.Fatalf("Qt platform: got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

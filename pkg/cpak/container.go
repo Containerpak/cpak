@@ -1272,6 +1272,11 @@ func containerEnvironment(app types.Application, override types.Override, contai
 	}
 
 	envVars := append([]string{}, os.Environ()...)
+	wayland := containerWaylandEndpoint(container, override)
+	envVars = configureWaylandDisplay(envVars, wayland.Display, wayland.SocketPath)
+	if container.X11SocketPath == "" && environmentValue(envVars, "WAYLAND_DISPLAY") != "" && environmentValue(envVars, "QT_QPA_PLATFORM") == "xcb" {
+		envVars = setEnvironmentValue(envVars, "QT_QPA_PLATFORM", "wayland")
+	}
 	envVars = append(envVars, config.Config.Env...)
 	envVars = append(envVars, override.Env...)
 	envVars = applyAddonEnvironment(envVars, addons)
@@ -1296,7 +1301,6 @@ func containerEnvironment(app types.Application, override types.Override, contai
 			envVars = append(envVars, "CPAK_HOST_OS_RELEASE="+hostOSReleaseTarget)
 		}
 	}
-	wayland := containerWaylandEndpoint(container, override)
 	envVars = configureWaylandDisplay(envVars, wayland.Display, wayland.SocketPath)
 	envVars = append(envVars, "CPAK_CONTAINER_ID="+container.CpakId)
 	if container.SystemBrokerSocketPath != "" {
