@@ -217,7 +217,7 @@ func skipUpdateCheck(args []string) bool {
 		}
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "application-runtime" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" {
 			return true
 		}
 	}
