@@ -121,6 +121,31 @@ func TestWaylandDisplayAcceptsNestedRuntimeSocket(t *testing.T) {
 	}
 }
 
+func TestWaylandSocketAliasesReuseTheSamePolicy(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	override := types.Override{SocketWayland: true}
+	t.Setenv("WAYLAND_DISPLAY", "wayland-4")
+	relative := currentWaylandEndpoint(override)
+	first, err := containerLaunchPolicyHashWithWayland(containerRuntimePolicyVersion, "", override, nil, nil, relative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WAYLAND_DISPLAY", filepath.Join("/run/user", uid, "wayland-4"))
+	absolute := currentWaylandEndpoint(override)
+	second, err := containerLaunchPolicyHashWithWayland(containerRuntimePolicyVersion, "", override, nil, nil, absolute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative != absolute || first != second {
+		t.Fatalf("socket aliases changed the container policy: %+v, %+v", relative, absolute)
+	}
+	t.Setenv("WAYLAND_DISPLAY", "")
+	withoutDisplay := currentWaylandEndpoint(override)
+	if withoutDisplay.Display != "" {
+		t.Fatalf("missing Wayland display enabled Wayland: %+v", withoutDisplay)
+	}
+}
+
 func TestWaylandRejectsDisplayOutsideRuntimeDirectory(t *testing.T) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	t.Setenv("WAYLAND_DISPLAY", "/tmp/foreign-wayland")

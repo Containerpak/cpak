@@ -230,6 +230,9 @@ func waylandDisplay(uid string) string {
 	}
 	if filepath.IsAbs(display) {
 		clean := filepath.Clean(display)
+		if filepath.Dir(clean) == runtimeDir {
+			return filepath.Base(clean)
+		}
 		if strings.HasPrefix(clean, runtimeDir+string(filepath.Separator)) {
 			return clean
 		}
