@@ -1052,3 +1052,88 @@ func TestAClientCannotEmitSignalsRepliesOrErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestAServicePolicyReceivesCallsAndAnswersThem(t *testing.T) {
+	policy := types.DBusPolicy{Own: []string{"org.kde.StatusNotifierItem-"}}
+	proxy := &Proxy{options: Options{Policy: policy}}
+	state := &connectionState{bluetoothReplies: map[uint32]string{}, serviceReplies: map[uint32]string{}}
+	state.uniqueName = ":1.42"
+
+	call := &dbus.Message{Type: dbus.TypeMethodCall, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldDestination: dbus.MakeVariant(":1.42"),
+		dbus.FieldSender:      dbus.MakeVariant(":1.7"),
+	}}
+	if !proxy.upstreamMessageAllowed(state, call) {
+		t.Fatal("a call to a service the policy owns was dropped before it arrived")
+	}
+
+	reply := &dbus.Message{Type: dbus.TypeMethodReply, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldReplySerial: dbus.MakeVariant(call.Serial()),
+		dbus.FieldDestination: dbus.MakeVariant(":1.7"),
+	}}
+	if proxy.intercept(context.Background(), nil, state, reply) {
+		t.Fatal("the service's own answer was not allowed back to its caller")
+	}
+	// The same serial a second time is not an answer to anything, so it is
+	// swallowed like any other unsolicited message.
+	if !proxy.intercept(context.Background(), nil, state, reply) {
+		t.Fatal("a serial was accepted twice")
+	}
+}
+
+func TestAServicePolicyDoesNotOpenTheClientToEveryone(t *testing.T) {
+	policy := types.DBusPolicy{Own: []string{"org.kde.StatusNotifierItem-"}}
+	proxy := &Proxy{options: Options{Policy: policy}}
+	state := &connectionState{bluetoothReplies: map[uint32]string{}, serviceReplies: map[uint32]string{}}
+	state.uniqueName = ":1.42"
+
+	elsewhere := &dbus.Message{Type: dbus.TypeMethodCall, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldDestination: dbus.MakeVariant(":1.99"),
+		dbus.FieldSender:      dbus.MakeVariant(":1.7"),
+	}}
+	if proxy.upstreamMessageAllowed(state, elsewhere) {
+		t.Fatal("a call addressed to another connection was forwarded")
+	}
+
+	unsolicited := &dbus.Message{Type: dbus.TypeMethodReply, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldReplySerial: dbus.MakeVariant(uint32(999)),
+		dbus.FieldDestination: dbus.MakeVariant(":1.7"),
+	}}
+	if !proxy.intercept(context.Background(), nil, state, unsolicited) {
+		t.Fatal("a reply to a call that never arrived reached the session bus")
+	}
+}
+
+func TestAClientOwningNothingStillReceivesNoCalls(t *testing.T) {
+	proxy := &Proxy{options: Options{Policy: types.DBusPolicy{
+		Talk: []types.DBusCallGrant{{Name: "org.example.Thing", Path: "/", Interface: "org.example.Thing", Members: []string{"Do"}}},
+	}}}
+	state := &connectionState{bluetoothReplies: map[uint32]string{}, serviceReplies: map[uint32]string{}}
+	state.uniqueName = ":1.42"
+	call := &dbus.Message{Type: dbus.TypeMethodCall, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldDestination: dbus.MakeVariant(":1.42"),
+		dbus.FieldSender:      dbus.MakeVariant(":1.7"),
+	}}
+	if proxy.upstreamMessageAllowed(state, call) {
+		t.Fatal("a client that publishes no service was opened to inbound calls")
+	}
+}
+
+func TestATalkGrantMayAskWhetherTheNameHasAnOwner(t *testing.T) {
+	policy := types.DBusPolicy{Talk: []types.DBusCallGrant{{
+		Name:      "org.kde.StatusNotifierWatcher",
+		Path:      "/StatusNotifierWatcher",
+		Interface: "org.kde.StatusNotifierWatcher",
+		Members:   []string{"RegisterStatusNotifierItem"},
+	}}}
+	for _, member := range []string{"NameHasOwner", "GetNameOwner"} {
+		if !policyBusCallAllowed(policy, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+			"org.freedesktop.DBus", member, []any{"org.kde.StatusNotifierWatcher"}) {
+			t.Fatalf("%s was refused for a name the policy may call", member)
+		}
+		if policyBusCallAllowed(policy, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+			"org.freedesktop.DBus", member, []any{"org.example.Unrelated"}) {
+			t.Fatalf("%s was allowed for a name the policy has no grant for", member)
+		}
+	}
+}
