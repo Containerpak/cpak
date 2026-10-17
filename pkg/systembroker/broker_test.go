@@ -147,6 +147,37 @@ func TestOpenURIPrefersGIO(t *testing.T) {
 	waitForFileContent(t, opened, "open|"+resolved)
 }
 
+func TestOpenURIReportsGIOHandoffFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "failed", command: "exit 1", want: "backend failed: gio"},
+		{name: "timeout", command: "exec /bin/sleep 2", want: "backend timed out: gio"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "gio"), []byte("#!/bin/sh\n"+test.command+"\n"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(directory, "logs", "runs"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", directory)
+			options := testOptions(t)
+			options.OpenURICommand = ""
+			options.OpenURIPaths = []OpenURIPathGrant{{Source: directory, Target: "/home/user"}}
+			options.CommandTimeout = 100 * time.Millisecond
+			startBroker(t, options)
+			err := testClient(options).OpenURI(context.Background(), OpenURIRequest{URI: "/home/user/logs/runs"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("handoff error: got %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestOpenURIFallsBackToXDGOpen(t *testing.T) {
 	directory := t.TempDir()
 	backendPath := filepath.Join(directory, "xdg-open")
@@ -155,7 +186,7 @@ func TestOpenURIFallsBackToXDGOpen(t *testing.T) {
 	}
 	t.Setenv("PATH", directory)
 
-	command, backend, err := (Options{}).openURICommand("/tmp/report.txt")
+	command, backend, err := (Options{}).openURICommand(context.Background(), "/tmp/report.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
