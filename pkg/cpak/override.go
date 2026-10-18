@@ -180,6 +180,10 @@ func currentWaylandEndpoint(o types.Override) waylandEndpoint {
 		Display:    display,
 		SocketPath: waylandSocketPath(uid),
 	}
+	return statWaylandEndpoint(endpoint)
+}
+
+func statWaylandEndpoint(endpoint waylandEndpoint) waylandEndpoint {
 	info, err := os.Stat(endpoint.SocketPath)
 	if err != nil {
 		return endpoint

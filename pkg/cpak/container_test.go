@@ -766,7 +766,7 @@ func TestConfigureWaylandDisplayRequiresALiveSocket(t *testing.T) {
 		t.Fatalf("missing Wayland socket did not override the inherited display: %v", configured)
 	}
 
-	socket := filepath.Join(t.TempDir(), "wayland-7")
+	socket := tempSocketPath(t)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
@@ -786,7 +786,7 @@ func TestConfigureWaylandDisplayRequiresALiveSocket(t *testing.T) {
 }
 
 func TestContainerEnvironmentKeepsTheMountedWaylandEndpoint(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "wayland-stored")
+	socket := tempSocketPath(t)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)

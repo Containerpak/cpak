@@ -24,28 +24,32 @@ import (
 )
 
 type Cpak struct {
-	Options            Options
-	Ctx                context.Context
-	servicePID         int
-	serviceSocketOwned bool
-	brokerSocketOwned  bool
-	managerSocketOwned bool
-	storageMigration   StorageMigrationHandler
-	storagePreparation StoragePreparationHandler
-	storageDriver      storage.Handler
-	desktopLaunch      bool
-	desktopActivation  string
-	terminalSession    bool
-	fileSpan           *desktopFileSpan
-	runtimeEnvironment []string
-	runtimeSecrets     []types.RuntimeSecret
-	applicationService string
+	Options                 Options
+	Ctx                     context.Context
+	servicePID              int
+	serviceSocketOwned      bool
+	brokerSocketOwned       bool
+	managerSocketOwned      bool
+	storageMigration        StorageMigrationHandler
+	storagePreparation      StoragePreparationHandler
+	storageDriver           storage.Handler
+	desktopCallbackOrigin   string
+	desktopCallbackInstance string
+	desktopLaunch           bool
+	desktopActivation       string
+	terminalSession         bool
+	fileSpan                *desktopFileSpan
+	runtimeEnvironment      []string
+	runtimeSecrets          []types.RuntimeSecret
+	applicationService      string
 }
 
 // SetDesktopLaunch enables file grants for exported desktop entries.
 func (c *Cpak) SetDesktopLaunch(enabled bool) {
 	c.desktopLaunch = enabled
 	if !enabled {
+		c.desktopCallbackOrigin = ""
+		c.desktopCallbackInstance = ""
 		c.desktopActivation = ""
 	}
 }

@@ -91,6 +91,10 @@ type persistentContainerState struct {
 // enrolled with and builds the container from the policy it actually runs
 // under, which is the same one unless something narrowed this launch.
 func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scope, instance string, store *Store, persistent *persistentContainerState) (container types.Container, err error) {
+	defer func() {
+		c.desktopCallbackOrigin = ""
+		c.desktopCallbackInstance = ""
+	}()
 	// Never wait for the container lock while holding the store lock: the
 	// current owner may need to reopen the store before releasing its lock.
 	if store != nil {
@@ -168,6 +172,16 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 	if len(containers) > 0 {
 		container = containers[0]
 		logger.Println("Container found:", container.CpakId)
+
+		// A registered browser return belongs to the application's compositor.
+		endpoint := c.desktopCallbackWaylandEndpoint(app.Origin, instance, container, override)
+		if endpoint != wayland {
+			wayland = endpoint
+			policyHash, err = containerLaunchPolicyHashWithRuntime(containerRuntimeVersion(instance), identity.LaunchRoot, override, components, addons, wayland, runtimeIdentity)
+			if err != nil {
+				return types.Container{}, err
+			}
+		}
 
 		// If the container is not running, we clean it up and create a new one
 		// by escaping the if statement
