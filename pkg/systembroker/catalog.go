@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"golang.org/x/sys/unix"
 )
 
@@ -252,7 +253,7 @@ func serve(ctx context.Context, socketPath string, authorize func(*net.UnixConn)
 	if err := removeSocket(socketPath); err != nil {
 		return err
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	listener, err := unixsocket.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen for system broker: %w", err)
 	}

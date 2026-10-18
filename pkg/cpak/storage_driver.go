@@ -15,6 +15,7 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	storageindex "github.com/containerpak/storage/pkg/index"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 const storageDriverTimeout = 30 * time.Minute
@@ -123,7 +124,18 @@ func (c *Cpak) withStorageDriver(name string, run func(storage.Handler) error) e
 		return err
 	}
 	defer unlock()
-	client, err := c.ensureStorageDriver(name)
+	socket, err := c.storageDriverSocket(name)
+	if err != nil {
+		return err
+	}
+	descriptor, address, err := unixsocket.Address(socket)
+	if err != nil {
+		return err
+	}
+	if descriptor != nil {
+		defer descriptor.Close()
+	}
+	client, err := c.ensureStorageDriver(name, socket, address)
 	if err != nil {
 		return err
 	}
@@ -135,12 +147,8 @@ func (c *Cpak) withStorageDriver(name string, run func(storage.Handler) error) e
 	return run(client)
 }
 
-func (c *Cpak) ensureStorageDriver(name string) (*storage.Client, error) {
-	socket, err := c.storageDriverSocket(name)
-	if err != nil {
-		return nil, err
-	}
-	client := &storage.Client{SocketPath: socket, Timeout: storageDriverTimeout}
+func (c *Cpak) ensureStorageDriver(name, socket, address string) (*storage.Client, error) {
+	client := &storage.Client{SocketPath: address, Timeout: storageDriverTimeout}
 	ctx, cancel := context.WithTimeout(c.Ctx, 250*time.Millisecond)
 	info, probeErr := client.Probe(ctx)
 	cancel()

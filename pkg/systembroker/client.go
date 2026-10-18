@@ -11,10 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 type Client struct {
@@ -87,7 +87,7 @@ func (c Client) call(ctx context.Context, action string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("encode system broker request: %w", err)
 	}
-	connection, err := net.DialTimeout("unix", c.SocketPath, 3*time.Second)
+	connection, err := unixsocket.DialTimeout("unix", c.SocketPath, 3*time.Second)
 	if err != nil {
 		return fmt.Errorf("connect to system broker: %w", err)
 	}
@@ -113,9 +113,7 @@ func (c Client) call(ctx context.Context, action string, payload any) error {
 	if c.Stdin != nil {
 		go func() {
 			_, _ = io.Copy(connection, c.Stdin)
-			if unixConnection, ok := connection.(*net.UnixConn); ok {
-				_ = unixConnection.CloseWrite()
-			}
+			_ = connection.CloseWrite()
 		}()
 	}
 	decoder := json.NewDecoder(connection)

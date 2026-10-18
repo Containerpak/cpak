@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -33,6 +32,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
@@ -1119,7 +1119,7 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 	if execSocketPath == "" {
 		execSocketPath = filepath.Join(container.StatePath, "exec.sock")
 	}
-	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: execSocketPath, Net: "unix"})
+	connection, err := unixsocket.DialTimeout("unix", execSocketPath, 0)
 	if err != nil {
 		return fmt.Errorf("connect to container process %d: %w", pidToEnter, err)
 	}

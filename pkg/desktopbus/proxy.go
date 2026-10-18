@@ -21,6 +21,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/systembroker"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 const (
@@ -74,7 +75,7 @@ func Serve(ctx context.Context, options Options) error {
 	if err := os.Remove(options.SocketPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale desktop bus socket: %w", err)
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: options.SocketPath, Net: "unix"})
+	listener, err := unixsocket.Listen("unix", options.SocketPath)
 	if err != nil {
 		return fmt.Errorf("listen for desktop bus: %w", err)
 	}

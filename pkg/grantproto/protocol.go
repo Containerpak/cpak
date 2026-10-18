@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"github.com/mirkobrombin/cpak/pkg/filegrant"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,7 +50,7 @@ func Send(socketPath string, grant filegrant.Grant, source, mountSource *os.File
 	if source == nil || grant.Kind == filegrant.KindFile && mountSource == nil {
 		return "", errors.New("file grant source descriptor is required")
 	}
-	connection, err := net.DialUnix("unixpacket", nil, &net.UnixAddr{Name: socketPath, Net: "unixpacket"})
+	connection, err := unixsocket.DialTimeout("unixpacket", socketPath, 0)
 	if err != nil {
 		return "", fmt.Errorf("connect to file grant service: %w", err)
 	}

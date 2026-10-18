@@ -35,6 +35,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/tools"
 	"github.com/mirkobrombin/cpak/pkg/types"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -1566,7 +1567,7 @@ func (c *SpawnCmd) pivotRoot(rootFs string) error {
 	return nil
 }
 
-func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
+func (c *SpawnCmd) createRuntimeListener() (*unixsocket.Listener, error) {
 	if c.ExecSocket == "" {
 		return nil, fmt.Errorf("exec socket is required")
 	}
@@ -1576,7 +1577,7 @@ func (c *SpawnCmd) createRuntimeListener() (*net.UnixListener, error) {
 	if err := os.Remove(c.ExecSocket); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale exec socket: %w", err)
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: c.ExecSocket, Net: "unix"})
+	listener, err := unixsocket.Listen("unix", c.ExecSocket)
 	if err != nil {
 		return nil, fmt.Errorf("listen on exec socket: %w", err)
 	}
@@ -1597,7 +1598,7 @@ func (c *SpawnCmd) createGrantListener() (net.Listener, error) {
 	if err := os.Remove(c.GrantSocket); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale grant socket: %w", err)
 	}
-	listener, err := net.Listen("unixpacket", c.GrantSocket)
+	listener, err := unixsocket.Listen("unixpacket", c.GrantSocket)
 	if err != nil {
 		return nil, fmt.Errorf("listen on grant socket: %w", err)
 	}
@@ -1755,7 +1756,7 @@ func processState(status []byte) (string, int) {
 	return state, parent
 }
 
-func (c *SpawnCmd) serveInit(listener *net.UnixListener, grantListener net.Listener, grantMounts *grantMountWorker, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
+func (c *SpawnCmd) serveInit(listener *unixsocket.Listener, grantListener net.Listener, grantMounts *grantMountWorker, envVars []string, grants []sandbox.PathGrant, idleTimeout time.Duration) error {
 	if err := setContainerHostname(); err != nil {
 		return err
 	}

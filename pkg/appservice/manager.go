@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 const managerSocketName = "service-manager.sock"
@@ -53,7 +54,7 @@ func ManagerSocketPath(serviceSocket string) string {
 }
 
 func Send(socketPath string, request ControlRequest, timeout time.Duration) (ControlResponse, error) {
-	connection, err := net.DialTimeout("unix", socketPath, timeout)
+	connection, err := unixsocket.DialTimeout("unix", socketPath, timeout)
 	if err != nil {
 		return ControlResponse{}, err
 	}
@@ -233,7 +234,7 @@ func listen(path string) (net.Listener, error) {
 		if info.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("service manager path %s is not a socket", path)
 		}
-		connection, dialErr := net.DialTimeout("unix", path, 200*time.Millisecond)
+		connection, dialErr := unixsocket.DialTimeout("unix", path, 200*time.Millisecond)
 		if dialErr == nil {
 			connection.Close()
 			return nil, errManagerRunning
@@ -244,7 +245,7 @@ func listen(path string) (net.Listener, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect service manager socket: %w", err)
 	}
-	listener, err := net.Listen("unix", path)
+	listener, err := unixsocket.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("listen for service manager requests: %w", err)
 	}

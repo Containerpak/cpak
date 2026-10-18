@@ -12,6 +12,7 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	"github.com/mirkobrombin/cpak/pkg/storaged"
+	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 )
 
 func main() {
@@ -54,6 +55,13 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	server := storage.Server{SocketPath: socket, Handler: handler}
+	descriptor, address, err := unixsocket.Address(socket)
+	if err != nil {
+		return err
+	}
+	if descriptor != nil {
+		defer descriptor.Close()
+	}
+	server := storage.Server{SocketPath: address, Handler: handler}
 	return server.Serve(ctx)
 }
