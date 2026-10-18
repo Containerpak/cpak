@@ -115,6 +115,56 @@ func TestXwaylandDisplayShowsAPendingBufferOnce(t *testing.T) {
 	}
 }
 
+func TestXwaylandDisplayForwardsWindowStateAndRestore(t *testing.T) {
+	destination, host := testX11SocketPair(t)
+	d := &xwaylandDisplay{host: destination, surfaces: map[uint32]uint32{30: 10}, objects: map[uint32]string{30: "xdg_surface"}}
+	if err := d.setWindowState(false, true); err == nil {
+		t.Fatal("window state was sent before the toplevel existed")
+	}
+	d.filter(testWaylandRequest(30, 1, 40))
+	if d.root != 10 || d.toplevel != 40 {
+		t.Fatal("the root toplevel was not recorded")
+	}
+	for _, state := range []struct {
+		fullscreen, maximized bool
+		opcode                uint32
+	}{
+		{false, true, 9},
+		{true, true, 11},
+		{false, true, 12},
+		{false, false, 10},
+	} {
+		if err := d.setWindowState(state.fullscreen, state.maximized); err != nil {
+			t.Fatal(err)
+		}
+		if err := host.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		got, fds, err := readWaylandMessage(host)
+		closeWaylandFDs(fds)
+		want := testWaylandRequest(40, state.opcode)
+		if state.opcode == 11 {
+			want = testWaylandRequest(40, state.opcode, 0)
+		}
+		if err != nil || !bytes.Equal(got, want) || len(fds) != 0 {
+			t.Fatalf("window state request changed: %x, want %x, %v", got, want, err)
+		}
+	}
+	if err := d.setWindowState(false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Read(make([]byte, 8)); err == nil {
+		t.Fatal("unchanged state produced another configure request")
+	}
+	host.Close()
+	if err := d.setWindowState(false, true); err == nil {
+		t.Fatal("a closed compositor accepted a window state request")
+	}
+}
+
 func TestXwaylandMessageRejectsInvalidSize(t *testing.T) {
 	for _, size := range []uint32{0, 4, 9} {
 		sender, receiver := testX11SocketPair(t)

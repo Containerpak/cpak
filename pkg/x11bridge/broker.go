@@ -24,16 +24,17 @@ const (
 )
 
 type Options struct {
-	Nested        *xgb.Conn
-	Host          *xgb.Conn
-	HostWindow    string
-	HostToApp     bool
-	AppToHost     bool
-	ServerAlive   func() bool
-	ClientsAlive  func() bool
-	StopContainer func()
-	Ready         func() error
-	ShowDisplay   func() error
+	Nested         *xgb.Conn
+	Host           *xgb.Conn
+	HostWindow     string
+	HostToApp      bool
+	AppToHost      bool
+	ServerAlive    func() bool
+	ClientsAlive   func() bool
+	StopContainer  func()
+	Ready          func() error
+	ShowDisplay    func() error
+	SetWindowState func(fullscreen, maximized bool) error
 }
 
 type endpoint struct {
@@ -514,7 +515,11 @@ func (b *broker) configureWindow(event xproto.ConfigureRequestEvent) {
 				}
 			}
 		}
-		b.resizeRoot(width, height)
+		states := propertyAtoms(b.nested.connection, event.Window, b.nested.atoms.netWMState)
+		maximized := containsAtom(states, b.nested.atoms.netWMStateMaxHorz) && containsAtom(states, b.nested.atoms.netWMStateMaxVert)
+		if !maximized && !containsAtom(states, b.nested.atoms.netWMStateFullscreen) {
+			b.resizeRoot(width, height)
+		}
 		b.fitWindow(event.Window)
 		b.notifyWindowGeometry(event.Window)
 		return
@@ -679,6 +684,19 @@ func applyState(states []xproto.Atom, requested xproto.Atom, action uint32) []xp
 }
 
 func (b *broker) syncHostWindow() {
+	if b.primary != 0 && b.options.SetWindowState != nil {
+		states := propertyAtoms(b.nested.connection, b.primary, b.nested.atoms.netWMState)
+		fullscreen := containsAtom(states, b.nested.atoms.netWMStateFullscreen)
+		maximized := containsAtom(states, b.nested.atoms.netWMStateMaxHorz) && containsAtom(states, b.nested.atoms.netWMStateMaxVert)
+		if fullscreen != b.fullscreen || maximized != b.maximized {
+			if err := b.options.SetWindowState(fullscreen, maximized); err != nil {
+				xgb.Logger.Printf("set isolated X11 window state: %v", err)
+				return
+			}
+			b.fullscreen, b.maximized = fullscreen, maximized
+		}
+		return
+	}
 	if b.host == nil || b.options.HostWindow == "" || b.primary == 0 {
 		return
 	}

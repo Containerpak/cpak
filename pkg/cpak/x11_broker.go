@@ -483,7 +483,8 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 	}
 	err = x11bridge.Run(ctx, x11bridge.Options{
 		Nested: nested, HostToApp: options.HostToApp, AppToHost: options.AppToHost,
-		ShowDisplay: display.show,
+		ShowDisplay:    display.show,
+		SetWindowState: display.setWindowState,
 		ServerAlive: func() bool {
 			return sameRecordedProcess(command.Process.Pid, serverStart) && sameContainerProcess(container, options.ContainerPid)
 		},

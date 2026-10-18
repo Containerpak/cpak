@@ -21,17 +21,20 @@ import (
 )
 
 type xwaylandDisplay struct {
-	client   *net.UnixConn
-	host     *net.UnixConn
-	mu       sync.Mutex
-	workers  sync.WaitGroup
-	stopOnce sync.Once
-	objects  map[uint32]string
-	surfaces map[uint32]uint32
-	root     uint32
-	buffer   bool
-	pending  bool
-	visible  bool
+	client     *net.UnixConn
+	host       *net.UnixConn
+	mu         sync.Mutex
+	workers    sync.WaitGroup
+	stopOnce   sync.Once
+	objects    map[uint32]string
+	surfaces   map[uint32]uint32
+	root       uint32
+	toplevel   uint32
+	buffer     bool
+	pending    bool
+	visible    bool
+	fullscreen bool
+	maximized  bool
 }
 
 func startXwaylandDisplay() (*xwaylandDisplay, *os.File, error) {
@@ -97,6 +100,43 @@ func (d *xwaylandDisplay) show() error {
 	return writeWaylandMessage(d.host, waylandCommit(d.root), nil)
 }
 
+func (d *xwaylandDisplay) setWindowState(fullscreen, maximized bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.toplevel == 0 {
+		return errors.New("Xwayland toplevel is not ready")
+	}
+	if maximized != d.maximized {
+		opcode := uint32(10)
+		if maximized {
+			opcode = 9
+		}
+		message := make([]byte, 8)
+		binary.NativeEndian.PutUint32(message, d.toplevel)
+		binary.NativeEndian.PutUint32(message[4:], 8<<16|opcode)
+		if err := writeWaylandMessage(d.host, message, nil); err != nil {
+			return err
+		}
+		d.maximized = maximized
+	}
+	if fullscreen == d.fullscreen {
+		return nil
+	}
+	message := make([]byte, 8)
+	binary.NativeEndian.PutUint32(message, d.toplevel)
+	binary.NativeEndian.PutUint32(message[4:], 8<<16|12)
+	if fullscreen {
+		message = make([]byte, 12)
+		binary.NativeEndian.PutUint32(message, d.toplevel)
+		binary.NativeEndian.PutUint32(message[4:], 12<<16|11)
+	}
+	if err := writeWaylandMessage(d.host, message, nil); err != nil {
+		return err
+	}
+	d.fullscreen = fullscreen
+	return nil
+}
+
 func (d *xwaylandDisplay) forwardRequests() error {
 	var pendingFDs []int
 	defer func() { closeWaylandFDs(pendingFDs) }()
@@ -152,6 +192,7 @@ func (d *xwaylandDisplay) filter(message []byte) bool {
 	case "xdg_surface":
 		if opcode == 1 && len(args) == 4 {
 			d.root = d.surfaces[id]
+			d.toplevel = binary.NativeEndian.Uint32(args)
 		}
 	case "wl_surface":
 		if id != d.root {
