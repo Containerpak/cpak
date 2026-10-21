@@ -16,17 +16,25 @@ import (
 )
 
 type InstallCmd struct {
-	Remote          string `arg:"remote" help:"Remote Git repository"`
+	Remote          string `arg:"remote" help:"Remote Git repository, or with --flatpak an application id or .flatpakref"`
 	Branch          string `cli:"branch,b" help:"Specify a branch"`
 	Release         string `cli:"release,r" help:"Install a specific release"`
 	Commit          string `cli:"commit,c" help:"Specify a commit"`
 	Yes             bool   `cli:"yes,y" help:"Skip the confirmation prompt"`
 	SignedInstaller bool   `cli:"signed-installer" help:"Verify consent from the parent application installer"`
+	Flatpak         bool   `cli:"flatpak" help:"Install a Flatpak application into the cpak sandbox"`
+	FlatpakRemote   string `cli:"flatpak-remote" help:"Flatpak remote to install from (default: flathub)"`
 
 	cli.Base
 }
 
 func (c *InstallCmd) Run() error {
+	if c.Flatpak {
+		return c.installFlatpak()
+	}
+	if c.FlatpakRemote != "" {
+		return fmt.Errorf("--flatpak-remote needs --flatpak")
+	}
 	remote, err := cpak.NormalizeRepositoryOrigin(c.Remote)
 	if err != nil {
 		return err
