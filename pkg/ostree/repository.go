@@ -110,7 +110,7 @@ func (r *Repository) open(ctx context.Context, name string) (io.ReadCloser, erro
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			last = err
+			last = unavailable(err)
 			continue
 		}
 		switch {
@@ -121,7 +121,7 @@ func (r *Repository) open(ctx context.Context, name string) (io.ReadCloser, erro
 			return nil, fmt.Errorf("%w: %s", errNotFound, name)
 		default:
 			response.Body.Close()
-			last = fmt.Errorf("ostree: fetch %s: %s", name, response.Status)
+			last = unavailable(fmt.Errorf("ostree: fetch %s: %s", name, response.Status))
 			if response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
 				return nil, last
 			}
@@ -136,7 +136,7 @@ func (r *Repository) fetch(ctx context.Context, name string, limit int64) ([]byt
 		return nil, err
 	}
 	defer body.Close()
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(unavailableReader{body}, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("ostree: read %s: %w", name, err)
 	}
@@ -153,7 +153,7 @@ func (r *Repository) verifySigned(ctx context.Context, data []byte, signatureFil
 	raw, err := r.fetch(ctx, signatureFile, maxMetadataObject)
 	if err != nil {
 		if errors.Is(err, errNotFound) {
-			return fmt.Errorf("ostree: %s is not signed", strings.TrimSuffix(signatureFile, ".sig"))
+			return verificationFailure(fmt.Errorf("ostree: %s is not signed", strings.TrimSuffix(signatureFile, ".sig")))
 		}
 		return err
 	}
@@ -162,7 +162,7 @@ func (r *Repository) verifySigned(ctx context.Context, data []byte, signatureFil
 		return err
 	}
 	if err := r.Keyring.VerifyDetached(data, signatures, r.now()); err != nil {
-		return fmt.Errorf("ostree: %s: %w", strings.TrimSuffix(signatureFile, ".sig"), err)
+		return verificationFailure(fmt.Errorf("ostree: %s: %w", strings.TrimSuffix(signatureFile, ".sig"), err))
 	}
 	return nil
 }
@@ -316,7 +316,7 @@ func (r *Repository) FetchCommit(ctx context.Context, ref string, checksum Check
 			bound = bound || binding == ref
 		}
 		if !bound {
-			return Commit{}, fmt.Errorf("ostree: commit %s was not made for %s", checksum, ref)
+			return Commit{}, verificationFailure(fmt.Errorf("ostree: commit %s was not made for %s", checksum, ref))
 		}
 	}
 	return commit, nil
@@ -477,7 +477,7 @@ func (r *Repository) FetchFileObject(ctx context.Context, checksum Checksum, w i
 		return 0, err
 	}
 	defer body.Close()
-	written, err := io.Copy(w, io.LimitReader(body, maxFileObject+1))
+	written, err := io.Copy(w, io.LimitReader(unavailableReader{body}, maxFileObject+1))
 	if err != nil {
 		return written, fmt.Errorf("ostree: download %s: %w", checksum, err)
 	}
@@ -511,7 +511,7 @@ func OpenFileObject(checksum Checksum, object io.ReaderAt, size int64) (FileHead
 			return FileHeader{}, nil, fmt.Errorf("ostree: malformed symlink object %s", checksum)
 		}
 		if [32]byte(h.Sum(nil)) != checksum {
-			return FileHeader{}, nil, fmt.Errorf("ostree: object %s does not match its checksum", checksum)
+			return FileHeader{}, nil, verificationFailure(fmt.Errorf("ostree: object %s does not match its checksum", checksum))
 		}
 		return header, bytes.NewReader(nil), nil
 	}
@@ -541,16 +541,16 @@ func (v *verifiedReader) Read(p []byte) (int, error) {
 	v.read += uint64(n)
 	v.hash.Write(p[:n])
 	if v.read > v.size {
-		return 0, fmt.Errorf("ostree: object %s holds more than its header declares", v.checksum)
+		return 0, verificationFailure(fmt.Errorf("ostree: object %s holds more than its header declares", v.checksum))
 	}
 	if err == io.EOF {
 		v.done = true
 		v.source.Close()
 		if v.read != v.size {
-			return 0, fmt.Errorf("ostree: object %s holds %d bytes, its header declares %d", v.checksum, v.read, v.size)
+			return 0, verificationFailure(fmt.Errorf("ostree: object %s holds %d bytes, its header declares %d", v.checksum, v.read, v.size))
 		}
 		if [32]byte(v.hash.Sum(nil)) != v.checksum {
-			return 0, fmt.Errorf("ostree: object %s does not match its checksum", v.checksum)
+			return 0, verificationFailure(fmt.Errorf("ostree: object %s does not match its checksum", v.checksum))
 		}
 		return n, io.EOF
 	}

@@ -80,7 +80,7 @@ func objectPath(checksum Checksum, kind string) string {
 
 func verifyObject(checksum Checksum, data []byte) error {
 	if sha256.Sum256(data) != checksum {
-		return fmt.Errorf("ostree: object %s does not match its checksum", checksum)
+		return verificationFailure(fmt.Errorf("ostree: object %s does not match its checksum", checksum))
 	}
 	return nil
 }

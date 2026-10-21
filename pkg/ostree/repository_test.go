@@ -8,7 +8,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -99,8 +102,8 @@ func TestASummarySignedByAnotherKeyIsRefused(t *testing.T) {
 	defer repo.Close()
 	repo.Commit(appRef, appFiles(), nil)
 	repository := &ostree.Repository{URL: repo.URL(), Keyring: keyring(t, key.Public())}
-	if _, err := repository.FetchSummary(context.Background(), "x86_64"); err == nil {
-		t.Fatal("a summary signed only by an untrusted key was accepted")
+	if _, err := repository.FetchSummary(context.Background(), "x86_64"); !errors.Is(err, ostree.ErrVerification) {
+		t.Fatalf("a summary signed only by an untrusted key was not refused as unverified: %v", err)
 	}
 }
 
@@ -112,7 +115,7 @@ func TestAnUnsignedSummaryIsRefused(t *testing.T) {
 	repo.Override["summary.sig"] = nil
 	repository := &ostree.Repository{URL: repo.URL(), Keyring: keyring(t, key.Public())}
 	_, err := repository.FetchSummary(context.Background(), "x86_64")
-	if err == nil || !strings.Contains(err.Error(), "not signed") {
+	if !errors.Is(err, ostree.ErrVerification) || !strings.Contains(err.Error(), "not signed") {
 		t.Fatalf("an unsigned summary was not refused as unsigned: %v", err)
 	}
 }
@@ -140,8 +143,8 @@ func TestATamperedSubsummaryIsRefused(t *testing.T) {
 	// name the signed index gives this one's.
 	repo.Override[subsummaryPath(t, repo.Object("summary.idx"))] = other.Object(subsummaryPath(t, other.Object("summary.idx")))
 	repository := &ostree.Repository{URL: repo.URL(), Keyring: keyring(t, key.Public())}
-	if _, err := repository.FetchSummary(context.Background(), "x86_64"); err == nil {
-		t.Fatal("a subsummary that does not match the signed index was accepted")
+	if _, err := repository.FetchSummary(context.Background(), "x86_64"); !errors.Is(err, ostree.ErrVerification) {
+		t.Fatalf("a subsummary that does not match the signed index was not refused as unverified: %v", err)
 	}
 }
 
@@ -157,8 +160,8 @@ func TestACommitSignedByAnotherKeyIsRefused(t *testing.T) {
 	}
 	repo.Override[ostreetest.ObjectPath(checksum, "commitmeta")] = forged
 	repository := &ostree.Repository{URL: repo.URL(), Keyring: keyring(t, key.Public())}
-	if _, err := resolve(t, repository, appRef); err == nil {
-		t.Fatal("a commit without a trusted signature was accepted")
+	if _, err := resolve(t, repository, appRef); !errors.Is(err, ostree.ErrVerification) {
+		t.Fatalf("a commit without a trusted signature was not refused as unverified: %v", err)
 	}
 }
 
@@ -173,7 +176,7 @@ func TestACommitBoundToAnotherRefIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = repository.FetchCommit(context.Background(), appRef, checksum)
-	if err == nil || !strings.Contains(err.Error(), "was not made for") {
+	if !errors.Is(err, ostree.ErrVerification) || !strings.Contains(err.Error(), "was not made for") {
 		t.Fatalf("a commit bound to another ref was accepted for %s: %v", appRef, err)
 	}
 }
@@ -302,8 +305,8 @@ func TestAFileObjectWithOtherContentFailsAtItsEnd(t *testing.T) {
 	other := ostree.Checksum(ostreetest.FileChecksum(files["metadata"]))
 	repo.Override[ostreetest.ObjectPath(binary.String(), "filez")] = repo.Object(ostreetest.ObjectPath(other.String(), "filez"))
 	repository := &ostree.Repository{URL: repo.URL(), Keyring: keyring(t, key.Public())}
-	if _, _, err := fileContent(t, repository, binary); err == nil {
-		t.Fatal("a file object holding another file's content was accepted")
+	if _, _, err := fileContent(t, repository, binary); !errors.Is(err, ostree.ErrVerification) {
+		t.Fatalf("a file object holding another file's content was not refused as unverified: %v", err)
 	}
 }
 
@@ -341,5 +344,23 @@ func TestAnExpiredSignatureIsRefused(t *testing.T) {
 	}
 	if err := ring.VerifyDetached(data, [][]byte{key.SignAt(data, made, 72*time.Hour)}, time.Now()); err != nil {
 		t.Fatalf("a signature within its lifetime was refused: %v", err)
+	}
+}
+
+func TestARepositoryThatDoesNotAnswerIsUnavailable(t *testing.T) {
+	key, _, _ := keys(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	repository := &ostree.Repository{URL: server.URL, Keyring: keyring(t, key.Public())}
+	_, err := repository.FetchSummary(context.Background(), "x86_64")
+	if !errors.Is(err, ostree.ErrUnavailable) || errors.Is(err, ostree.ErrVerification) {
+		t.Fatalf("a repository answering 503 was reported as %v", err)
+	}
+
+	server.Close()
+	if _, err := repository.FetchSummary(context.Background(), "x86_64"); !errors.Is(err, ostree.ErrUnavailable) {
+		t.Fatalf("a repository nobody listens on was reported as %v", err)
 	}
 }
