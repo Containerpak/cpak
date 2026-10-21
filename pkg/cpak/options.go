@@ -47,6 +47,16 @@ type Options struct {
 	// StorageDriver selects the runtime layer checkout driver.
 	StorageDriver string `json:"storage_driver" conf:"storage_driver"`
 
+	// FlatpakHostIcons shares the host's icon themes, read-only, with Flatpak
+	// applications, so they can follow the theme the desktop uses instead of
+	// the one their runtime ships.
+	FlatpakHostIcons bool `json:"flatpak_host_icons" conf:"flatpak_host_icons"`
+
+	// FlatpakIconTheme names the icon theme Flatpak applications are told to
+	// use. Left empty it is the runtime's Adwaita, or with host icons shared
+	// the theme the host's GTK settings name.
+	FlatpakIconTheme string `json:"flatpak_icon_theme" conf:"flatpak_icon_theme"`
+
 	// DaBaDeeStoreopts is the configuration for the DaBaDee store.
 	DaBaDeeStoreOptions store.Options `json:"dabadee_store"`
 

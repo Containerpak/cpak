@@ -295,9 +295,9 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		container.SystemBrokerSocketPath = ""
 		container.SystemBrokerTokenPath = ""
 	}
-	if desktopBusProxyRequested(override) {
+	if desktopBusProxyRequested(override) || app.Flatpak != nil {
 		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "desktop-bus.sock")
-		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, override)
+		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, app, override, c.flatpakIconTheme())
 		if err != nil {
 			cleanupDesktopBusProxy(container)
 			cleanupSystemBrokerRuntime(container)
@@ -679,6 +679,7 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	for _, secret := range c.runtimeSecrets {
 		cmds = append(cmds, "--secret", secret.Name+"="+secret.Source)
 	}
+	cmds = append(cmds, c.flatpakLaunchArguments(app)...)
 
 	if container.SystemBrokerSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
@@ -712,6 +713,12 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	containerEnv = inheritHostCursor(containerEnv)
 	containerEnv = inheritHostAppearance(containerEnv)
 	containerEnv = containerDataDirectories(containerEnv)
+	if app.Flatpak != nil {
+		// An application's own data comes before its runtime's, as it does
+		// under Flatpak, or a schema or icon it ships is shadowed by the
+		// runtime's.
+		containerEnv = prependEnvironmentPath(containerEnv, "XDG_DATA_DIRS", "/app/share", "/usr/share")
+	}
 	if override.OpenURI {
 		containerEnv = openURIEnvironment(containerEnv)
 	}
@@ -1743,16 +1750,20 @@ func cleanupNetworkHelper(container types.Container) {
 	}
 }
 
-func startDesktopBusProxy(container types.Container, override types.Override) (int, error) {
+func startDesktopBusProxy(container types.Container, app types.Application, override types.Override, iconTheme string) (int, error) {
+	arguments := []string{
+		"desktop-bus-proxy",
+		"--socket-path", container.DesktopBusSocketPath,
+	}
+	if app.Flatpak != nil {
+		arguments = append(arguments, flatpakPortalArguments(container, app, override, iconTheme)...)
+		return startBusProxy(container.LogPath, container.DesktopBusSocketPath, "desktop bus", arguments)
+	}
 	upstream := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 	if upstream == "" {
 		upstream = "unix:path=" + hostSessionBusPath()
 	}
-	arguments := []string{
-		"desktop-bus-proxy",
-		"--socket-path", container.DesktopBusSocketPath,
-		"--upstream-address", upstream,
-	}
+	arguments = append(arguments, "--upstream-address", upstream)
 	if override.SessionBus.Enabled() {
 		policy, encodeErr := json.Marshal(override.SessionBus)
 		if encodeErr != nil {
