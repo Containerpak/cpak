@@ -76,6 +76,7 @@ type CLI struct {
 	Discover           cmd.DiscoverCmd           `cmd:"discover" help:"Integrate cpak with software centers"`
 	Environment        cmd.EnvironmentCmd        `cmd:"environment" help:"Manage persistent package environments"`
 	Completion         cmd.CompletionCmd         `cmd:"completion" help:"Generate shell completion"`
+	Capabilities       cmd.CapabilitiesCmd       `cmd:"capabilities" help:"List what this cpak build can do"`
 
 	cli.Base
 }
@@ -95,6 +96,7 @@ func main() {
 	root := &CLI{}
 	root.Run.Configure(cpakIcon)
 	root.SelfUpdate.Configure(version, selfUpdateMode, cpakIcon)
+	root.Capabilities.Configure(version)
 	app, err := cli.New(root, cli.WithVersion(version))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -218,7 +220,7 @@ func skipUpdateCheck(args []string) bool {
 		}
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "application-runtime" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "application-runtime" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" || argument == "capabilities" {
 			return true
 		}
 	}
