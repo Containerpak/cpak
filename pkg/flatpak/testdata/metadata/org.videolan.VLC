@@ -1,0 +1,47 @@
+[Application]
+name=org.videolan.VLC
+runtime=org.kde.Platform/x86_64/5.15-25.08
+sdk=org.kde.Sdk/x86_64/5.15-25.08
+command=vlc
+required-flatpak=0.11.4
+
+[Context]
+shared=ipc;network;
+sockets=pulseaudio;x11;
+devices=all;
+filesystems=xdg-config/kdeglobals:ro;host;xdg-run/gvfs;
+
+[Session Bus Policy]
+org.kde.kwalletd5=talk
+org.kde.kwalletd=talk
+org.mpris.MediaPlayer2.vlc=own
+org.freedesktop.secrets=talk
+org.freedesktop.PowerManagement=talk
+org.kde.StatusNotifierWatcher=talk
+org.kde.KGlobalSettings=talk
+org.freedesktop.ScreenSaver=talk
+com.canonical.AppMenu.Registrar=talk
+org.kde.kconfig.notify=talk
+org.mpris.MediaPlayer2.Player=talk
+
+[Extension org.videolan.VLC.Plugin]
+directory=share/vlc/extra
+autodelete=true
+no-autodownload=true
+subdirectories=true
+add-ld-path=lib
+merge-dirs=plugins
+versions=3-5.15-25.08;3-25.08
+
+[Extension org.videolan.VLC.Locale]
+directory=share/runtime/locale
+autodelete=true
+locale-subset=true
+
+[Extension org.videolan.VLC.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=org.videolan.VLC.Locale;org.videolan.VLC.Debug;org.videolan.VLC.Sources;

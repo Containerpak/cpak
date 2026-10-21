@@ -1,0 +1,45 @@
+[Application]
+name=org.gimp.GIMP
+runtime=org.gnome.Platform/x86_64/51
+sdk=org.gnome.Sdk/x86_64/51
+tags=GTK+3;stable;
+command=gimp
+
+[Context]
+shared=ipc;network;
+sockets=fallback-x11;wayland;
+devices=all;
+filesystems=xdg-config/GIMP:create;xdg-config/gtk-3.0:ro;/tmp;xdg-run/gvfsd;host;xdg-run/gvfs;
+unset-environment=GTK_MODULES;
+
+[Session Bus Policy]
+com.canonical.AppMenu.Registrar=talk
+org.kde.kwin.Screenshot=talk
+org.gtk.vfs.*=talk
+org.gnome.Shell.Screenshot=talk
+org.freedesktop.FileManager1=talk
+
+[Environment]
+GTK_MODULES=
+
+[Extension org.gimp.GIMP.Manual]
+directory=share/gimp/3.0/help
+no-autodownload=true
+locale-subset=true
+version=3.2
+
+[Extension org.gimp.GIMP.Plugin]
+directory=extensions
+no-autodownload=true
+subdirectories=true
+add-ld-path=lib
+merge-dirs=plug-ins;scripts
+version=3
+
+[Extension org.gimp.GIMP.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=org.gimp.GIMP.Debug;org.gimp.GIMP.Sources;
