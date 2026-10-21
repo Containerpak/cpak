@@ -353,6 +353,23 @@ runtime's GL extension. Host icons can be shared and a theme chosen in
 }
 ```
 
+Applications already installed with Flatpak are moved over with
+`migrate-flatpak`. It reads the user and system installations, installs each
+application again from its remote, verified through the key cpak trusts, and
+copies what it kept in `~/.var/app` into the private home cpak gives it,
+without the cache:
+
+```sh
+cpak migrate-flatpak
+cpak migrate-flatpak org.gnome.Calculator
+```
+
+The Flatpak installations are left untouched. With `--delete-flatpaks` the
+migrated applications are uninstalled from Flatpak together with their data
+once the migration is completed; this asks for a consent sentence typed in
+full, which `--yes` does not answer. An application that fails to migrate, or
+that is granted the real home, is never deleted.
+
 ## Manifest v3
 
 Each package repository contains a strict `cpak.json` manifest. Unknown fields

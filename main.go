@@ -62,6 +62,7 @@ type CLI struct {
 	Validate           cmd.ValidateCmd           `cmd:"validate" help:"Validate a cpak manifest"`
 	Doctor             cmd.DoctorCmd             `cmd:"doctor" help:"Check host support for the cpak runtime"`
 	MigrateManifest    cmd.MigrateManifestCmd    `cmd:"migrate-manifest" help:"Migrate a manifest to version 2"`
+	MigrateFlatpak     cmd.MigrateFlatpakCmd     `cmd:"migrate-flatpak" help:"Install the Flatpak applications of this system with cpak"`
 	SystemBrokerServer cmd.SystemBrokerServerCmd `cmd:"system-broker-server" help:"Start the system integration broker"`
 	DesktopBusProxy    cmd.DesktopBusProxyCmd    `cmd:"desktop-bus-proxy" help:"Start the policy-gated desktop bus proxy"`
 	HostAction         cmd.HostActionCmd         `cmd:"host-action" help:"Run a typed host action"`

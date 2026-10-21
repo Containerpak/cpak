@@ -38,6 +38,10 @@ type FlatpakRequest struct {
 	Remote  string
 	Arch    string
 	RefFile []byte
+
+	// newRemote is a remote cpak does not know yet, taken from a host
+	// installation the application is migrated from.
+	newRemote *flatpak.Remote
 }
 
 // FlatpakPart is one signed commit an installation is made of.
@@ -124,6 +128,9 @@ func (c *Cpak) ResolveFlatpak(request FlatpakRequest) (*FlatpakPlan, error) {
 			return nil, fmt.Errorf("the .flatpakref belongs to remote %s, not %s", remote.Name, request.Remote)
 		}
 		plan.Remote = remote
+	} else if request.newRemote != nil {
+		plan.Remote = *request.newRemote
+		plan.AddRemote = true
 	} else {
 		name := request.Remote
 		if name == "" {
