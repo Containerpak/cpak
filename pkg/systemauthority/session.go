@@ -65,7 +65,10 @@ func validateOrigin(origin string) error {
 			return errors.New("invalid package origin")
 		}
 	}
-	if !strings.Contains(parts[0], ".") {
+	// A Flatpak application is installed under the flatpak host, which is the
+	// one host without a dot an origin may carry: no Git repository can be
+	// named that way, so the two kinds of origin never meet.
+	if !strings.Contains(parts[0], ".") && parts[0] != "flatpak" {
 		return errors.New("invalid package origin")
 	}
 	return nil

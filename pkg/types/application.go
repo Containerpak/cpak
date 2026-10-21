@@ -133,9 +133,41 @@ type Application struct {
 	// taken to have a say, which is the narrower of the two answers.
 	PulledInBy string `json:"pulled_in_by,omitempty"`
 
+	// Flatpak describes an installation imported from a Flatpak remote. It is
+	// nil for every package published through a Git repository.
+	Flatpak *FlatpakSource `json:"flatpak,omitempty"`
+
 	// Raw fields
 	DependenciesRaw string `json:"dependencies_raw"`
 	OverrideRaw     string `json:"override_raw"`
+}
+
+// FlatpakSource is where a Flatpak installation came from: the remote, the
+// ref and the signed commit its layers were imported from.
+type FlatpakSource struct {
+	Remote string `json:"remote"`
+	URL    string `json:"url"`
+	Ref    string `json:"ref"`
+	Commit string `json:"commit"`
+
+	// Runtime is the runtime ref an application runs on.
+	Runtime string `json:"runtime,omitempty"`
+
+	// Extensions are the extensions imported into the installation's layers.
+	Extensions []FlatpakExtension `json:"extensions,omitempty"`
+
+	// Refused lists what the application asked for and cpak did not grant,
+	// as the translation recorded it.
+	Refused []string `json:"refused,omitempty"`
+}
+
+// FlatpakExtension is one extension imported beside an application or
+// runtime.
+type FlatpakExtension struct {
+	Ref       string `json:"ref"`
+	Commit    string `json:"commit"`
+	Directory string `json:"directory"`
+	Layer     string `json:"layer"`
 }
 
 func (a Application) SourceType() string {

@@ -175,3 +175,14 @@ func TestDisplayManagerConfigsIncludeLocalSessionDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestFlatpakOriginsAreTheOnlyHostWithoutADot(t *testing.T) {
+	if err := validateOrigin("flatpak/flathub/org.gimp.gimp"); err != nil {
+		t.Fatalf("a Flatpak origin was refused: %v", err)
+	}
+	for _, origin := range []string{"localhost/owner/repo", "flatpak2/flathub/org.gimp.gimp", "Flatpak/flathub/org.gimp.gimp"} {
+		if err := validateOrigin(origin); err == nil {
+			t.Fatalf("accepted %s", origin)
+		}
+	}
+}

@@ -321,6 +321,9 @@ func normalizeRepositoryHost(value string) (string, error) {
 	if len(host) == 0 || len(host) > 253 || strings.Contains(host, "..") {
 		return "", errors.New("invalid repository host")
 	}
+	if host == flatpakOriginHost && port == "" {
+		return host, nil
+	}
 	if net.ParseIP(host) == nil {
 		if !strings.Contains(host, ".") {
 			return "", errors.New("invalid repository host")
@@ -511,6 +514,9 @@ func (c *Cpak) GetDefaultBranch(origin string) (string, error) {
 }
 
 func (c *Cpak) newRepoProvider(origin string) (*RepoProvider, error) {
+	if err := refuseFlatpakOrigin(origin); err != nil {
+		return nil, err
+	}
 	repoProvider, err := NewRepoProvider(origin, c.Options.ManifestsPath)
 	if err != nil {
 		return nil, err
