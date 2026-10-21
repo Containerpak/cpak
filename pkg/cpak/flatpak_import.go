@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -245,13 +246,20 @@ func (c *Cpak) importFlatpakCommit(repository *ostree.Repository, ref string, co
 	ctx, cancel := context.WithCancel(c.Ctx)
 	defer cancel()
 	results := c.fetchFlatpakObjects(ctx, repository, spoolDir, pending)
-	bar := progressbar.NewOptions(len(pending),
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetDescription("Downloading "+ref),
-		progressbar.OptionShowCount(),
-		progressbar.OptionFullWidth(),
-		progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
-	)
+	var advance func(size int64)
+	if c.flatpakProgress != nil {
+		reporter := c.newDownloadReporter(ref, len(order)-len(pending), len(order))
+		advance = reporter.add
+	} else {
+		bar := progressbar.NewOptions(len(pending),
+			progressbar.OptionSetWriter(os.Stderr),
+			progressbar.OptionSetDescription("Downloading "+ref),
+			progressbar.OptionShowCount(),
+			progressbar.OptionFullWidth(),
+			progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
+		)
+		advance = func(int64) { _ = bar.Add(1) }
+	}
 	var importErr error
 	for result := range results {
 		if importErr != nil {
@@ -273,7 +281,7 @@ func (c *Cpak) importFlatpakCommit(repository *ostree.Repository, ref string, co
 			continue
 		}
 		index[result.checksum.String()] = paths[result.checksum][0]
-		_ = bar.Add(1)
+		advance(result.size)
 	}
 	if importErr != nil {
 		return "", importErr
@@ -419,10 +427,11 @@ func addFlatpakObject(writer *fvsrepo.SnapshotWriter, object fetchedObject, targ
 		return err
 	}
 	defer file.Close()
-	header, content, err := ostree.OpenFileObject(object.checksum, file, object.size)
+	header, verified, err := ostree.OpenFileObject(object.checksum, file, object.size)
 	if err != nil {
 		return err
 	}
+	content := &readFailure{reader: verified}
 	for index, target := range targets {
 		switch {
 		case header.IsSymlink():
@@ -443,10 +452,30 @@ func addFlatpakObject(writer *fvsrepo.SnapshotWriter, object fetchedObject, targ
 			}, content)
 		}
 		if err != nil {
+			// The writer reports a short read as a size mismatch; the reason
+			// it was short is the one worth telling.
+			if content.err != nil {
+				return content.err
+			}
 			return err
 		}
 	}
 	return nil
+}
+
+// readFailure remembers why a read failed, for when the consumer of the
+// reader keeps only its own account of it.
+type readFailure struct {
+	reader io.Reader
+	err    error
+}
+
+func (r *readFailure) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err != nil && err != io.EOF {
+		r.err = err
+	}
+	return n, err
 }
 
 // flatpakLayerFiles answers with what an imported layer holds, keyed by path.

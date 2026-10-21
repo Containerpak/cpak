@@ -21,7 +21,22 @@ import (
 
 const maxFlatpakRefFile = 1 << 20
 
+// installFlatpak installs a Flatpak application. Its exit code tells a
+// refusal of the permissions, an unreachable remote and an answer that failed
+// verification apart, and with --json-progress the last event carries it too.
 func (c *InstallCmd) installFlatpak() error {
+	var progress *progressWriter
+	if c.JSONProgress {
+		progress = newProgressWriter(&c.Base)
+	}
+	err := c.runFlatpakInstall(progress)
+	if progress != nil {
+		progress.done(exitCode(err), err, nil)
+	}
+	return exitWith(err)
+}
+
+func (c *InstallCmd) runFlatpakInstall(progress *progressWriter) error {
 	if c.Release != "" || c.Commit != "" {
 		return errors.New("a Flatpak application is installed from a branch; use --branch")
 	}
@@ -46,13 +61,17 @@ func (c *InstallCmd) installFlatpak() error {
 	if err != nil {
 		return fmt.Errorf("an error occurred while installing cpak: %s", err)
 	}
+	if progress != nil {
+		cp.SetFlatpakProgress(progress.report)
+		progress.report(cpak.FlatpakProgress{Phase: cpak.FlatpakPhaseResolve})
+	}
 	plan, err := cp.ResolveFlatpak(request)
 	if err != nil {
 		return err
 	}
 	c.describeFlatpakPlan(plan)
 	if !c.Yes && !tools.ConfirmOperation("Do you want to continue?") {
-		return nil
+		return errPermissionsRefused
 	}
 	return cp.InstallFlatpak(plan)
 }

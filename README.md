@@ -370,6 +370,16 @@ once the migration is completed; this asks for a consent sentence typed in
 full, which `--yes` does not answer. An application that fails to migrate, or
 that is granted the real home, is never deleted.
 
+A program that drives cpak, such as a software center, reads what the build
+supports from `cpak capabilities --json` and what has an update from
+`cpak update --check --json`, which applies nothing. `install --flatpak` and
+`update` take `--json-progress`: every step is a JSON line on standard output,
+downloads counted in objects, and the last line has the phase `done` with the
+exit code and, on failure, the error. People's output moves to the error
+stream. The exit code is 10 when the permissions were not approved, 11 when
+the remote could not be reached and 12 when an answer failed its signature or
+checksum.
+
 ## Manifest v3
 
 Each package repository contains a strict `cpak.json` manifest. Unknown fields

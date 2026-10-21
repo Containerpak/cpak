@@ -21,6 +21,7 @@ var buildCapabilities = []string{
 	"flatpak-migrate",
 	"list-json",
 	"update-check",
+	"json-progress",
 }
 
 type CapabilitiesCmd struct {

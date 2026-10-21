@@ -383,6 +383,7 @@ func (c *Cpak) InstallFlatpak(plan *FlatpakPlan) error {
 	if err != nil {
 		return err
 	}
+	c.reportFlatpak(FlatpakProgress{Phase: FlatpakPhaseInstall, Ref: plan.App.Ref.String()})
 	if err := c.PrepareApplicationStorage(app); err != nil {
 		return err
 	}

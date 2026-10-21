@@ -24,6 +24,7 @@ type InstallCmd struct {
 	SignedInstaller bool   `cli:"signed-installer" help:"Verify consent from the parent application installer"`
 	Flatpak         bool   `cli:"flatpak" help:"Install a Flatpak application into the cpak sandbox"`
 	FlatpakRemote   string `cli:"flatpak-remote" help:"Flatpak remote to install from (default: flathub)"`
+	JSONProgress    bool   `cli:"json-progress" help:"With --flatpak, report progress as JSON lines on standard output"`
 
 	cli.Base
 }
@@ -34,6 +35,9 @@ func (c *InstallCmd) Run() error {
 	}
 	if c.FlatpakRemote != "" {
 		return fmt.Errorf("--flatpak-remote needs --flatpak")
+	}
+	if c.JSONProgress {
+		return fmt.Errorf("--json-progress needs --flatpak")
 	}
 	remote, err := cpak.NormalizeRepositoryOrigin(c.Remote)
 	if err != nil {

@@ -212,8 +212,8 @@ func TestImportPublishesNothingWhenAnObjectIsForged(t *testing.T) {
 	}
 	c := flatpakTestCpak(t)
 	digest := flatpakLayerDigest(testRuntimeRef, commit.Checksum, flatpakRuntimePlacement())
-	if _, err := c.importFlatpakCommit(repository, testRuntimeRef, commit, flatpakRuntimePlacement()); err == nil {
-		t.Fatal("a layer with a forged file was imported")
+	if _, err := c.importFlatpakCommit(repository, testRuntimeRef, commit, flatpakRuntimePlacement()); !errors.Is(err, ostree.ErrVerification) {
+		t.Fatalf("a layer with a forged file was not refused as unverified: %v", err)
 	}
 	if available, _ := c.fvsLayerAvailable(digest); available {
 		t.Fatal("a failed import left a layer behind")
@@ -426,4 +426,41 @@ func TestHostIconThemeIsReadFromGTKSettings(t *testing.T) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func TestInstallReportsEveryCommitToTheEnd(t *testing.T) {
+	t.Setenv("LANG", "it_IT.UTF-8")
+	t.Setenv("LANGUAGE", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_DIRS", t.TempDir())
+	c := flatpakTestCpak(t)
+	c.SetStoragePreparationHandler(func(func() error) error { return nil })
+	localRemote(t, c)
+	steps := []FlatpakProgress{}
+	c.SetFlatpakProgress(func(progress FlatpakProgress) { steps = append(steps, progress) })
+	plan, err := c.ResolveFlatpak(FlatpakRequest{ID: "org.example.App", Remote: "local", Arch: "x86_64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.InstallFlatpak(plan); err != nil {
+		t.Fatal(err)
+	}
+	last := map[string]FlatpakProgress{}
+	for _, step := range steps {
+		if step.Phase == FlatpakPhaseDownload {
+			if previous, seen := last[step.Ref]; seen && step.ObjectsDone < previous.ObjectsDone {
+				t.Fatalf("the progress of %s went back: %+v after %+v", step.Ref, step, previous)
+			}
+			last[step.Ref] = step
+		}
+	}
+	for _, ref := range []string{"app/org.example.App/x86_64/stable", testRuntimeRef} {
+		step, seen := last[ref]
+		if !seen || step.ObjectsTotal == 0 || step.ObjectsDone != step.ObjectsTotal {
+			t.Fatalf("the download of %s ended at %+v", ref, step)
+		}
+	}
+	if steps[len(steps)-1].Phase != FlatpakPhaseInstall {
+		t.Fatalf("the installation ended on %+v", steps[len(steps)-1])
+	}
 }

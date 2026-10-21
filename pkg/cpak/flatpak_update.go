@@ -93,6 +93,7 @@ func (c *Cpak) updateFlatpakApplication(app types.Application, deps updateDeps, 
 	if err != nil {
 		return failedUpdate(result, err)
 	}
+	c.reportFlatpak(FlatpakProgress{Phase: FlatpakPhaseInstall, Ref: plan.App.Ref.String()})
 	updated.CreatedAt = app.CreatedAt
 	updated.UpdatedAt = time.Now()
 	if deps.prepareStorage != nil {
