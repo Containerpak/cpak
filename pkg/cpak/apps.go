@@ -138,7 +138,7 @@ func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateO
 	for _, app := range selected {
 		var result types.UpdateResult
 		if app.Flatpak != nil {
-			result = c.preflightFlatpakUpdate(app)
+			result, _ = c.preflightFlatpakUpdate(app)
 		} else {
 			result = c.preflightUpdate(app, deps)
 		}

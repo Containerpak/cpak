@@ -27,7 +27,7 @@ func flatpakUpdateRequest(app types.Application) (FlatpakRequest, error) {
 // manifest update is weighed: the policy the new build translates to against
 // the one the installation holds. A runtime is never updated on its own; it
 // moves with the applications that run on it.
-func (c *Cpak) preflightFlatpakUpdate(app types.Application) types.UpdateResult {
+func (c *Cpak) preflightFlatpakUpdate(app types.Application) (types.UpdateResult, *FlatpakPlan) {
 	result := types.UpdateResult{
 		Origin:     app.Origin,
 		Name:       app.Name,
@@ -38,20 +38,20 @@ func (c *Cpak) preflightFlatpakUpdate(app types.Application) types.UpdateResult 
 	if app.PulledIn {
 		result.Status = types.UpdateStatusUpToDate
 		result.Reason = "updated with the applications that run on it"
-		return result
+		return result, nil
 	}
 	request, err := flatpakUpdateRequest(app)
 	if err != nil {
-		return failedUpdate(result, err)
+		return failedUpdate(result, err), nil
 	}
 	plan, err := c.ResolveFlatpak(request)
 	if err != nil {
-		return failedUpdate(result, err)
+		return failedUpdate(result, err), nil
 	}
 	stored := installedRecordOverride(app)
 	result.PermissionChanges = stored.Diff(plan.Translation.Override)
 	result.PermissionAdditions = stored.Additions(plan.Translation.Override)
-	return result
+	return result, plan
 }
 
 // updateFlatpakApplication moves an installation to the current build of its

@@ -221,6 +221,10 @@ const (
 	// UpdateStatusPermissionDenied is reported when the update requests new
 	// permissions that were not explicitly approved.
 	UpdateStatusPermissionDenied UpdateStatus = "permission-denied"
+
+	// UpdateStatusAvailable is reported by a check when a newer build is
+	// published and nothing was applied.
+	UpdateStatusAvailable UpdateStatus = "available"
 )
 
 // UpdateResult describes what happened to a single application during an

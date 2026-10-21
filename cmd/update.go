@@ -22,6 +22,7 @@ type UpdateCmd struct {
 	JSON           bool   `cli:"json,j" help:"Print output in JSON format"`
 	NonInteractive bool   `cli:"non-interactive,n" help:"Reject updates that request additional permissions"`
 	Verbose        bool   `cli:"verbose,v" help:"Report every cpak, not only the ones that need attention"`
+	Check          bool   `cli:"check" help:"Report the updates that are available without applying them"`
 
 	cli.Base
 }
@@ -41,6 +42,9 @@ func (c *UpdateCmd) Run() error {
 
 	if !c.JSON {
 		c.announceUpdate(cp, remote)
+	}
+	if c.Check {
+		return c.check(cp, remote)
 	}
 
 	results, err := cp.UpdateWithOptions(remote, cpak.UpdateOptions{
@@ -78,6 +82,30 @@ func (c *UpdateCmd) Run() error {
 	c.Logger.Info("%s", summarizeUpdates(results))
 	c.showUpdateResults(results)
 
+	return updateFailures(results)
+}
+
+// check reports what an update would move without moving it. Only a check
+// that could not be made fails the command; an available update does not.
+func (c *UpdateCmd) check(cp cpak.Cpak, remote string) error {
+	results, err := cp.CheckUpdates(remote)
+	if err != nil {
+		return fmt.Errorf("an error occurred while checking cpak(s) for updates: %s", err)
+	}
+	if c.JSON {
+		jsonBytes, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			return fmt.Errorf("an error occurred while checking cpak(s) for updates: %s", err)
+		}
+		fmt.Println(string(jsonBytes))
+		return updateFailures(results)
+	}
+	if len(results) == 0 {
+		c.Logger.Info("No cpak installed, nothing to check")
+		return nil
+	}
+	c.Logger.Info("%s", summarizeUpdates(results))
+	c.showUpdateResults(results)
 	return updateFailures(results)
 }
 
@@ -168,6 +196,7 @@ func updateSucceeded(result types.UpdateResult) bool {
 // updateStatusOrder reads the summary from what moved to what went wrong.
 var updateStatusOrder = []types.UpdateStatus{
 	types.UpdateStatusUpdated,
+	types.UpdateStatusAvailable,
 	types.UpdateStatusUpToDate,
 	types.UpdateStatusPinned,
 	types.UpdateStatusUnsupported,
