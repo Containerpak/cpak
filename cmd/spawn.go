@@ -31,6 +31,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/filegrant"
 	"github.com/mirkobrombin/cpak/pkg/grantproto"
+	"github.com/mirkobrombin/cpak/pkg/ldcache"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/tools"
@@ -102,6 +103,7 @@ type SpawnCmd struct {
 	Nameserver         string   `cli:"nameserver" help:"replace resolv.conf with this nameserver"`
 	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces and nested mounts"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
+	LinkerCache        bool     `cli:"linker-cache" help:"index the linker configuration of the root into its ld.so.cache"`
 	BuildLayer         bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	AllowRoot          bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
 	MapSystemIDs       bool     `cli:"map-system-ids" help:"map subordinate IDs for persistent environments"`
@@ -251,7 +253,12 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	defer grantMounts.Close()
-	if refreshDynamicLinker {
+	switch {
+	case c.LinkerCache:
+		if err = writeLinkerCache(c.Rootfs); err != nil {
+			return err
+		}
+	case refreshDynamicLinker:
 		if err = refreshDynamicLinkerCache(c.Rootfs); err != nil {
 			return err
 		}
@@ -1632,6 +1639,34 @@ func refreshDynamicLinkerCache(rootFs string) error {
 		return fmt.Errorf("refresh dynamic linker cache: %w", err)
 	}
 	return nil
+}
+
+// writeLinkerCache indexes the libraries the root's own ld.so.conf names,
+// which includes the NVIDIA libraries mounted above. It is done by cpak and
+// not by an ldconfig, so nothing from the package runs before the sandbox is
+// in place and nothing depends on the host carrying a matching glibc.
+func writeLinkerCache(rootFs string) error {
+	root, err := os.OpenRoot(rootFs)
+	if err != nil {
+		return fmt.Errorf("open the root to index its libraries: %w", err)
+	}
+	defer root.Close()
+	dirs, err := ldcache.ReadConfig(root, "/etc/ld.so.conf")
+	if err != nil {
+		return err
+	}
+	cache, err := ldcache.Build(root, dirs)
+	if err != nil {
+		return err
+	}
+	destination, err := prepareRootfsConfigurationFile(rootFs, "/etc/ld.so.cache")
+	if err != nil {
+		return fmt.Errorf("prepare:/etc/ld.so.cache: %w", err)
+	}
+	if err := os.WriteFile(destination, cache, 0o644); err != nil {
+		return fmt.Errorf("write:/etc/ld.so.cache: %w", err)
+	}
+	return os.Chmod(destination, 0o644)
 }
 
 func setContainerHostname() error {
