@@ -136,7 +136,12 @@ func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateO
 	preflight := make([]types.UpdateResult, 0, len(selected))
 	approvalNeeded := []types.UpdateResult{}
 	for _, app := range selected {
-		result := c.preflightUpdate(app, deps)
+		var result types.UpdateResult
+		if app.Flatpak != nil {
+			result = c.preflightFlatpakUpdate(app)
+		} else {
+			result = c.preflightUpdate(app, deps)
+		}
 		preflight = append(preflight, result)
 		if len(result.PermissionAdditions) > 0 {
 			approvalNeeded = append(approvalNeeded, result)
@@ -174,6 +179,10 @@ func (c *Cpak) updateWithOptions(origin string, deps updateDeps, options UpdateO
 			result.Status = types.UpdateStatusPermissionDenied
 			result.Reason = "additional permissions were not approved"
 			results = append(results, result)
+			continue
+		}
+		if app.Flatpak != nil {
+			results = append(results, c.updateFlatpakApplication(app, deps, approvedAdditions[app.Origin]))
 			continue
 		}
 		results = append(results, c.updateApplication(app, deps, approvedAdditions[app.Origin]))
