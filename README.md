@@ -305,6 +305,54 @@ The selection belongs to that application. Disabling an addon rebuilds its
 runtime view, and an addon cannot be removed while another installed package is
 using it.
 
+## Flatpak applications
+
+cpak installs Flatpak applications without Flatpak. The application, its
+runtime and their extensions are read from the remote's OSTree repository,
+checked against the remote's signing key object by object, and stored as cpak
+layers. They then run in the cpak sandbox like any other package:
+
+```sh
+cpak install --flatpak org.gnome.Calculator
+cpak install --flatpak org.mozilla.firefox --branch stable
+cpak install --flatpak https://dl.flathub.org/repo/appstream/org.gimp.GIMP.flatpakref
+cpak run calculator
+```
+
+Flathub is configured with its key built in. Another remote is added by
+installing from its `.flatpakref`, which shows the key fingerprint before
+anything is trusted, or picked with `--flatpak-remote`. The application is
+installed as `flatpak/<remote>/<id>`, so `cpak update`, `rollback`, `remove`,
+`override` and `list` work on it unchanged. Its runtime is installed beside it,
+shared with every application on the same branch, and removed with the last
+one.
+
+The permissions the application asks for are translated into a cpak policy and
+shown before installing. Requests with a cpak equivalent are granted as cpak
+grants them; what has none, or would weaken the sandbox, is refused and listed
+with the reason: the raw session or system bus, the host root, `/tmp`, other
+services' sockets under `xdg-run`, `devel` and the whole of `/dev`. Any of it
+can still be granted with `cpak override`.
+
+The application reaches the desktop the way it would under Flatpak, through
+portals, but no portal service is involved. cpak serves the session bus of the
+sandbox itself and answers the file chooser, links, notifications, settings,
+network status and proxy resolution through the cpak broker; helper processes
+started through `flatpak-spawn` run in the same sandbox, never on the host. No
+host session bus is needed.
+
+The linker cache is indexed by cpak at every launch, so the NVIDIA libraries of
+the host driver are used through cpak's own NVIDIA support. Mesa comes from the
+runtime's GL extension. Host icons can be shared and a theme chosen in
+`cpak.json`:
+
+```json
+{
+  "flatpak_host_icons": true,
+  "flatpak_icon_theme": "Adwaita"
+}
+```
+
 ## Manifest v3
 
 Each package repository contains a strict `cpak.json` manifest. Unknown fields
