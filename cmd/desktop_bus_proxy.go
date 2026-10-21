@@ -26,6 +26,13 @@ type DesktopBusProxyCmd struct {
 	NetworkMonitor   bool   `cli:"network-monitor" help:"Expose the desktop portal network monitor"`
 	Bluetooth        bool   `cli:"bluetooth" help:"Expose only BlueZ on a private system bus socket"`
 	Policy           string `cli:"policy" help:"Encoded filtered session bus policy"`
+	Portals          bool   `cli:"portals" help:"Serve the whole session bus and answer portals without a host bus"`
+	AppName          string `cli:"app-name" help:"Application name used in notifications"`
+	ColorScheme      int    `cli:"color-scheme" help:"Colour scheme reported by the settings portal"`
+	Notifications    bool   `cli:"notifications" help:"Deliver notifications through the cpak broker"`
+	OpenURI          bool   `cli:"open-uri" help:"Open links through the cpak broker"`
+	ExecSocketPath   string `cli:"exec-socket" help:"Container command socket for processes started through the Flatpak portal"`
+	IconTheme        string `cli:"icon-theme" help:"Icon theme reported by the settings portal"`
 
 	cli.Base
 }
@@ -36,22 +43,25 @@ func (c *DesktopBusProxyCmd) Run() error {
 		return err
 	}
 	token := ""
-	if c.FilePicker {
+	if c.FilePicker || c.Portals && (c.Notifications || c.OpenURI) {
 		token, err = readSystemBrokerToken(c.TokenFile)
 		if err != nil {
 			return err
 		}
 	}
 	upstream := c.UpstreamAddress
-	if upstream == "" {
+	if upstream == "" && !c.Portals {
 		if c.Bluetooth {
 			upstream = "unix:path=/run/dbus/system_bus_socket"
 		} else {
 			upstream = os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 		}
 	}
-	if upstream == "" {
+	if upstream == "" && !c.Portals {
 		return errors.New("host session bus address is required")
+	}
+	if c.ColorScheme < 0 || c.ColorScheme > 2 {
+		return errors.New("colour scheme must be 0, 1 or 2")
 	}
 	ctx, stop := signalContext()
 	defer stop()
@@ -64,6 +74,13 @@ func (c *DesktopBusProxyCmd) Run() error {
 		NetworkMonitor:   c.NetworkMonitor,
 		Bluetooth:        c.Bluetooth,
 		Policy:           policy,
+		Portals:          c.Portals,
+		AppName:          c.AppName,
+		ColorScheme:      uint32(c.ColorScheme),
+		Notifications:    c.Notifications,
+		OpenURI:          c.OpenURI,
+		ExecSocketPath:   c.ExecSocketPath,
+		IconTheme:        c.IconTheme,
 	})
 }
 
