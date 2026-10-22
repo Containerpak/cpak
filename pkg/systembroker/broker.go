@@ -170,7 +170,7 @@ func (o Options) validate() error {
 	return nil
 }
 
-func (o Options) openURICommand(argument string) (*exec.Cmd, string, error) {
+func (o Options) openURICommand(ctx context.Context, argument string) (*exec.Cmd, string, error) {
 	backend := o.OpenURICommand
 	arguments := []string{argument}
 	if backend == "" {
@@ -185,6 +185,9 @@ func (o Options) openURICommand(argument string) (*exec.Cmd, string, error) {
 	}
 	if err != nil {
 		return nil, backend, err
+	}
+	if backend == "gio" {
+		return exec.CommandContext(ctx, path, arguments...), backend, nil
 	}
 	return exec.Command(path, arguments...), backend, nil
 }
@@ -332,7 +335,9 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 		); err != nil {
 			return 0, fmt.Errorf("prepare desktop callback: %w", err)
 		}
-		command, backend, err := options.openURICommand(argument)
+		commandCtx, cancel := context.WithTimeout(ctx, options.commandTimeout())
+		defer cancel()
+		command, backend, err := options.openURICommand(commandCtx, argument)
 		if err != nil {
 			return 0, fmt.Errorf("system integration backend is unavailable: %s", backend)
 		}
@@ -342,6 +347,15 @@ func execute(ctx context.Context, request Request, options Options, input io.Rea
 		}
 		command.Env = mergeEnvironment(os.Environ(), environment)
 		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if backend == "gio" {
+			if err := command.Run(); err != nil {
+				if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+					return 0, errors.New("system integration backend timed out: gio")
+				}
+				return 0, errors.New("system integration backend failed: gio")
+			}
+			return 0, nil
+		}
 		if err := command.Start(); err != nil {
 			return 0, fmt.Errorf("system integration backend failed: %s", backend)
 		}
