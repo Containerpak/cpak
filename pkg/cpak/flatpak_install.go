@@ -748,7 +748,7 @@ const flatpakHostFontsConfig = `<?xml version="1.0"?>
 func flatpakInfo(plan *FlatpakPlan) []byte {
 	var out strings.Builder
 	fmt.Fprintf(&out, "[Application]\nname=%s\nruntime=%s\n\n", plan.App.Ref.ID, plan.Runtime.Ref.String())
-	fmt.Fprintf(&out, "[Instance]\napp-path=/app\nruntime-path=/usr\nbranch=%s\narch=%s\nflatpak-version=1.16.0\nsession-bus-proxy=true\n", plan.App.Ref.Branch, plan.App.Ref.Arch)
+	fmt.Fprintf(&out, "[Instance]\napp-path=/app\napp-commit=%s\nruntime-path=/usr\nruntime-commit=%s\nbranch=%s\narch=%s\nflatpak-version=1.16.0\nsession-bus-proxy=true\n", plan.App.Commit.Checksum, plan.Runtime.Commit.Checksum, plan.App.Ref.Branch, plan.App.Ref.Arch)
 	return []byte(out.String())
 }
 
