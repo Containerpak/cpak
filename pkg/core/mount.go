@@ -203,7 +203,8 @@ func WaylandSocketMounts(socket string, h Host) []string {
 }
 
 // WaylandDisplay answers the display name to trust, which is the one the
-// session set unless it points somewhere outside the user runtime directory.
+// session set unless it points somewhere outside the user runtime directory and
+// is not a socket under /run, where some sessions keep the compositor socket.
 // A display cpak cannot vouch for falls back to wayland-0 rather than mounting
 // whatever the variable named.
 func WaylandDisplay(h Host) string {
@@ -215,6 +216,9 @@ func WaylandDisplay(h Host) string {
 	if path.IsAbs(display) {
 		clean := path.Clean(display)
 		if strings.HasPrefix(clean, runtimeDir+"/") {
+			return clean
+		}
+		if strings.HasPrefix(clean, "/run/") && h.isSocket(clean) {
 			return clean
 		}
 		return "wayland-0"
