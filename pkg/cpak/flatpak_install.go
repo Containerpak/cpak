@@ -393,6 +393,15 @@ func (c *Cpak) InstallFlatpak(plan *FlatpakPlan) error {
 	if err := c.storeApplication(app); err != nil {
 		return err
 	}
+	if len(app.Flatpak.ExtraData) > 0 {
+		if err := c.applyFlatpakExtraData(&app); err != nil {
+			_ = c.Remove(app.Origin, app.Branch, "", "")
+			return err
+		}
+		if err := c.storeApplication(app); err != nil {
+			return err
+		}
+	}
 	c.EnrolPublishedApplication(app, PublishedPackage{})
 	c.aliasFlatpakApplication(plan.App.Ref.ID, app.Origin)
 	return nil
@@ -518,6 +527,7 @@ func (c *Cpak) flatpakApplicationRecord(plan *FlatpakPlan, runtime types.Applica
 			Runtime:    plan.Runtime.Ref.String(),
 			Extensions: extensions,
 			Refused:    refused,
+			ExtraData:  flatpakExtraData(plan.App.Metadata.ExtraData),
 		},
 	}
 	return app, nil

@@ -88,6 +88,7 @@ type SpawnCmd struct {
 	MountOverrides     []string `cli:"mount-overrides,m" help:"set the mount overrides"`
 	SystemShims        []string `cli:"system-shims" help:"set the system integration shims"`
 	ExtraLinks         []string `cli:"extra-links,x" help:"set the extra links"`
+	WritableLinks      []string `cli:"writable-links" help:"bind host directories writable at the given paths"`
 	Secrets            []string `cli:"secret" help:"mount a private file under /run/secrets"`
 	DesktopRuntime     string   `cli:"desktop-runtime" help:"mount the nested desktop runtime"`
 	ReadyFd            int      `cli:"ready-fd" help:"write readiness to this file descriptor"`
@@ -204,6 +205,11 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	grants = append(grants, linkGrants...)
+	writableGrants, err := c.setupWritableLinks(c.Rootfs, c.WritableLinks)
+	if err != nil {
+		return err
+	}
+	grants = append(grants, writableGrants...)
 	secretGrants, err := c.setupSecrets(c.Rootfs, c.Secrets)
 	if err != nil {
 		return err
@@ -1204,6 +1210,25 @@ func (c *SpawnCmd) setupExtraLinks(rootFs string, extraLinks []string) ([]sandbo
 			return nil, fmt.Errorf("mount:%s:%s: an error occurred while spawning the namespace: %s", linkParts[0], linkParts[1], err)
 		}
 		grants = append(grants, sandbox.PathGrant{Path: linkParts[1], ReadOnly: true})
+	}
+	return grants, nil
+}
+
+func (c *SpawnCmd) setupWritableLinks(rootFs string, links []string) ([]sandbox.PathGrant, error) {
+	grants := []sandbox.PathGrant{}
+	for _, link := range links {
+		source, target, found := strings.Cut(link, ":")
+		if !found || !filepath.IsAbs(source) || !filepath.IsAbs(target) {
+			return nil, fmt.Errorf("invalid writable link: %s", link)
+		}
+		destination, err := prepareRootfsMountTarget(rootFs, target, source)
+		if err != nil {
+			return nil, fmt.Errorf("prepare writable link %s: %w", target, err)
+		}
+		if err = tools.MountBindPrepared(source, destination); err != nil {
+			return nil, fmt.Errorf("mount writable link %s: %w", target, err)
+		}
+		grants = append(grants, sandbox.PathGrant{Path: target})
 	}
 	return grants, nil
 }

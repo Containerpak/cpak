@@ -41,6 +41,7 @@ type Cpak struct {
 	runtimeSecrets     []types.RuntimeSecret
 	applicationService string
 	flatpakProgress    func(FlatpakProgress)
+	writableLinks      []string
 }
 
 // SetDesktopLaunch enables file grants for exported desktop entries.

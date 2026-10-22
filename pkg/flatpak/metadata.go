@@ -7,8 +7,11 @@ package flatpak
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +37,18 @@ type Metadata struct {
 
 	// ExtensionOf is set on an extension, naming what it extends.
 	ExtensionOf string
+
+	// ExtraData are the files an application downloads from its publisher at
+	// install time and turns into /app/extra with its apply_extra script.
+	ExtraData []ExtraData
+}
+
+// ExtraData is one file of the [Extra Data] group.
+type ExtraData struct {
+	Name     string
+	URI      string
+	Checksum string
+	Size     uint64
 }
 
 // Context is the [Context] group, each list as the publisher wrote it.
@@ -119,7 +134,51 @@ func ParseMetadata(data []byte) (Metadata, error) {
 	sort.Slice(meta.Extensions, func(first, second int) bool {
 		return meta.Extensions[first].Name < meta.Extensions[second].Name
 	})
+	extra, err := parseExtraData(file)
+	if err != nil {
+		return Metadata{}, fmt.Errorf("flatpak: %s: %w", meta.Name, err)
+	}
+	meta.ExtraData = extra
 	return meta, nil
+}
+
+var extraChecksumPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// parseExtraData reads the [Extra Data] group. The first file uses the plain
+// keys and every further one the same keys with a number appended.
+func parseExtraData(file *KeyFile) ([]ExtraData, error) {
+	const group = "Extra Data"
+	files := []ExtraData{}
+	for index := 0; ; index++ {
+		suffix := ""
+		if index > 0 {
+			suffix = strconv.Itoa(index)
+		}
+		if !file.Has(group, "uri"+suffix) {
+			return files, nil
+		}
+		data := ExtraData{
+			Name:     file.String(group, "name"+suffix),
+			URI:      file.String(group, "uri"+suffix),
+			Checksum: strings.ToLower(file.String(group, "checksum"+suffix)),
+		}
+		size, err := strconv.ParseUint(file.String(group, "size"+suffix), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("extra data %q has no valid size", data.Name)
+		}
+		data.Size = size
+		if data.Name == "" || data.Name == "." || data.Name == ".." || strings.ContainsAny(data.Name, "/\x00") {
+			return nil, fmt.Errorf("extra data %q is not a plain file name", data.Name)
+		}
+		if !extraChecksumPattern.MatchString(data.Checksum) {
+			return nil, fmt.Errorf("extra data %q has no sha256 checksum", data.Name)
+		}
+		location, err := url.Parse(data.URI)
+		if err != nil || (location.Scheme != "https" && location.Scheme != "http") || location.Host == "" {
+			return nil, fmt.Errorf("extra data %q has an unsupported address", data.Name)
+		}
+		files = append(files, data)
+	}
 }
 
 func validCommand(command string) error {
