@@ -91,7 +91,7 @@ func applyLocally(message socketRequest) error {
 }
 
 func requestOverBus(message socketRequest) error {
-	connection, err := dbus.ConnectSystemBus()
+	connection, err := connectSystemBus()
 	if err != nil {
 		return errTransportUnavailable
 	}

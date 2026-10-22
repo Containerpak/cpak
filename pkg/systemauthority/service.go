@@ -301,7 +301,7 @@ func Serve(ctx context.Context, socketPath string) error {
 }
 
 func serveBus(ctx context.Context) error {
-	connection, err := dbus.ConnectSystemBus()
+	connection, err := connectSystemBus()
 	if err != nil {
 		return errTransportUnavailable
 	}

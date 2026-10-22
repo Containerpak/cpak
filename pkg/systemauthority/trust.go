@@ -312,7 +312,7 @@ func trustPolicyOverBus(policy trustpolicy.Policy) error {
 	if err != nil {
 		return fmt.Errorf("encode the trust policy: %w", err)
 	}
-	connection, err := dbus.ConnectSystemBus()
+	connection, err := connectSystemBus()
 	if err != nil {
 		return errTransportUnavailable
 	}
