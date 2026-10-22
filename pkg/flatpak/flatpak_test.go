@@ -342,3 +342,16 @@ func TestRemotesRoundTrip(t *testing.T) {
 		t.Fatal("a second remote replaced an existing one under the same name")
 	}
 }
+
+func TestParseMetadataReadsExtraData(t *testing.T) {
+	meta, err := ParseMetadata([]byte("[Application]\nname=com.example.App\nruntime=org.freedesktop.Platform/x86_64/24.08\ncommand=app\n\n[Extra Data]\nname=app.deb\nchecksum=" + strings.Repeat("a", 64) + "\nsize=42\nuri=https://example.com/app.deb\nname1=more.bin\nchecksum1=" + strings.Repeat("b", 64) + "\nsize1=7\nuri1=https://example.com/more.bin\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.ExtraData) != 2 || meta.ExtraData[0].Name != "app.deb" || meta.ExtraData[0].Size != 42 || meta.ExtraData[1].Name != "more.bin" {
+		t.Fatalf("extra data = %+v", meta.ExtraData)
+	}
+	if _, err := ParseMetadata([]byte("[Application]\nname=com.example.App\nruntime=org.freedesktop.Platform/x86_64/24.08\n\n[Extra Data]\nname=../escape\nchecksum=" + strings.Repeat("a", 64) + "\nsize=1\nuri=https://example.com/x\n")); err == nil {
+		t.Fatal("a path in an extra data name was accepted")
+	}
+}

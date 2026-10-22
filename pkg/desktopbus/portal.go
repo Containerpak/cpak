@@ -161,6 +161,10 @@ func (b *portalBus) dispatch(ctx context.Context, client *serializedConn, connec
 	switch {
 	case destination == busName || destination == "" && path == busPath:
 		b.busMethod(client, connection, call, interfaceName, member)
+	case destination == portalUniqueName && path == flatpakPortalPath && b.proxy.options.ExecSocketPath != "":
+		b.flatpakMethod(client, connection, call, fds, path, interfaceName, member)
+	case destination == portalUniqueName && path == notificationsPath && b.proxy.options.Notifications:
+		b.notificationsMethod(ctx, client, connection, call, path, interfaceName, member)
 	case b.isPortal(destination):
 		b.portalMethod(ctx, client, connection, call, path, interfaceName, member)
 	case destination == flatpakPortalName:

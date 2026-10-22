@@ -253,7 +253,7 @@ func SetSignaturePolicy(policy SignaturePolicy) error {
 }
 
 func signaturePolicyOverBus(policy SignaturePolicy) error {
-	connection, err := dbus.ConnectSystemBus()
+	connection, err := connectSystemBus()
 	if err != nil {
 		return errTransportUnavailable
 	}

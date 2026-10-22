@@ -946,7 +946,7 @@ var authorityRequestOverSocket = requestOverSocket
 var enrolPrivileged = runPrivilegedEnrolment
 
 func signedEnrolmentOverBus(enrolment Enrolment) error {
-	connection, err := dbus.ConnectSystemBus()
+	connection, err := connectSystemBus()
 	if err != nil {
 		return errTransportUnavailable
 	}
@@ -1156,7 +1156,7 @@ func dispatchIntegrity(message socketRequest) error {
 }
 
 func integrityOverBus(message socketRequest) error {
-	connection, err := dbus.ConnectSystemBus()
+	connection, err := connectSystemBus()
 	if err != nil {
 		return errTransportUnavailable
 	}

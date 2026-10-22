@@ -236,6 +236,9 @@ func waylandDisplay(uid string) string {
 		if strings.HasPrefix(clean, runtimeDir+string(filepath.Separator)) {
 			return clean
 		}
+		if info, err := os.Stat(clean); err == nil && info.Mode()&os.ModeSocket != 0 && strings.HasPrefix(clean, "/run/") {
+			return clean
+		}
 		return "wayland-0"
 	}
 	if filepath.Base(display) != display {

@@ -698,6 +698,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		guestBusPath := hostSessionBusPath()
 		cmds = append(cmds, "--extra-links", container.DesktopBusSocketPath+":"+guestBusPath)
 	}
+	for _, link := range c.writableLinks {
+		cmds = append(cmds, "--writable-links", link)
+	}
 	for _, link := range privateDesktopLinks(container) {
 		cmds = append(cmds, "--extra-links", link)
 	}

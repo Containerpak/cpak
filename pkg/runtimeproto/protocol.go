@@ -24,6 +24,7 @@ const (
 	FrameOutput
 	FrameExit
 	FrameResize
+	FrameStarted
 )
 
 type Request struct {
@@ -205,6 +206,20 @@ func EncodeExit(code int) []byte {
 	payload := make([]byte, 4)
 	binary.BigEndian.PutUint32(payload, uint32(int32(code)))
 	return payload
+}
+
+// EncodeStarted carries the process id of a command that started, as the
+// runtime that started it sees it.
+func EncodeStarted(pid int) []byte {
+	return EncodeExit(pid)
+}
+
+func DecodeStarted(payload []byte) (int, error) {
+	pid, err := DecodeExit(payload)
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid runtime start frame")
+	}
+	return pid, nil
 }
 
 func DecodeExit(payload []byte) (int, error) {

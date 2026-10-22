@@ -393,6 +393,15 @@ func (c *Cpak) InstallFlatpak(plan *FlatpakPlan) error {
 	if err := c.storeApplication(app); err != nil {
 		return err
 	}
+	if len(app.Flatpak.ExtraData) > 0 {
+		if err := c.applyFlatpakExtraData(&app); err != nil {
+			_ = c.Remove(app.Origin, app.Branch, "", "")
+			return err
+		}
+		if err := c.storeApplication(app); err != nil {
+			return err
+		}
+	}
 	c.EnrolPublishedApplication(app, PublishedPackage{})
 	c.aliasFlatpakApplication(plan.App.Ref.ID, app.Origin)
 	return nil
@@ -518,6 +527,7 @@ func (c *Cpak) flatpakApplicationRecord(plan *FlatpakPlan, runtime types.Applica
 			Runtime:    plan.Runtime.Ref.String(),
 			Extensions: extensions,
 			Refused:    refused,
+			ExtraData:  flatpakExtraData(plan.App.Metadata.ExtraData),
 		},
 	}
 	return app, nil
@@ -738,7 +748,7 @@ const flatpakHostFontsConfig = `<?xml version="1.0"?>
 func flatpakInfo(plan *FlatpakPlan) []byte {
 	var out strings.Builder
 	fmt.Fprintf(&out, "[Application]\nname=%s\nruntime=%s\n\n", plan.App.Ref.ID, plan.Runtime.Ref.String())
-	fmt.Fprintf(&out, "[Instance]\napp-path=/app\nruntime-path=/usr\nbranch=%s\narch=%s\nflatpak-version=1.16.0\nsession-bus-proxy=true\n", plan.App.Ref.Branch, plan.App.Ref.Arch)
+	fmt.Fprintf(&out, "[Instance]\napp-path=/app\napp-commit=%s\nruntime-path=/usr\nruntime-commit=%s\nbranch=%s\narch=%s\nflatpak-version=1.16.0\nsession-bus-proxy=true\n", plan.App.Commit.Checksum, plan.Runtime.Commit.Checksum, plan.App.Ref.Branch, plan.App.Ref.Arch)
 	return []byte(out.String())
 }
 

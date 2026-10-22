@@ -159,6 +159,19 @@ type FlatpakSource struct {
 	// Refused lists what the application asked for and cpak did not grant,
 	// as the translation recorded it.
 	Refused []string `json:"refused,omitempty"`
+
+	// ExtraData are the publisher files the application's apply_extra turned
+	// into /app/extra, and ExtraLayer the layer holding the result.
+	ExtraData  []FlatpakExtraData `json:"extra_data,omitempty"`
+	ExtraLayer string             `json:"extra_layer,omitempty"`
+}
+
+// FlatpakExtraData is one file downloaded from an application's publisher.
+type FlatpakExtraData struct {
+	Name     string `json:"name"`
+	URI      string `json:"uri"`
+	Checksum string `json:"checksum"`
+	Size     uint64 `json:"size"`
 }
 
 // FlatpakExtension is one extension imported beside an application or

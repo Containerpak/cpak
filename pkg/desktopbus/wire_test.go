@@ -70,3 +70,19 @@ func unixConnection(t *testing.T, fd int) *net.UnixConn {
 	}
 	return connection.(*net.UnixConn)
 }
+
+func TestUIDMapTranslatesTheIdentityOfANamespacedClient(t *testing.T) {
+	mapping := []byte("      1000       1001          1\n")
+	if outside, ok := uidMapTranslate(mapping, 1000); !ok || outside != 1001 {
+		t.Fatalf("uid 1000 maps to %d, %v", outside, ok)
+	}
+	if _, ok := uidMapTranslate(mapping, 0); ok {
+		t.Fatal("an unmapped uid was translated")
+	}
+	if !externalIdentityMatches("31303031", &unix.Ucred{Pid: int32(os.Getpid()), Uid: 1001}) {
+		t.Fatal("the peer's own uid was refused")
+	}
+	if externalIdentityMatches("30", &unix.Ucred{Pid: int32(os.Getpid()), Uid: uint32(os.Getuid()) + 1}) {
+		t.Fatal("a uid outside the peer's map was accepted")
+	}
+}
