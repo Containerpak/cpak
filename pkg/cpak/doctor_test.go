@@ -75,3 +75,39 @@ func TestDoctorRequiredChecksHaveDetails(t *testing.T) {
 		}
 	}
 }
+
+// fakeTools puts scripts named after the tools the overlay check runs ahead
+// of the real ones, so both of its paths can be taken on any host.
+func fakeTools(t *testing.T, tools map[string]string) {
+	t.Helper()
+	directory := t.TempDir()
+	for name, script := range tools {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestOverlayCheckCountsFuseOverlayfs(t *testing.T) {
+	fakeTools(t, map[string]string{
+		"mount":          `echo "mount: permission denied" >&2; exit 32`,
+		"fuse-overlayfs": `exit 0`,
+		"umount":         `exit 0`,
+	})
+	check := checkOverlay()
+	if !check.Available || !strings.Contains(check.Detail, "fuse-overlayfs succeeded") || !strings.Contains(check.Detail, "permission denied") {
+		t.Fatalf("a refused kernel overlay with a working fuse-overlayfs reads as %+v", check)
+	}
+}
+
+func TestOverlayCheckFailsWhenNeitherMountWorks(t *testing.T) {
+	fakeTools(t, map[string]string{
+		"mount":          `echo "mount: permission denied" >&2; exit 32`,
+		"fuse-overlayfs": `echo "fuse: device not found" >&2; exit 1`,
+	})
+	check := checkOverlay()
+	if check.Available || !strings.Contains(check.Detail, "permission denied") || !strings.Contains(check.Detail, "fuse: device not found") {
+		t.Fatalf("an overlay neither way reads as %+v", check)
+	}
+}
