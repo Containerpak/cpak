@@ -296,7 +296,7 @@ func authenticateClient(connection *net.UnixConn) error {
 			if len(parts) != 3 {
 				return errors.New("desktop bus authentication identity is invalid")
 			}
-			authorized = externalIdentityMatches(parts[2], ucred.Uid)
+			authorized = externalIdentityMatches(parts[2], ucred)
 			if !authorized {
 				if err = writeAuthLine(connection, "REJECTED EXTERNAL"); err != nil {
 					return err
@@ -311,7 +311,7 @@ func authenticateClient(connection *net.UnixConn) error {
 				return errors.New("desktop bus authentication data is invalid")
 			}
 			waitingForIdentity = false
-			authorized = len(parts) == 1 || externalIdentityMatches(parts[1], ucred.Uid)
+			authorized = len(parts) == 1 || externalIdentityMatches(parts[1], ucred)
 			if !authorized {
 				if err = writeAuthLine(connection, "REJECTED EXTERNAL"); err != nil {
 					return err
@@ -390,9 +390,46 @@ func peerCredentials(connection *net.UnixConn) (*unix.Ucred, error) {
 	return credentials, socketErr
 }
 
-func externalIdentityMatches(encoded string, uid uint32) bool {
+// externalIdentityMatches accepts the identity a client states when it is the
+// peer's own uid, either as this process sees it or as the peer sees it from
+// inside a user namespace whose map places it on that uid.
+func externalIdentityMatches(encoded string, credentials *unix.Ucred) bool {
 	identity, err := hex.DecodeString(encoded)
-	return err == nil && string(identity) == strconv.FormatUint(uint64(uid), 10)
+	if err != nil {
+		return false
+	}
+	claimed, err := strconv.ParseUint(string(identity), 10, 32)
+	if err != nil {
+		return false
+	}
+	if uint32(claimed) == credentials.Uid {
+		return true
+	}
+	mapping, err := os.ReadFile("/proc/" + strconv.Itoa(int(credentials.Pid)) + "/uid_map")
+	if err != nil {
+		return false
+	}
+	outside, mapped := uidMapTranslate(mapping, uint32(claimed))
+	return mapped && outside == credentials.Uid
+}
+
+func uidMapTranslate(mapping []byte, uid uint32) (uint32, bool) {
+	for _, line := range strings.Split(string(mapping), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 {
+			continue
+		}
+		inside, insideErr := strconv.ParseUint(fields[0], 10, 32)
+		outside, outsideErr := strconv.ParseUint(fields[1], 10, 32)
+		count, countErr := strconv.ParseUint(fields[2], 10, 32)
+		if insideErr != nil || outsideErr != nil || countErr != nil {
+			continue
+		}
+		if uint64(uid) >= inside && uint64(uid)-inside < count {
+			return uint32(outside + uint64(uid) - inside), true
+		}
+	}
+	return 0, false
 }
 
 func readAuthLine(reader io.Reader) (string, error) {
