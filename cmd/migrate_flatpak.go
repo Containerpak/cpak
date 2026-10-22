@@ -17,6 +17,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/flatpak"
 	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/tools"
+	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -32,9 +33,12 @@ type MigrateFlatpakCmd struct {
 	cli.Base
 }
 
+// flatpakMigration is one host application and either the plan to install
+// it or the cpak installation an earlier run already made for it.
 type flatpakMigration struct {
-	source flatpak.InstalledApp
-	plan   *cpak.FlatpakPlan
+	source    flatpak.InstalledApp
+	plan      *cpak.FlatpakPlan
+	installed types.Application
 }
 
 // Run migrates and exits with a code that says whether every application
@@ -75,6 +79,10 @@ func (c *MigrateFlatpakCmd) run() error {
 	migrations := []flatpakMigration{}
 	failures := []error{}
 	for _, source := range found {
+		if app, migrated := cp.MigratedFlatpak(source); migrated {
+			migrations = append(migrations, flatpakMigration{source: source, installed: app})
+			continue
+		}
 		plan, err := cp.ResolveFlatpakMigration(source)
 		if err != nil {
 			c.Logger.Warning("%s (%s installation) cannot be migrated: %s", source.Ref.ID, source.Installation.Kind, tools.SanitizeForDisplay(err.Error()))
@@ -88,13 +96,19 @@ func (c *MigrateFlatpakCmd) run() error {
 	}
 
 	install := InstallCmd{Base: c.Base}
+	toInstall := 0
 	for _, migration := range migrations {
-		install.describeFlatpakPlan(migration.plan)
+		if migration.plan != nil {
+			install.describeFlatpakPlan(migration.plan)
+			toInstall++
+		}
 	}
 	c.Logger.Info("The data each application kept in ~/.var/app is copied into the private home cpak gives it, without its cache.")
 	if !c.DeleteFlatpaks {
 		c.Logger.Info("Your Flatpak applications and their data are left as they are.")
-		if !c.Yes && !tools.ConfirmOperation("Do you want to continue?") {
+		// Nothing is granted to an application that is already installed,
+		// so there is nothing to approve when every one of them is.
+		if toInstall > 0 && !c.Yes && !tools.ConfirmOperation("Do you want to continue?") {
 			return errPermissionsRefused
 		}
 	} else if !c.confirmDeletion(len(failures)) {
@@ -177,15 +191,20 @@ func (c *MigrateFlatpakCmd) confirmDeletion(unresolved int) bool {
 // the Flatpak installation alone, whatever was asked for it.
 func (c *MigrateFlatpakCmd) migrate(cp cpak.Cpak, migration flatpakMigration) (bool, error) {
 	id := migration.source.Ref.ID
-	c.Logger.Info("Migrating %s", id)
-	if err := cp.InstallFlatpak(migration.plan); err != nil {
-		c.Logger.Error("%s was not installed: %s", id, err)
-		return false, err
-	}
-	app, err := cp.InstalledFlatpak(migration.plan)
-	if err != nil {
-		c.Logger.Error("%s: %s", id, err)
-		return false, err
+	app := migration.installed
+	if migration.plan == nil {
+		c.Logger.Info("%s is already installed with cpak", id)
+	} else {
+		c.Logger.Info("Migrating %s", id)
+		if err := cp.InstallFlatpak(migration.plan); err != nil {
+			c.Logger.Error("%s was not installed: %s", id, err)
+			return false, err
+		}
+		var err error
+		if app, err = cp.InstalledFlatpak(migration.plan); err != nil {
+			c.Logger.Error("%s: %s", id, err)
+			return false, err
+		}
 	}
 	data, err := cp.MigrateFlatpakData(app)
 	if err != nil {
@@ -196,7 +215,9 @@ func (c *MigrateFlatpakCmd) migrate(cp cpak.Cpak, migration flatpakMigration) (b
 		c.Logger.Warning("%s is granted your home, so its data was left in %s; it is not deleted", id, data.Source)
 		return false, nil
 	}
-	if data.Kept > 0 {
+	if data.AlreadyCopied {
+		c.Logger.Info("  its data was copied by an earlier migration")
+	} else if data.Kept > 0 {
 		c.Logger.Info("  %d files copied, %d already in the cpak home kept", data.Copied, data.Kept)
 	} else if data.Copied > 0 {
 		c.Logger.Info("  %d files copied", data.Copied)
