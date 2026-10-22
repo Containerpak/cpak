@@ -90,24 +90,57 @@ func checkOverlay() DoctorCheck {
 			return DoctorCheck{Name: "rootless OverlayFS", Required: true, Detail: err.Error()}
 		}
 	}
-	options := strings.Join([]string{
+	layers := []string{
 		"lowerdir=" + filepath.Join(root, "lower"),
 		"upperdir=" + filepath.Join(root, "upper"),
 		"workdir=" + filepath.Join(root, "work"),
-		"userxattr",
-	}, ",")
-	cmd := nativeNamespaceCommand(mountBinary, []string{"-t", "overlay", "overlay", "-o", options, filepath.Join(root, "merged")}, namespaceOptions{})
-	if output, runErr := cmd.CombinedOutput(); runErr != nil {
-		detail := strings.TrimSpace(string(output))
-		if detail == "" {
-			detail = runErr.Error()
-		}
-		if systemauthority.AppArmorUserNamespacesRestricted() {
-			detail += "; run cpak system setup to install cpak's AppArmor user namespace profile"
-		}
-		return DoctorCheck{Name: "rootless OverlayFS", Required: true, Detail: detail}
 	}
-	return DoctorCheck{Name: "rootless OverlayFS", Available: true, Required: true, Detail: "overlay mount with userxattr succeeded in a user namespace"}
+	merged := filepath.Join(root, "merged")
+	cmd := nativeNamespaceCommand(mountBinary, []string{"-t", "overlay", "overlay", "-o", strings.Join(append(layers, "userxattr"), ","), merged}, namespaceOptions{})
+	output, runErr := cmd.CombinedOutput()
+	if runErr == nil {
+		return DoctorCheck{Name: "rootless OverlayFS", Available: true, Required: true, Detail: "overlay mount with userxattr succeeded in a user namespace"}
+	}
+	detail := strings.TrimSpace(string(output))
+	if detail == "" {
+		detail = runErr.Error()
+	}
+	// The runtime composes the same layers with fuse-overlayfs when the
+	// kernel refuses the mount, which it does for reasons that belong to the
+	// filesystems underneath, such as a user namespace nested in another one.
+	// The check answers for what an application gets, not for one path to it.
+	fuseErr := probeFuseOverlay(strings.Join(layers, ","), merged)
+	if fuseErr == nil {
+		return DoctorCheck{Name: "rootless OverlayFS", Available: true, Required: true, Detail: "fuse-overlayfs succeeded in a user namespace; the kernel overlay was refused: " + detail}
+	}
+	detail += "; fuse-overlayfs: " + fuseErr.Error()
+	if systemauthority.AppArmorUserNamespacesRestricted() {
+		detail += "; run cpak system setup to install cpak's AppArmor user namespace profile"
+	}
+	return DoctorCheck{Name: "rootless OverlayFS", Required: true, Detail: detail}
+}
+
+// probeFuseOverlay mounts and unmounts a fuse-overlayfs view in a user
+// namespace. The namespace has its own PID 1, so the daemon goes with it
+// whatever happens to the unmount.
+func probeFuseOverlay(options, merged string) error {
+	fuseBinary, err := exec.LookPath("fuse-overlayfs")
+	if err != nil {
+		return errors.New("fuse-overlayfs is not installed")
+	}
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		return errors.New("sh executable not found")
+	}
+	script := `"$1" -o "$2" "$3" && umount "$3"`
+	cmd := nativeNamespaceCommand(shell, []string{"-c", script, "sh", fuseBinary, options, merged}, namespaceOptions{})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			return errors.New(detail)
+		}
+		return err
+	}
+	return nil
 }
 
 func checkMountSetattr() DoctorCheck {

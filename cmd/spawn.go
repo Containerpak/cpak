@@ -419,9 +419,17 @@ func mountLayers(rootFs, lowerDir, upperDir, workDir string) error {
 	if upperDir == "" || workDir == "" {
 		return fmt.Errorf("mount:layers: no writable layer directories")
 	}
+	// The kernel refuses an unprivileged overlay for reasons that belong to
+	// the filesystems underneath, and not always with a permission error.
+	// doctor counts fuse-overlayfs as a way to run, so every refusal falls
+	// back to it.
 	err := tools.MountOverlay(rootFs, lowerDir, upperDir, workDir)
-	if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
-		err = tools.MountFuseOverlayfs(rootFs, lowerDir, upperDir, workDir)
+	if err != nil {
+		if fuseErr := tools.MountFuseOverlayfs(rootFs, lowerDir, upperDir, workDir); fuseErr != nil {
+			err = fmt.Errorf("%w; fuse-overlayfs: %v", err, fuseErr)
+		} else {
+			err = nil
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("mount:layers %s: an error occurred while spawning the namespace: %s", lowerDir, err)
