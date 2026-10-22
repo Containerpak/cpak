@@ -212,3 +212,55 @@ func ostreeTestOtherKey(t *testing.T) []byte {
 	}
 	return data
 }
+
+func TestAMigrationIsRecognisedOfflineAndNotCopiedAgain(t *testing.T) {
+	t.Setenv("LANG", "it_IT.UTF-8")
+	t.Setenv("LANGUAGE", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_DIRS", t.TempDir())
+	c := flatpakTestCpak(t)
+	c.SetStoragePreparationHandler(func(func() error) error { return nil })
+	repo := localRemote(t, c)
+	source := hostInstallation(t, "local", repo.URL(), testFlatpakKey().Public())
+	if _, migrated := c.MigratedFlatpak(source); migrated {
+		t.Fatal("an application cpak never installed reads as migrated")
+	}
+	plan, err := c.ResolveFlatpakMigration(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.InstallFlatpak(plan); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".var", "app", "org.example.App", "config", "example.conf"), "flatpak")
+	app, err := c.InstalledFlatpak(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, err := c.MigrateFlatpakData(app); err != nil || first.AlreadyCopied || first.Copied == 0 {
+		t.Fatalf("the first copy reads as %+v: %v", first, err)
+	}
+
+	// The remote is gone, as it is for a laptop that logs in offline.
+	repo.Close()
+	again, migrated := c.MigratedFlatpak(source)
+	if !migrated || again.CpakId != app.CpakId {
+		t.Fatal("an application migrated before was not recognised without its remote")
+	}
+	privateHome, err := c.privateApplicationHome(app.CpakId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := filepath.Join(privateHome, ".config", "example.conf")
+	if err := os.Remove(copied); err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.MigrateFlatpakData(again)
+	if err != nil || !second.AlreadyCopied || second.Copied != 0 {
+		t.Fatalf("the second migration reads as %+v: %v", second, err)
+	}
+	if _, err := os.Lstat(copied); !os.IsNotExist(err) {
+		t.Fatal("a file the user deleted under cpak came back from the Flatpak data")
+	}
+}

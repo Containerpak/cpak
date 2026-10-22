@@ -77,6 +77,36 @@ type FlatpakDataMigration struct {
 	// HostHome is set when the application was granted the real home, which
 	// cpak never writes the Flatpak data into.
 	HostHome bool
+	// AlreadyCopied is set when an earlier migration finished copying, and
+	// nothing was copied again.
+	AlreadyCopied bool
+}
+
+// flatpakDataMarker sits beside the private home, where the application
+// cannot write: only a copy that finished leaves it.
+const flatpakDataMarker = "flatpak-data-migrated"
+
+// MigratedFlatpak answers with the cpak installation a host application was
+// already migrated to. It reads only what is on this machine, so a run with
+// no network still recognises what an earlier one finished.
+func (c *Cpak) MigratedFlatpak(source flatpak.InstalledApp) (types.Application, bool) {
+	location, err := source.Installation.RemoteURL(source.Origin)
+	if err != nil {
+		return types.Application{}, false
+	}
+	remotes, err := c.FlatpakRemotes()
+	if err != nil {
+		return types.Application{}, false
+	}
+	remote, known := remotes.ByURL(location)
+	if !known {
+		return types.Application{}, false
+	}
+	app, err := c.getStoredApplication(FlatpakOrigin(remote.Name, source.Ref.ID), source.Ref.Branch, source.Ref.Branch, "", "")
+	if err != nil || app.CpakId == "" || app.Flatpak == nil {
+		return types.Application{}, false
+	}
+	return app, true
 }
 
 // flatpakDataTargets places the directories Flatpak points the XDG variables
@@ -94,7 +124,33 @@ var flatpakDataTargets = map[string]string{
 // ~/.var/app/<id> into the private home of its cpak installation. Nothing in
 // the private home is replaced: a file the application already wrote under
 // cpak is newer than the Flatpak copy, so it is kept and counted.
+//
+// The copy is made once. A later call answers that it was already made: the
+// Flatpak data stays where it was, and copying it again would bring back
+// whatever the user deleted under cpak since.
 func (c *Cpak) MigrateFlatpakData(app types.Application) (FlatpakDataMigration, error) {
+	dataPath, err := c.applicationDataPath(app.CpakId)
+	if err != nil {
+		return FlatpakDataMigration{}, err
+	}
+	marker := filepath.Join(dataPath, flatpakDataMarker)
+	if _, err := os.Lstat(marker); err == nil {
+		return FlatpakDataMigration{AlreadyCopied: true, HostHome: filesystemIncludesHostHome(app.ParsedOverride)}, nil
+	}
+	result, err := c.copyFlatpakData(app)
+	if err != nil {
+		return result, err
+	}
+	if err := os.MkdirAll(dataPath, 0o700); err != nil {
+		return result, err
+	}
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		return result, fmt.Errorf("record the migrated data: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Cpak) copyFlatpakData(app types.Application) (FlatpakDataMigration, error) {
 	if app.Flatpak == nil {
 		return FlatpakDataMigration{}, errors.New("the application was not installed from Flatpak")
 	}
