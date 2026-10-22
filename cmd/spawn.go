@@ -2195,6 +2195,7 @@ func (c *SpawnCmd) runDescribedCommand(connection *net.UnixConn, writer *runtime
 	for _, descriptor := range descriptors {
 		descriptor.Close()
 	}
+	_ = writer.Write(runtimeproto.FrameStarted, runtimeproto.EncodeStarted(command.Process.Pid))
 	go func() {
 		_, _ = io.Copy(io.Discard, connection)
 		_ = command.Process.Kill()

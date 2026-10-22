@@ -32,6 +32,8 @@ const (
 	spawnFlagNotifyStart = 64
 	spawnFlagWatchBus    = 16
 
+	supportsExposePids = 1
+
 	maxSpawnArguments = 4096
 )
 
@@ -47,7 +49,7 @@ func (b *portalBus) flatpakMethod(client *serializedConn, connection *portalConn
 	}
 	switch interfaceName {
 	case propertiesInterface:
-		values := map[string]dbus.Variant{"version": dbus.MakeVariant(uint32(7)), "supports": dbus.MakeVariant(uint32(0))}
+		values := map[string]dbus.Variant{"version": dbus.MakeVariant(uint32(7)), "supports": dbus.MakeVariant(uint32(supportsExposePids))}
 		switch member {
 		case "Get":
 			if len(call.Body) == 2 {
@@ -172,7 +174,18 @@ func (b *portalBus) spawn(client *serializedConn, connection *portalConnection, 
 		b.fail(client, connection, call, portalUniqueName, "org.freedesktop.DBus.Error.Failed", "the process could not be started")
 		return
 	}
-	pid := b.nextPID.Add(1) + 1000
+	kind, payload, readErr := runtimeproto.Read(runtime)
+	pending := true
+	pid := uint32(0)
+	if readErr == nil && kind == runtimeproto.FrameStarted {
+		if started, err := runtimeproto.DecodeStarted(payload); err == nil {
+			pid = uint32(started)
+		}
+		pending = false
+	}
+	if pid == 0 {
+		pid = b.nextPID.Add(1) + 1000
+	}
 	connection.mu.Lock()
 	if connection.spawned == nil {
 		connection.spawned = map[uint32]*spawned{}
@@ -187,8 +200,11 @@ func (b *portalBus) spawn(client *serializedConn, connection *portalConnection, 
 	go func() {
 		status := uint32(syscall.SIGKILL)
 		for {
-			kind, payload, err := runtimeproto.Read(runtime)
-			if err != nil {
+			if !pending {
+				kind, payload, readErr = runtimeproto.Read(runtime)
+			}
+			pending = false
+			if readErr != nil {
 				break
 			}
 			if kind != runtimeproto.FrameExit {
