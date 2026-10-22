@@ -258,3 +258,19 @@ func TestFlatpakSpawnStartsTheCommandInTheContainer(t *testing.T) {
 		t.Fatalf("the caller was told %v", signal.Body)
 	}
 }
+
+func TestFlatpakPortalAnswersThroughItsUniqueName(t *testing.T) {
+	harness := startPortalBus(t, Options{ExecSocketPath: filepath.Join(t.TempDir(), "exec.sock")})
+	connection := harness.connection
+	var owner string
+	if err := connection.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, flatpakPortalName).Store(&owner); err != nil {
+		t.Fatal(err)
+	}
+	var version dbus.Variant
+	if err := connection.Object(owner, flatpakPortalPath).Call(propertiesInterface+".Get", 0, flatpakPortalInterface, "version").Store(&version); err != nil {
+		t.Fatalf("version through %s: %v", owner, err)
+	}
+	if version.Value() != uint32(7) {
+		t.Fatalf("version = %v", version.Value())
+	}
+}
