@@ -368,7 +368,9 @@ The Flatpak installations are left untouched. With `--delete-flatpaks` the
 migrated applications are uninstalled from Flatpak together with their data
 once the migration is completed; this asks for a consent sentence typed in
 full, which `--yes` does not answer. An application that fails to migrate, or
-that is granted the real home, is never deleted.
+that is granted the real home, is never deleted. The command exits 0 only when
+no application was left behind, so an unattended run knows when to try again:
+11 when a remote could not be reached, 12 when an answer failed verification.
 
 A program that drives cpak, such as a software center, reads what the build
 supports from `cpak capabilities --json` and what has an update from
