@@ -5,6 +5,7 @@ SELF_UPDATE_MODE ?= enabled
 DIALOG_BACKEND ?= auto
 UI_ADAPTERS ?= all
 UI_ADAPTER_BUILD_DIR ?= .build/ui-adapters
+GTK_PKG ?= gtk+-3.0
 comma := ,
 UI_ADAPTER_TAGS := $(if $(filter all,$(UI_ADAPTERS)),,$(foreach adapter,$(subst $(comma), ,$(UI_ADAPTERS)),cpak_ui_$(adapter)))
 GO_UI_ADAPTER_TAGS := $(if $(UI_ADAPTER_TAGS),-tags "$(UI_ADAPTER_TAGS)",)
@@ -30,7 +31,7 @@ ui-adapters:
 	done; \
 	args=""; \
 	if [ "$(UI_ADAPTERS)" = "all" ] || printf '%s' "$$selected" | grep -q ',gtk,'; then \
-		cc -O2 -Wall -Wextra -Werror ui/adapters/gtk/main.c -o $(UI_ADAPTER_BUILD_DIR)/cpak-ui-gtk $$(pkg-config --cflags --libs gtk+-3.0); \
+		cc -O2 -Wall -Wextra -Werror ui/adapters/gtk/main.c -o $(UI_ADAPTER_BUILD_DIR)/cpak-ui-gtk $$(pkg-config --cflags --libs $(GTK_PKG)); \
 		args="$$args --gtk $(UI_ADAPTER_BUILD_DIR)/cpak-ui-gtk"; \
 	fi; \
 	if [ "$(UI_ADAPTERS)" = "all" ] || printf '%s' "$$selected" | grep -q ',adwaita,'; then \
