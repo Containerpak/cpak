@@ -58,6 +58,24 @@ func startPortalBus(t *testing.T, options Options) portalHarness {
 	return harness
 }
 
+// nextSignal waits for a signal by name. The bus also tells a client which
+// names it acquired, in whatever order relative to the answer under test.
+func nextSignal(t *testing.T, signals chan *dbus.Signal, name string) *dbus.Signal {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case signal := <-signals:
+			if signal.Name == name {
+				return signal
+			}
+		case <-deadline:
+			t.Fatalf("no %s signal arrived", name)
+			return nil
+		}
+	}
+}
+
 func portal(connection *dbus.Conn) dbus.BusObject {
 	return connection.Object(portalDestination, portalObjectPath)
 }
@@ -142,13 +160,8 @@ func TestPortalOpensLinksAndNotifiesThroughTheBroker(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("the link never reached the broker")
 	}
-	select {
-	case signal := <-signals:
-		if signal.Path != handle || signal.Body[0] != uint32(0) {
-			t.Fatalf("the request answered %v on %s", signal.Body, signal.Path)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("the request never answered")
+	if signal := nextSignal(t, signals, requestInterface+".Response"); signal.Path != handle || signal.Body[0] != uint32(0) {
+		t.Fatalf("the request answered %v on %s", signal.Body, signal.Path)
 	}
 
 	notification := map[string]dbus.Variant{"title": dbus.MakeVariant("Done"), "body": dbus.MakeVariant("It worked")}
@@ -241,12 +254,7 @@ func TestFlatpakSpawnStartsTheCommandInTheContainer(t *testing.T) {
 	if _, err := reader.Read(output); err != nil || string(output) != "spawned\n" {
 		t.Fatalf("the descriptor handed over was not the caller's: %q %v", output, err)
 	}
-	select {
-	case signal := <-signals:
-		if signal.Name != flatpakPortalInterface+".SpawnExited" || signal.Body[0] != pid || signal.Body[1] != uint32(7<<8) {
-			t.Fatalf("the caller was told %s %v", signal.Name, signal.Body)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("the caller was never told the process exited")
+	if signal := nextSignal(t, signals, flatpakPortalInterface+".SpawnExited"); signal.Body[0] != pid || signal.Body[1] != uint32(7<<8) {
+		t.Fatalf("the caller was told %v", signal.Body)
 	}
 }
