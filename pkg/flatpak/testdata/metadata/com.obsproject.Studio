@@ -1,0 +1,44 @@
+[Application]
+name=com.obsproject.Studio
+runtime=org.freedesktop.Platform/x86_64/25.08
+sdk=org.freedesktop.Sdk/x86_64/25.08
+command=obs
+
+[Context]
+shared=ipc;network;
+sockets=fallback-x11;pulseaudio;wayland;
+devices=all;
+filesystems=xdg-run/pipewire-0;host;
+
+[Session Bus Policy]
+org.kde.StatusNotifierWatcher=talk
+org.freedesktop.Flatpak=talk
+org.freedesktop.Notifications=talk
+org.a11y.Bus=talk
+
+[Environment]
+VST_PATH=/app/extensions/Plugins/vst
+
+[Extension com.obsproject.Studio.Plugin]
+directory=plugins
+autodelete=true
+no-autodownload=true
+subdirectories=true
+add-ld-path=lib
+merge-dirs=lib/obs-plugins;share/obs/obs-plugins
+
+[Extension org.freedesktop.LinuxAudio.Plugins]
+directory=extensions/Plugins
+no-autodownload=true
+subdirectories=true
+add-ld-path=lib
+merge-dirs=vst
+version=25.08
+
+[Extension com.obsproject.Studio.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=com.obsproject.Studio.Debug;

@@ -1,0 +1,95 @@
+[Runtime]
+name = org.gnome.Platform
+runtime = org.gnome.Platform/x86_64/49
+sdk = org.gnome.Sdk/x86_64/49
+
+[Environment]
+GI_TYPELIB_PATH = /app/lib/girepository-1.0
+GST_PLUGIN_SYSTEM_PATH = /app/lib/gstreamer-1.0:/usr/lib/extensions/gstreamer-1.0:/usr/lib/x86_64-linux-gnu/codecs-extra/lib/gstreamer-1.0:/usr/lib/x86_64-linux-gnu/gstreamer-1.0
+XDG_DATA_DIRS = /app/share:/usr/share:/usr/share/runtime/share:/run/host/user-share:/run/host/share
+ALSA_CONFIG_DIR = /usr/share/alsa
+ALSA_CONFIG_PATH = /usr/share/alsa/alsa-flatpak.conf
+__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS = /etc/egl/egl_external_platform.d:/usr/lib/x86_64-linux-gnu/GL/egl/egl_external_platform.d:/usr/share/egl/egl_external_platform.d
+PYTHONUSERBASE = /var/data/python
+
+[Extension org.gnome.Platform.Locale]
+directory = share/runtime/locale
+
+[Extension org.freedesktop.Platform.GL]
+versions = 25.08;25.08-extra;1.4
+version = 1.4
+directory = lib/x86_64-linux-gnu/GL
+subdirectories = true
+no-autodownload = true
+autodelete = false
+add-ld-path = lib
+merge-dirs = vulkan/icd.d;glvnd/egl_vendor.d;egl/egl_external_platform.d;OpenCL/vendors;lib/dri;lib/d3d;lib/gbm;vulkan/explicit_layer.d;vulkan/implicit_layer.d;vdpau
+download-if = active-gl-driver
+enable-if = active-gl-driver
+autoprune-unless = active-gl-driver
+
+[Extension org.freedesktop.Platform.GL.Debug]
+versions = 25.08;25.08-extra;1.4
+version = 1.4
+directory = lib/debug/usr/lib/x86_64-linux-gnu/GL
+subdirectories = true
+no-autodownload = true
+merge-dirs = vulkan/icd.d;glvnd/egl_vendor.d;egl/egl_external_platform.d;OpenCL/vendors;lib/dri;lib/d3d;lib/gbm;vulkan/explicit_layer.d;vulkan/implicit_layer.d;vdpau
+enable-if = active-gl-driver
+autoprune-unless = active-gl-driver
+
+[Extension org.freedesktop.Platform.VulkanLayer]
+version = 25.08
+directory = lib/extensions/vulkan
+subdirectories = true
+no-autodownload = true
+merge-dirs = share/vulkan/implicit_layer.d;share/vulkan/explicit_layer.d;
+
+[Extension org.freedesktop.Platform.Timezones]
+directory = share/zoneinfo
+version = 25.08
+
+[Extension org.freedesktop.Platform.GStreamer]
+directory = lib/extensions/gstreamer-1.0
+subdirectories = true
+no-autodownload = true
+version = 25.08
+
+[Extension org.freedesktop.Platform.Icontheme]
+directory = share/runtime/share/icons
+subdirectories = true
+no-autodownload = true
+version = 1.0
+
+[Extension org.gtk.Gtk3theme]
+directory = share/runtime/share/themes
+subdirectories = true
+subdirectory-suffix = gtk-3.0
+no-autodownload = true
+version = 3.22
+download-if = active-gtk-theme
+
+[Extension org.freedesktop.Platform.VAAPI.Intel]
+directory = lib/x86_64-linux-gnu/dri/intel-vaapi-driver
+autodelete = false
+no-autodownload = true
+add-ld-path = lib
+download-if = have-intel-gpu
+autoprune-unless = have-intel-gpu
+version = 25.08
+
+[Extension org.freedesktop.Platform.VAAPI.nvidia]
+directory = lib/x86_64-linux-gnu/dri/nvidia-vaapi-driver
+autodelete = false
+no-autodownload = true
+add-ld-path = lib
+download-if = have-kernel-module-nvidia
+autoprune-unless = have-kernel-module-nvidia
+version = 25.08
+
+[Extension org.freedesktop.Platform.codecs-extra]
+directory = lib/x86_64-linux-gnu/codecs-extra
+version = 25.08-extra
+add-ld-path = lib
+autodelete = true
+

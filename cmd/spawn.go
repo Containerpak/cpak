@@ -31,6 +31,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/cpak/pkg/filegrant"
 	"github.com/mirkobrombin/cpak/pkg/grantproto"
+	"github.com/mirkobrombin/cpak/pkg/ldcache"
 	"github.com/mirkobrombin/cpak/pkg/runtimeproto"
 	"github.com/mirkobrombin/cpak/pkg/sandbox"
 	"github.com/mirkobrombin/cpak/pkg/tools"
@@ -102,6 +103,7 @@ type SpawnCmd struct {
 	Nameserver         string   `cli:"nameserver" help:"replace resolv.conf with this nameserver"`
 	UserNamespaces     bool     `cli:"user-namespaces" help:"allow application-created user namespaces and nested mounts"`
 	AllowPtrace        bool     `cli:"allow-ptrace" help:"allow tracing inside the private process namespace"`
+	LinkerCache        bool     `cli:"linker-cache" help:"index the linker configuration of the root into its ld.so.cache"`
 	BuildLayer         bool     `cli:"build-layer" help:"build a managed layer and exit"`
 	AllowRoot          bool     `cli:"allow-root" help:"let nested commands run as root inside the container"`
 	MapSystemIDs       bool     `cli:"map-system-ids" help:"map subordinate IDs for persistent environments"`
@@ -251,7 +253,12 @@ func (c *SpawnCmd) Run() error {
 		return err
 	}
 	defer grantMounts.Close()
-	if refreshDynamicLinker {
+	switch {
+	case c.LinkerCache:
+		if err = writeLinkerCache(c.Rootfs); err != nil {
+			return err
+		}
+	case refreshDynamicLinker:
 		if err = refreshDynamicLinkerCache(c.Rootfs); err != nil {
 			return err
 		}
@@ -1634,6 +1641,34 @@ func refreshDynamicLinkerCache(rootFs string) error {
 	return nil
 }
 
+// writeLinkerCache indexes the libraries the root's own ld.so.conf names,
+// which includes the NVIDIA libraries mounted above. It is done by cpak and
+// not by an ldconfig, so nothing from the package runs before the sandbox is
+// in place and nothing depends on the host carrying a matching glibc.
+func writeLinkerCache(rootFs string) error {
+	root, err := os.OpenRoot(rootFs)
+	if err != nil {
+		return fmt.Errorf("open the root to index its libraries: %w", err)
+	}
+	defer root.Close()
+	dirs, err := ldcache.ReadConfig(root, "/etc/ld.so.conf")
+	if err != nil {
+		return err
+	}
+	cache, err := ldcache.Build(root, dirs)
+	if err != nil {
+		return err
+	}
+	destination, err := prepareRootfsConfigurationFile(rootFs, "/etc/ld.so.cache")
+	if err != nil {
+		return fmt.Errorf("prepare:/etc/ld.so.cache: %w", err)
+	}
+	if err := os.WriteFile(destination, cache, 0o644); err != nil {
+		return fmt.Errorf("write:/etc/ld.so.cache: %w", err)
+	}
+	return os.Chmod(destination, 0o644)
+}
+
 func setContainerHostname() error {
 	if err := syscall.Sethostname([]byte("cpak")); err != nil {
 		return fmt.Errorf("set container hostname: %w", err)
@@ -1952,30 +1987,32 @@ func (w runtimeOutputWriter) Write(payload []byte) (int, error) {
 
 func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string, grants []sandbox.PathGrant, reaper *childReaper) {
 	defer connection.Close()
-	kind, payload, err := runtimeproto.Read(connection)
+	kind, payload, descriptors, err := runtimeproto.ReadRequest(connection)
+	defer func() {
+		for _, descriptor := range descriptors {
+			descriptor.Close()
+		}
+	}()
 	writer := runtimeproto.NewWriter(connection)
 	if err != nil || kind != runtimeproto.FrameRequest {
 		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
 		return
 	}
 	request, err := runtimeproto.DecodeRequest(payload)
+	if err == nil && len(request.Descriptors) != len(descriptors) {
+		err = errors.New("runtime command names other descriptors than it sent")
+	}
 	if err != nil {
 		_ = writer.Write(runtimeproto.FrameOutput, []byte(err.Error()+"\n"))
 		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(125))
 		return
 	}
+	if len(descriptors) > 0 {
+		c.runDescribedCommand(connection, writer, request, descriptors, baseEnv, grants, reaper)
+		return
+	}
 
-	args := []string{"launch"}
-	if c.UserNamespaces {
-		args = append(args, "--user-namespaces")
-	}
-	if c.AllowPtrace {
-		args = append(args, "--allow-ptrace")
-	}
-	args = append(args, landlockArguments(grants)...)
-	args = append(args, "--")
-	args = append(args, request.Args...)
-	command := runtimeLaunchCommand(args, append(append([]string{}, baseEnv...), request.Env...))
+	command := runtimeLaunchCommand(c.launchArguments(request.Args, grants), append(append([]string{}, baseEnv...), request.Env...))
 	output := runtimeOutputWriter{writer: writer}
 	var input io.WriteCloser
 	var terminal *os.File
@@ -2072,6 +2109,72 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	default:
 	}
 	_, _ = io.Copy(io.Discard, connection)
+}
+
+// launchArguments wraps a command in the launcher that applies the same
+// Landlock and seccomp restrictions every command of this container gets.
+func (c *SpawnCmd) launchArguments(command []string, grants []sandbox.PathGrant) []string {
+	args := []string{"launch"}
+	if c.UserNamespaces {
+		args = append(args, "--user-namespaces")
+	}
+	if c.AllowPtrace {
+		args = append(args, "--allow-ptrace")
+	}
+	args = append(args, landlockArguments(grants)...)
+	args = append(args, "--")
+	return append(args, command...)
+}
+
+// runDescribedCommand starts a command on descriptors its caller handed over,
+// which is how a process inside the sandbox starts another one beside it: the
+// new process is launched like any other command of this container, never
+// with more than the container allows, and the caller is told only when it
+// exits. Closing the connection stops it.
+func (c *SpawnCmd) runDescribedCommand(connection *net.UnixConn, writer *runtimeproto.Writer, request runtimeproto.Request, descriptors []*os.File, baseEnv []string, grants []sandbox.PathGrant, reaper *childReaper) {
+	command := runtimeLaunchCommand(c.launchArguments(request.Args, grants), append(append([]string{}, baseEnv...), request.Env...))
+	if request.Directory != "" {
+		command.Dir = request.Directory
+	}
+	highest := 2
+	for _, target := range request.Descriptors {
+		highest = max(highest, target)
+	}
+	extra := make([]*os.File, highest-2)
+	for index, target := range request.Descriptors {
+		switch target {
+		case 0:
+			command.Stdin = descriptors[index]
+		case 1:
+			command.Stdout = descriptors[index]
+		case 2:
+			command.Stderr = descriptors[index]
+		default:
+			extra[target-3] = descriptors[index]
+		}
+	}
+	command.ExtraFiles = extra
+	if err := reaper.start(command, command.Start); err != nil {
+		_ = writer.Write(runtimeproto.FrameOutput, []byte(err.Error()+"\n"))
+		_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(127))
+		return
+	}
+	for _, descriptor := range descriptors {
+		descriptor.Close()
+	}
+	go func() {
+		_, _ = io.Copy(io.Discard, connection)
+		_ = command.Process.Kill()
+	}()
+	code := 0
+	if waitErr := reaper.wait(command); waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			code = 125
+		}
+	}
+	_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(code))
 }
 
 func (c *SpawnCmd) applicationCommand(args, env []string) *exec.Cmd {

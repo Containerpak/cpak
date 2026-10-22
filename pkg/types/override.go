@@ -273,6 +273,11 @@ func (o Override) Diff(next Override) []string {
 		if reflect.DeepEqual(current.Field(index).Interface(), updated.Field(index).Interface()) {
 			continue
 		}
+		// A list the record stored as absent and one built empty grant the
+		// same nothing; only DeepEqual tells them apart.
+		if current.Field(index).Kind() == reflect.Slice && current.Field(index).Len() == 0 && updated.Field(index).Len() == 0 {
+			continue
+		}
 		key := strings.Split(typeOfOverride.Field(index).Tag.Get("json"), ",")[0]
 		if key != "" {
 			changes = append(changes, key)

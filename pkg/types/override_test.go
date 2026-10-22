@@ -21,6 +21,16 @@ func TestOverrideDiffReportsChangedPermissions(t *testing.T) {
 	}
 }
 
+func TestOverrideDiffIgnoresAnEmptyListStoredAsAbsent(t *testing.T) {
+	built := Override{Env: []string{}, FsExtra: []string{}, Filesystem: []FilesystemPermission{}}
+	if changes := (Override{}).Diff(built); len(changes) != 0 {
+		t.Fatalf("an unchanged policy reported changes: %v", changes)
+	}
+	if changes := (Override{}).Diff(Override{Env: []string{"A=1"}}); !reflect.DeepEqual(changes, []string{"env"}) {
+		t.Fatalf("a filled list was not reported: %v", changes)
+	}
+}
+
 func TestOverrideAdditionsReportsOnlyNewPermissions(t *testing.T) {
 	before := Override{Network: true, FsExtra: []string{"/one"}}
 	after := Override{Network: true, DeviceDri: true, FsExtra: []string{"/one", "/two"}}

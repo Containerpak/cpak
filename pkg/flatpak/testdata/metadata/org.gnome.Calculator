@@ -1,0 +1,26 @@
+[Application]
+name=org.gnome.Calculator
+runtime=org.gnome.Platform/x86_64/51
+sdk=org.gnome.Sdk/x86_64/51
+command=gnome-calculator
+
+[Context]
+shared=ipc;network;
+sockets=fallback-x11;wayland;
+devices=dri;
+
+[X-DConf]
+migrate-path=/org/gnome/calculator/
+
+[Extension org.gnome.Calculator.Locale]
+directory=share/runtime/locale
+autodelete=true
+locale-subset=true
+
+[Extension org.gnome.Calculator.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=org.gnome.Calculator.Locale;org.gnome.Calculator.Debug;org.gnome.Calculator.Sources;

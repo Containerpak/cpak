@@ -7,6 +7,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -22,11 +23,40 @@ type UpdateCmd struct {
 	JSON           bool   `cli:"json,j" help:"Print output in JSON format"`
 	NonInteractive bool   `cli:"non-interactive,n" help:"Reject updates that request additional permissions"`
 	Verbose        bool   `cli:"verbose,v" help:"Report every cpak, not only the ones that need attention"`
+	Check          bool   `cli:"check" help:"Report the updates that are available without applying them"`
+	JSONProgress   bool   `cli:"json-progress" help:"Report progress and the results as JSON lines on standard output"`
+
+	progress *progressWriter
+	results  []types.UpdateResult
 
 	cli.Base
 }
 
+// Run updates and exits with a code that tells a refusal of new permissions,
+// an unreachable remote and an answer that failed verification apart.
 func (c *UpdateCmd) Run() error {
+	if c.JSONProgress {
+		if c.JSON || c.Check {
+			return fmt.Errorf("--json-progress cannot be combined with --json or --check")
+		}
+		c.progress = newProgressWriter(&c.Base)
+	}
+	err := c.update()
+	code := exitCode(err)
+	if failed := updateExitCode(c.results); failed > 1 {
+		code = failed
+	}
+	if c.progress != nil {
+		c.progress.done(code, err, c.results)
+	}
+	if code <= 1 {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	return &types.ExitError{Code: code}
+}
+
+func (c *UpdateCmd) update() error {
 	cp, err := cpak.NewCpak()
 	if err != nil {
 		return fmt.Errorf("an error occurred while updating cpak(s): %s", err)
@@ -42,23 +72,39 @@ func (c *UpdateCmd) Run() error {
 	if !c.JSON {
 		c.announceUpdate(cp, remote)
 	}
+	if c.Check {
+		return c.check(cp, remote)
+	}
 
+	if c.progress != nil {
+		cp.SetFlatpakProgress(c.progress.report)
+	}
 	results, err := cp.UpdateWithOptions(remote, cpak.UpdateOptions{
 		ConfirmPermissions: func(requests []types.UpdateResult) bool {
 			if c.NonInteractive || c.JSON {
 				return false
 			}
 			c.Logger.Info("The following updates request additional permissions:")
-			data := make([][]string, 0, len(requests))
-			for _, result := range requests {
-				data = append(data, []string{result.Name, result.Origin, strings.Join(result.PermissionAdditions, ", ")})
+			if c.progress != nil {
+				for _, result := range requests {
+					c.Logger.Info("  - %s (%s): %s", result.Name, result.Origin, strings.Join(result.PermissionAdditions, ", "))
+				}
+			} else {
+				data := make([][]string, 0, len(requests))
+				for _, result := range requests {
+					data = append(data, []string{result.Name, result.Origin, strings.Join(result.PermissionAdditions, ", ")})
+				}
+				tools.ShowTable([]string{"Name", "Origin", "Additional permissions"}, data)
 			}
-			tools.ShowTable([]string{"Name", "Origin", "Additional permissions"}, data)
 			return tools.ConfirmOperation("Approve these permissions and continue?")
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("an error occurred while updating cpak(s): %s", err)
+	}
+	c.results = results
+	if c.progress != nil {
+		return updateFailures(results)
 	}
 
 	if c.JSON {
@@ -78,6 +124,30 @@ func (c *UpdateCmd) Run() error {
 	c.Logger.Info("%s", summarizeUpdates(results))
 	c.showUpdateResults(results)
 
+	return updateFailures(results)
+}
+
+// check reports what an update would move without moving it. Only a check
+// that could not be made fails the command; an available update does not.
+func (c *UpdateCmd) check(cp cpak.Cpak, remote string) error {
+	results, err := cp.CheckUpdates(remote)
+	if err != nil {
+		return fmt.Errorf("an error occurred while checking cpak(s) for updates: %s", err)
+	}
+	if c.JSON {
+		jsonBytes, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			return fmt.Errorf("an error occurred while checking cpak(s) for updates: %s", err)
+		}
+		fmt.Println(string(jsonBytes))
+		return updateFailures(results)
+	}
+	if len(results) == 0 {
+		c.Logger.Info("No cpak installed, nothing to check")
+		return nil
+	}
+	c.Logger.Info("%s", summarizeUpdates(results))
+	c.showUpdateResults(results)
 	return updateFailures(results)
 }
 
@@ -168,6 +238,7 @@ func updateSucceeded(result types.UpdateResult) bool {
 // updateStatusOrder reads the summary from what moved to what went wrong.
 var updateStatusOrder = []types.UpdateStatus{
 	types.UpdateStatusUpdated,
+	types.UpdateStatusAvailable,
 	types.UpdateStatusUpToDate,
 	types.UpdateStatusPinned,
 	types.UpdateStatusUnsupported,

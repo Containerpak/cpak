@@ -62,6 +62,7 @@ type CLI struct {
 	Validate           cmd.ValidateCmd           `cmd:"validate" help:"Validate a cpak manifest"`
 	Doctor             cmd.DoctorCmd             `cmd:"doctor" help:"Check host support for the cpak runtime"`
 	MigrateManifest    cmd.MigrateManifestCmd    `cmd:"migrate-manifest" help:"Migrate a manifest to version 2"`
+	MigrateFlatpak     cmd.MigrateFlatpakCmd     `cmd:"migrate-flatpak" help:"Install the Flatpak applications of this system with cpak"`
 	SystemBrokerServer cmd.SystemBrokerServerCmd `cmd:"system-broker-server" help:"Start the system integration broker"`
 	DesktopBusProxy    cmd.DesktopBusProxyCmd    `cmd:"desktop-bus-proxy" help:"Start the policy-gated desktop bus proxy"`
 	HostAction         cmd.HostActionCmd         `cmd:"host-action" help:"Run a typed host action"`
@@ -75,6 +76,7 @@ type CLI struct {
 	Discover           cmd.DiscoverCmd           `cmd:"discover" help:"Integrate cpak with software centers"`
 	Environment        cmd.EnvironmentCmd        `cmd:"environment" help:"Manage persistent package environments"`
 	Completion         cmd.CompletionCmd         `cmd:"completion" help:"Generate shell completion"`
+	Capabilities       cmd.CapabilitiesCmd       `cmd:"capabilities" help:"List what this cpak build can do"`
 
 	cli.Base
 }
@@ -94,6 +96,7 @@ func main() {
 	root := &CLI{}
 	root.Run.Configure(cpakIcon)
 	root.SelfUpdate.Configure(version, selfUpdateMode, cpakIcon)
+	root.Capabilities.Configure(version)
 	app, err := cli.New(root, cli.WithVersion(version))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -217,7 +220,7 @@ func skipUpdateCheck(args []string) bool {
 		}
 	}
 	for _, argument := range args[1:] {
-		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "application-runtime" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" {
+		if argument == "--version" || argument == "-v" || argument == "self-update" || argument == "service" || argument == "ps" || argument == "status" || argument == "inspect" || argument == "health" || argument == "system-broker-server" || argument == "desktop-bus-proxy" || argument == "system-authority" || argument == "application-runtime" || argument == "spawn" || argument == "network-helper" || argument == "x11-broker" || argument == "launch" || argument == "chromium-launch" || argument == "dedup" || argument == "host-action" || argument == "discover" || argument == "completion" || argument == "capabilities" {
 			return true
 		}
 	}

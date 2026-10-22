@@ -1166,6 +1166,38 @@ func (c *Cpak) remove(origin string, branch string, commit string, release strin
 	// The layers are gone, so nothing the anchor names is still on disk.
 	c.forgetEnrolment(appToRemove)
 
+	return c.removeUnusedFlatpakRuntimes(appToRemove)
+}
+
+// removeUnusedFlatpakRuntimes removes the runtimes a Flatpak application
+// brought with it once nothing else runs on them. A runtime is never named by
+// the user, holds most of an installation's size, and has no launcher of its
+// own, so leaving it behind would leave the user nothing to recognise it by.
+// One the user installed in their own right is not pulled in and stays.
+func (c *Cpak) removeUnusedFlatpakRuntimes(removed types.Application) error {
+	if removed.Flatpak == nil {
+		return nil
+	}
+	for _, dependency := range removed.ParsedDependencies {
+		if !dependency.IsLayer() || !IsFlatpakOrigin(dependency.Origin) {
+			continue
+		}
+		users, err := c.dependencyUsers(dependency.Id)
+		if err != nil {
+			return err
+		}
+		if len(users) > 0 {
+			continue
+		}
+		runtime, err := c.getStoredApplication(dependency.Origin, dependency.Branch, dependency.Branch, "", "")
+		if err != nil || runtime.CpakId != dependency.Id || !runtime.PulledIn || runtime.Flatpak == nil {
+			continue
+		}
+		if err := c.remove(runtime.Origin, runtime.Branch, "", "", false); err != nil {
+			return fmt.Errorf("remove the runtime %s: %w", runtime.Name, err)
+		}
+		logger.Printf("Removed the runtime %s, which nothing else uses", runtime.Name)
+	}
 	return nil
 }
 

@@ -1,0 +1,53 @@
+[Application]
+name=com.visualstudio.code
+runtime=org.freedesktop.Sdk/x86_64/25.08
+sdk=org.freedesktop.Sdk/x86_64/25.08
+base=app/org.electronjs.Electron2.BaseApp/x86_64/25.08
+tags=proprietary;
+command=code
+required-flatpak=0.10.3
+
+[Context]
+shared=ipc;network;
+sockets=fallback-x11;pulseaudio;ssh-auth;wayland;
+devices=all;
+features=devel;
+filesystems=host;
+
+[Session Bus Policy]
+org.freedesktop.Flatpak=talk
+org.freedesktop.Notifications=talk
+org.kde.kwalletd5=talk
+com.canonical.AppMenu.Registrar=talk
+com.canonical.AppMenu.Registrar.*=talk
+org.freedesktop.secrets=talk
+org.kde.kwalletd6=talk
+
+[System Bus Policy]
+org.freedesktop.login1=talk
+
+[Environment]
+LD_LIBRARY_PATH=/app/lib
+NPM_CONFIG_GLOBALCONFIG=/app/etc/npmrc
+XCURSOR_PATH=/run/host/user-share/icons:/run/host/share/icons
+
+[Extra Data]
+name=code.deb
+checksum=cc8e35cf69ff4c7e515e19fa981bf6aba41f61ddb61c79370e9fe460c5dbaf8b
+size=236699190
+uri=https://update.code.visualstudio.com/1.139.1/linux-deb-x64/stable
+
+[Extension com.visualstudio.code.tool]
+directory=tools
+no-autodownload=true
+subdirectories=true
+add-ld-path=lib
+version=25.08
+
+[Extension com.visualstudio.code.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=com.visualstudio.code.Debug;com.visualstudio.code.Sources;

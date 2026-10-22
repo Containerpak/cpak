@@ -48,6 +48,26 @@ type Options struct {
 	Bluetooth        bool
 	Policy           types.DBusPolicy
 	PickFile         func(context.Context, systembroker.FilePickerRequest) (systembroker.FilePickerResult, error)
+
+	// Portals makes the proxy the whole session bus of the sandbox instead
+	// of a filter in front of the host bus, which is then never contacted.
+	Portals bool
+	// AppName names the application in the notifications it sends.
+	AppName string
+	// ColorScheme is the appearance setting the portal reports: 0 for no
+	// preference, 1 for dark and 2 for light.
+	ColorScheme uint32
+	// Notifications and OpenURI enable the portal calls that reach the host
+	// through the system broker.
+	Notifications  bool
+	OpenURI        bool
+	Notify         func(context.Context, systembroker.NotificationRequest) error
+	OpenURIHandler func(context.Context, systembroker.OpenURIRequest) error
+	// ExecSocketPath is the container's command socket, through which the
+	// Flatpak portal starts helper processes inside the same sandbox.
+	ExecSocketPath string
+	// IconTheme is the icon theme the settings portal reports.
+	IconTheme string
 }
 
 type Proxy struct {
@@ -92,13 +112,16 @@ func Serve(ctx context.Context, options Options) error {
 	var portalSignals chan *dbus.Signal
 	var bluezWatcher *dbus.Conn
 	var bluezSignals chan *dbus.Signal
-	if options.Bluetooth {
+	switch {
+	case options.Portals:
+		portalSender = portalUniqueName
+	case options.Bluetooth:
 		bluezWatcher, bluezSignals, bluezSender, err = watchBusNameOwner(options.UpstreamAddress, bluezDestination)
 		if err != nil {
 			return fmt.Errorf("watch BlueZ owner: %w", err)
 		}
 		defer bluezWatcher.Close()
-	} else {
+	default:
 		portalWatcher, portalSignals, portalSender, err = watchBusNameOwner(options.UpstreamAddress, portalDestination)
 		if err != nil {
 			return fmt.Errorf("watch desktop portal owner: %w", err)
@@ -109,6 +132,10 @@ func Serve(ctx context.Context, options Options) error {
 		}
 	}
 	proxy := &Proxy{options: options, portalSender: portalSender, bluezSender: bluezSender, requests: map[dbus.ObjectPath]context.CancelFunc{}}
+	serve := proxy.serveConnection
+	if options.Portals {
+		serve = newPortalBus(proxy).serveConnection
+	}
 	if portalWatcher != nil {
 		go proxy.watchPortalOwner(ctx, portalSignals)
 	}
@@ -137,14 +164,21 @@ func Serve(ctx context.Context, options Options) error {
 		connections.Add(1)
 		go func() {
 			defer connections.Done()
-			proxy.serveConnection(ctx, connection)
+			serve(ctx, connection)
 		}()
 	}
 }
 
 func validateOptions(options Options) error {
-	if !filepath.IsAbs(options.SocketPath) || options.UpstreamAddress == "" {
+	if !filepath.IsAbs(options.SocketPath) || options.UpstreamAddress == "" && !options.Portals {
 		return errors.New("desktop bus socket and upstream address are required")
+	}
+	if options.Portals && options.Bluetooth {
+		return errors.New("the portal bus cannot carry the Bluetooth proxy")
+	}
+	brokered := options.Notifications && options.Notify == nil || options.OpenURI && options.OpenURIHandler == nil
+	if options.Portals && brokered && (!filepath.IsAbs(options.BrokerSocketPath) || len(options.BrokerToken) < 32) {
+		return errors.New("desktop bus broker credentials are invalid")
 	}
 	if err := types.ValidateDBusPolicy(options.Policy); err != nil {
 		return err
