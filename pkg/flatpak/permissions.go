@@ -154,7 +154,8 @@ func Translate(meta Metadata) Translation {
 		case "all":
 			override.DeviceDri = true
 			override.DeviceVideo = true
-			t.add(request, Narrowed, "the GPU and cameras are shared; the rest of /dev needs an explicit deviceAll override")
+			override.DeviceHidraw = true
+			t.add(request, Narrowed, "the GPU, cameras and security keys are shared; the rest of /dev needs an explicit deviceAll override")
 		default:
 			t.add(request, Refused, "no cpak equivalent")
 		}

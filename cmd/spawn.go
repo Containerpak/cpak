@@ -95,6 +95,7 @@ type SpawnCmd struct {
 	HostPidFd          int      `cli:"host-pid-fd" help:"write the outer process ID to this file descriptor"`
 	ExecSocket         string   `cli:"exec-socket" help:"container command socket"`
 	GrantSocket        string   `cli:"grant-socket" help:"file grant mount socket"`
+	WatchHidraw        bool     `cli:"watch-hidraw" help:"share raw HID devices as they come and go"`
 	ServiceSocket      string   `cli:"service-socket" help:"host socket a nested run of this container reaches"`
 	PrivateHome        string   `cli:"private-home" help:"persistent private application home"`
 	IdleTime           int      `cli:"idle-time" help:"idle timeout in minutes"`
@@ -1845,6 +1846,9 @@ func (c *SpawnCmd) serveInit(listener *unixsocket.Listener, grantListener net.Li
 		}
 	}
 	go c.serveGrantMounts(grantListener, grantMounts)
+	if c.WatchHidraw {
+		go c.watchHidraw(grantMounts)
+	}
 	reaper := newChildReaper("/proc")
 	defer reaper.close()
 	return c.startApplicationRuntime(listener, envVars, grants, idleTimeout, reaper)

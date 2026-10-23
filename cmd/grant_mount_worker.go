@@ -25,6 +25,7 @@ type grantMountWorker struct {
 type grantMountRequest struct {
 	grant   filegrant.Grant
 	sources grantproto.Sources
+	run     func() error
 	result  chan grantMountResult
 }
 
@@ -49,6 +50,10 @@ func startGrantMountWorker() (*grantMountWorker, error) {
 		}
 		ready <- nil
 		for request := range worker.requests {
+			if request.run != nil {
+				request.result <- grantMountResult{err: request.run()}
+				continue
+			}
 			tree, err := cloneGrantMount(request.grant, request.sources)
 			request.result <- grantMountResult{tree: tree, err: err}
 		}
@@ -69,6 +74,15 @@ func (w *grantMountWorker) Clone(grant filegrant.Grant, sources grantproto.Sourc
 	w.requests <- grantMountRequest{grant: grant, sources: sources, result: result}
 	cloned := <-result
 	return cloned.tree, cloned.err
+}
+
+func (w *grantMountWorker) Do(fn func() error) error {
+	if w == nil {
+		return errors.New("file grant mount worker is unavailable")
+	}
+	result := make(chan grantMountResult, 1)
+	w.requests <- grantMountRequest{run: fn, result: result}
+	return (<-result).err
 }
 
 func (w *grantMountWorker) Close() {

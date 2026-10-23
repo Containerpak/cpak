@@ -647,10 +647,10 @@ func TestEnrolPublishedApplicationAcceptsAPreClipboardSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(digests) != 2 || digests[0] == digests[1] {
-		t.Fatalf("got manifest digests %v, want current and pre-clipboard forms", digests)
+	if len(digests) != 4 {
+		t.Fatalf("got manifest digests %v, want current, pre-hidraw and pre-clipboard forms", digests)
 	}
-	legacy := digests[1]
+	legacy := digests[3]
 	const signedByV21016 = "16177583de1699665225ece3fe9dc9bf88ed937666d9742ec0e60ac87ea07587"
 	if legacy != signedByV21016 {
 		t.Fatalf("got pre-clipboard manifest digest %q, want the v2.10.16 result %q", legacy, signedByV21016)
@@ -668,8 +668,13 @@ func TestEnrolPublishedApplicationAcceptsAPreClipboardSignature(t *testing.T) {
 	if !enrolment.Signature.Verified {
 		t.Fatalf("the pre-clipboard signature was refused: %v", enrolment.Signature.Reason)
 	}
-	if len(checked) != 3 || checked[0] != digests[0] || checked[1] != legacy || checked[2] != legacy {
-		t.Fatalf("checked manifest digests %v, want current then pre-clipboard", checked)
+	if len(checked) != len(digests)+1 || checked[len(digests)] != legacy {
+		t.Fatalf("checked manifest digests %v, want every accepted form then pre-clipboard", checked)
+	}
+	for i, d := range digests {
+		if checked[i] != d {
+			t.Fatalf("checked manifest digests %v, want every accepted form %v in order", checked, digests)
+		}
 	}
 	if got := authority.records[app.Origin].Anchor.ManifestDigest; got != legacy {
 		t.Fatalf("the anchor states manifest %q, want the independently reconstructed digest %q", got, legacy)
@@ -703,8 +708,12 @@ func TestClipboardGrantDoesNotUseAPreClipboardSignature(t *testing.T) {
 	if enrolment.Signature.Verified {
 		t.Fatal("a pre-clipboard signature was accepted for a clipboard grant")
 	}
-	if len(checked) != 1 || checked[0] != want {
-		t.Fatalf("checked manifest digests %v, want only %q", checked, want)
+	accepted, err := manifestDigests(published.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted) != 2 || accepted[0] != want || len(checked) != len(accepted) || checked[0] != accepted[0] || checked[1] != accepted[1] {
+		t.Fatalf("checked manifest digests %v, want only the current and pre-hidraw forms %v", checked, accepted)
 	}
 	if authority.signature != nil {
 		t.Fatal("the rejected signature reached the authority")

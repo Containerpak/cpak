@@ -20,7 +20,8 @@ const (
 	PolicySchemaWithoutSessionBus          = 2
 	PolicySchemaWithoutDesktopCapabilities = 3
 	PolicySchemaWithoutClipboard           = 4
-	CurrentPolicySchema                    = 5
+	PolicySchemaWithoutHidraw              = 5
+	CurrentPolicySchema                    = 6
 )
 
 // PolicyRoot hashes what an application is allowed to do. Lists whose order
@@ -34,6 +35,9 @@ func PolicyRoot(override types.Override) (string, error) {
 // enrolment. New policies always use CurrentPolicySchema.
 func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 	canonical := canonicalPolicy(override)
+	if schema < CurrentPolicySchema && canonical.DeviceHidraw {
+		return "", errors.New("raw HID devices are not part of this policy schema")
+	}
 	switch schema {
 	case PolicySchemaWithoutSerial:
 		if canonical.DeviceSerial {
@@ -45,7 +49,7 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if canonical.SessionBus.Enabled() {
 			return "", errors.New("session bus rules are not part of this policy schema")
 		}
-		encoded, err := json.Marshal(canonical)
+		encoded, err := marshalWithoutHidraw(canonical)
 		if err != nil {
 			return "", err
 		}
@@ -73,7 +77,7 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if canonical.SessionBus.Enabled() {
 			return "", errors.New("session bus rules are not part of this policy schema")
 		}
-		encoded, err := json.Marshal(canonical)
+		encoded, err := marshalWithoutHidraw(canonical)
 		if err != nil {
 			return "", err
 		}
@@ -97,7 +101,7 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if canonical.DisplayX11 || canonical.Bluetooth {
 			return "", errors.New("desktop capabilities are not part of this policy schema")
 		}
-		encoded, err := json.Marshal(canonical)
+		encoded, err := marshalWithoutHidraw(canonical)
 		if err != nil {
 			return "", err
 		}
@@ -114,7 +118,7 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 		if canonical.Clipboard.Enabled() {
 			return "", errors.New("clipboard mediation is not part of this policy schema")
 		}
-		encoded, err := json.Marshal(canonical)
+		encoded, err := marshalWithoutHidraw(canonical)
 		if err != nil {
 			return "", err
 		}
@@ -123,11 +127,29 @@ func PolicyRootForSchema(override types.Override, schema int) (string, error) {
 			return "", err
 		}
 		return digestJSON("policy", withoutClipboard), nil
+	case PolicySchemaWithoutHidraw:
+		encoded, err := marshalWithoutHidraw(canonical)
+		if err != nil {
+			return "", err
+		}
+		return digestJSON("policy", encoded), nil
 	case CurrentPolicySchema:
 		return digest("policy", canonical)
 	default:
 		return "", fmt.Errorf("unsupported policy schema %d", schema)
 	}
+}
+
+func marshalWithoutHidraw(canonical types.Override) ([]byte, error) {
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, err
+	}
+	without := bytes.Replace(encoded, []byte(`,"deviceHidraw":false`), nil, 1)
+	if len(without) == len(encoded) {
+		return nil, errors.New("raw HID device field is missing from the current policy schema")
+	}
+	return without, nil
 }
 
 func removeClipboardField(encoded []byte) ([]byte, error) {
@@ -200,6 +222,7 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.DeviceTun, current.DeviceTun},
 		{candidate.DeviceUsb, current.DeviceUsb},
 		{candidate.DeviceSerial, current.DeviceSerial},
+		{candidate.DeviceHidraw, current.DeviceHidraw},
 		{candidate.DeviceInput, current.DeviceInput},
 		{candidate.DeviceTTY, current.DeviceTTY},
 		{candidate.DeviceAll, current.DeviceAll},

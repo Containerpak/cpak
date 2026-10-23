@@ -381,6 +381,11 @@
           "description": "Expose USB and CDC serial ports",
           "default": false
         },
+        "deviceHidraw": {
+          "type": "boolean",
+          "description": "Expose security keys and other raw HID devices",
+          "default": false
+        },
         "deviceInput": {
           "type": "boolean",
           "description": "Expose input devices",

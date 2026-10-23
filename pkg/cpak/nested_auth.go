@@ -308,6 +308,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		DeviceTun:        parent.DeviceTun && child.DeviceTun,
 		DeviceUsb:        parent.DeviceUsb && child.DeviceUsb,
 		DeviceSerial:     parent.DeviceSerial && child.DeviceSerial,
+		DeviceHidraw:     parent.DeviceHidraw && child.DeviceHidraw,
 		DeviceInput:      parent.DeviceInput && child.DeviceInput,
 		DeviceTTY:        parent.DeviceTTY && child.DeviceTTY,
 		DeviceAll:        parent.DeviceAll && child.DeviceAll,

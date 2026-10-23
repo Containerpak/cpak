@@ -43,6 +43,7 @@ func Intersect(parent, child types.Override, h Host) types.Override {
 		DeviceTun:           parent.DeviceTun && child.DeviceTun,
 		DeviceUsb:           parent.DeviceUsb && child.DeviceUsb,
 		DeviceSerial:        parent.DeviceSerial && child.DeviceSerial,
+		DeviceHidraw:        parent.DeviceHidraw && child.DeviceHidraw,
 		DeviceInput:         parent.DeviceInput && child.DeviceInput,
 		DeviceTTY:           parent.DeviceTTY && child.DeviceTTY,
 		DeviceAll:           parent.DeviceAll && child.DeviceAll,
@@ -259,7 +260,7 @@ var PermissionAliases = []AliasFamily{
 	{
 		WhenAnyOf: []string{
 			"deviceDri", "deviceKvm", "deviceShm", "deviceAlsa", "deviceVideo",
-			"deviceFuse", "deviceTun", "deviceUsb", "deviceSerial", "deviceInput",
+			"deviceFuse", "deviceTun", "deviceUsb", "deviceSerial", "deviceHidraw", "deviceInput",
 			"deviceTTY",
 		},
 		AlsoHold: []string{"deviceAll"},

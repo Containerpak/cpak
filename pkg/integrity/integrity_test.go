@@ -255,12 +255,22 @@ func TestPolicyRootReadsTheSchemaBeforeSerialDevices(t *testing.T) {
 	if withoutDesktopCapabilities != "384e94f695f06276a4c5b9f2ca519ab456be23e853c932beac05f2847271c60d" {
 		t.Fatalf("policy root without desktop capabilities changed to %s", withoutDesktopCapabilities)
 	}
+	withoutHidraw, err := PolicyRootForSchema(policy, PolicySchemaWithoutHidraw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutHidraw != "99e9c62bdd8b9e50495b7a33de53804b21782d8be57e5f3ca0f0474e021482e4" {
+		t.Fatalf("policy root without raw HID devices changed to %s", withoutHidraw)
+	}
 	current, err := PolicyRoot(policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != "99e9c62bdd8b9e50495b7a33de53804b21782d8be57e5f3ca0f0474e021482e4" {
+	if current != "994bb895dfe8f448b27520e235fb29b1cd24df6fa4769caf03587f5efb3d572e" {
 		t.Fatalf("current policy root changed to %s", current)
+	}
+	if _, err = PolicyRootForSchema(types.Override{DeviceHidraw: true}, PolicySchemaWithoutHidraw); err == nil {
+		t.Fatal("a raw HID grant was hashed under a schema that cannot hold it")
 	}
 }
 

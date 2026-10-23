@@ -39,6 +39,7 @@ type Override struct {
 	// ttyUSB or ttyACM, so they get their own permission rather than the
 	// escalation that was the only way to reach them.
 	DeviceSerial bool `json:"deviceSerial" jsonschema:"description=Expose USB and CDC serial ports,default=false" flag:"deviceSerial,bool"`
+	DeviceHidraw bool `json:"deviceHidraw" jsonschema:"description=Expose security keys and other raw HID devices, including ones plugged in later,default=false" flag:"deviceHidraw,bool"`
 	DeviceInput  bool `json:"deviceInput" jsonschema:"description=Expose input devices,default=false" flag:"deviceInput,bool"`
 	DeviceTTY    bool `json:"deviceTTY" jsonschema:"description=Expose the controlling terminal,default=false" flag:"deviceTTY,bool"`
 	DeviceAll    bool `json:"deviceAll" jsonschema:"description=Expose all /dev,default=false" flag:"deviceAll,bool"`

@@ -261,16 +261,23 @@ func manifestDigests(manifest *types.CpakManifest) ([]string, error) {
 		return nil, err
 	}
 	digests := []string{digestBytes(data)}
+	variants := [][]byte{data}
+	if !manifest.Override.DeviceHidraw && bytes.Count(data, []byte(`,"deviceHidraw":false`)) == 1 {
+		withoutHidraw := bytes.Replace(data, []byte(`,"deviceHidraw":false`), nil, 1)
+		variants = append(variants, withoutHidraw)
+		digests = append(digests, digestBytes(withoutHidraw))
+	}
 	if manifest.Override.Clipboard.Enabled() {
 		return digests, nil
 	}
 	// Releases before clipboard grants signed this same struct without its
 	// empty clipboard field. Keep that digest checkable without widening it.
-	if bytes.Count(data, []byte(`,"clipboard":{}`)) != 1 {
-		return digests, nil
+	for _, variant := range variants {
+		if bytes.Count(variant, []byte(`,"clipboard":{}`)) != 1 {
+			continue
+		}
+		digests = append(digests, digestBytes(bytes.Replace(variant, []byte(`,"clipboard":{}`), nil, 1)))
 	}
-	legacy := bytes.Replace(data, []byte(`,"clipboard":{}`), nil, 1)
-	digests = append(digests, digestBytes(legacy))
 	return digests, nil
 }
 

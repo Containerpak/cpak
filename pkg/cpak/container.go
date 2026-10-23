@@ -644,6 +644,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	if override.DeviceDri || override.DeviceAll {
 		cmds = append(cmds, "--nvidia")
 	}
+	if override.DeviceHidraw && !override.DeviceAll {
+		cmds = append(cmds, "--watch-hidraw")
+	}
 	if override.UserNamespaces {
 		cmds = append(cmds, "--user-namespaces")
 	}

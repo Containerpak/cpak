@@ -60,6 +60,7 @@ func SummarizePermissions(override types.Override) []Permission {
 			{override.DeviceTun, "TUN/TAP"},
 			{override.DeviceUsb, "USB"},
 			{override.DeviceSerial, "serial ports"},
+			{override.DeviceHidraw, "security keys"},
 			{override.DeviceInput, "input devices"},
 			{override.DeviceTTY, "controlling terminal"},
 		}
