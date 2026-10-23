@@ -147,6 +147,22 @@ func TestOpenURIPrefersGIO(t *testing.T) {
 	waitForFileContent(t, opened, "open|"+resolved)
 }
 
+func TestOpenURIKeepsRequestOpenAfterStdinEOF(t *testing.T) {
+	directory := t.TempDir()
+	gio := filepath.Join(directory, "gio")
+	if err := os.WriteFile(gio, []byte("#!/bin/sh\n/bin/sleep 0.1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	options := testOptions(t)
+	options.OpenURICommand = ""
+	startBroker(t, options)
+	if err := InvokeShim(context.Background(), options.SocketPath, options.Token, "xdg-open",
+		[]string{"https://example.com/report"}, nil, strings.NewReader(""), io.Discard, io.Discard, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenURIReportsGIOHandoffFailures(t *testing.T) {
 	for _, test := range []struct {
 		name    string

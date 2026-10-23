@@ -110,7 +110,7 @@ func (c Client) call(ctx context.Context, action string, payload any) error {
 		}
 		return fmt.Errorf("write system broker request: %w", err)
 	}
-	if c.Stdin != nil {
+	if action == ActionCpak && c.Stdin != nil {
 		go func() {
 			_, _ = io.Copy(connection, c.Stdin)
 			_ = connection.CloseWrite()
