@@ -105,6 +105,9 @@ func TestPortalBusAnswersWithoutAHostBus(t *testing.T) {
 	if all[interfaceNamespace]["icon-theme"].Value() != "Adwaita" || all[appearanceNamespace] != nil {
 		t.Fatalf("ReadAll answered %v", all)
 	}
+	if all[interfaceNamespace]["font-antialiasing"].Value() != "grayscale" || all[interfaceNamespace]["font-hinting"].Value() != "slight" {
+		t.Fatalf("the font settings read as %v", all[interfaceNamespace])
+	}
 	var proxies []string
 	if err := portal(connection).Call(proxyInterface+".Lookup", 0, "https://example.org").Store(&proxies); err != nil || len(proxies) != 1 || proxies[0] != "direct://" {
 		t.Fatalf("the proxy resolver answered %v: %v", proxies, err)

@@ -104,6 +104,9 @@ func flatpakPortalArguments(container types.Container, app types.Application, ov
 	if scheme := hostColorScheme(); scheme != 0 {
 		arguments = append(arguments, "--color-scheme", strconv.Itoa(int(scheme)))
 	}
+	for _, setting := range detectedHostFontSettings() {
+		arguments = append(arguments, "--"+setting[0], setting[1])
+	}
 	if override.SessionBus.Enabled() {
 		if policy, err := json.Marshal(override.SessionBus); err == nil {
 			arguments = append(arguments, "--policy", base64.RawURLEncoding.EncodeToString(policy))

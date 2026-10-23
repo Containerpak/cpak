@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -33,6 +34,9 @@ type DesktopBusProxyCmd struct {
 	OpenURI          bool   `cli:"open-uri" help:"Open links through the cpak broker"`
 	ExecSocketPath   string `cli:"exec-socket" help:"Container command socket for processes started through the Flatpak portal"`
 	IconTheme        string `cli:"icon-theme" help:"Icon theme reported by the settings portal"`
+	FontAntialiasing string `cli:"font-antialiasing" help:"Font antialiasing reported by the settings portal"`
+	FontHinting      string `cli:"font-hinting" help:"Font hinting reported by the settings portal"`
+	FontRGBAOrder    string `cli:"font-rgba-order" help:"Subpixel order reported by the settings portal"`
 
 	cli.Base
 }
@@ -63,6 +67,11 @@ func (c *DesktopBusProxyCmd) Run() error {
 	if c.ColorScheme < 0 || c.ColorScheme > 2 {
 		return errors.New("colour scheme must be 0, 1 or 2")
 	}
+	for key, value := range map[string]string{"font-antialiasing": c.FontAntialiasing, "font-hinting": c.FontHinting, "font-rgba-order": c.FontRGBAOrder} {
+		if value != "" && !desktopbus.ValidFontSetting(key, value) {
+			return fmt.Errorf("invalid %s: %s", key, value)
+		}
+	}
 	ctx, stop := signalContext()
 	defer stop()
 	return desktopbus.Serve(ctx, desktopbus.Options{
@@ -81,6 +90,9 @@ func (c *DesktopBusProxyCmd) Run() error {
 		OpenURI:          c.OpenURI,
 		ExecSocketPath:   c.ExecSocketPath,
 		IconTheme:        c.IconTheme,
+		FontAntialiasing: c.FontAntialiasing,
+		FontHinting:      c.FontHinting,
+		FontRGBAOrder:    c.FontRGBAOrder,
 	})
 }
 

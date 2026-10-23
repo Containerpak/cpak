@@ -486,6 +486,9 @@ func (b *portalBus) settingsNamespaces() map[string]map[string]dbus.Variant {
 		scheme = "prefer-light"
 	}
 	interfaceSettings["color-scheme"] = dbus.MakeVariant(scheme)
+	interfaceSettings["font-antialiasing"] = dbus.MakeVariant(fontSetting(b.proxy.options.FontAntialiasing, "grayscale"))
+	interfaceSettings["font-hinting"] = dbus.MakeVariant(fontSetting(b.proxy.options.FontHinting, "slight"))
+	interfaceSettings["font-rgba-order"] = dbus.MakeVariant(fontSetting(b.proxy.options.FontRGBAOrder, "rgb"))
 	return map[string]map[string]dbus.Variant{
 		appearanceNamespace: {
 			"color-scheme": dbus.MakeVariant(b.proxy.options.ColorScheme),
@@ -493,6 +496,28 @@ func (b *portalBus) settingsNamespaces() map[string]map[string]dbus.Variant {
 		},
 		interfaceNamespace: interfaceSettings,
 	}
+}
+
+var fontSettingValues = map[string][]string{
+	"font-antialiasing": {"none", "grayscale", "rgba"},
+	"font-hinting":      {"none", "slight", "medium", "full"},
+	"font-rgba-order":   {"rgb", "bgr", "vrgb", "vbgr"},
+}
+
+func ValidFontSetting(key, value string) bool {
+	for _, allowed := range fontSettingValues[key] {
+		if value == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func fontSetting(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func namespaceMatches(pattern, namespace string) bool {

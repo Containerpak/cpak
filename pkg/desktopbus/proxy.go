@@ -67,7 +67,10 @@ type Options struct {
 	// Flatpak portal starts helper processes inside the same sandbox.
 	ExecSocketPath string
 	// IconTheme is the icon theme the settings portal reports.
-	IconTheme string
+	IconTheme        string
+	FontAntialiasing string
+	FontHinting      string
+	FontRGBAOrder    string
 }
 
 type Proxy struct {
