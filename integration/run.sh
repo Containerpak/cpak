@@ -264,7 +264,7 @@ cat >"$work/helpers/gio" <<'EOF'
 #!/bin/sh
 if [ "$#" -eq 2 ] && [ "$1" = open ]; then
 	case "$2" in
-		http://*|https://*|mailto:*) exec /usr/bin/gio "$@" ;;
+		http://*|https://*|mailto:*) exec /usr/bin/gio "$@" 2>>"$CPAK_INTEGRATION_OPEN_LOG.stderr.log" ;;
 		*) printf '%s\n' "$2" >>"$CPAK_INTEGRATION_OPEN_LOG"; exit 0 ;;
 	esac
 fi
