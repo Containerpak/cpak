@@ -190,6 +190,21 @@ func (c *Cpak) verifySessionLaunch(app types.Application, override types.Overrid
 		identity.Verdict = LaunchRecognised
 	default:
 		identity.Verdict = LaunchUnrecognised
+		// Older installations named the same grants with an earlier policy
+		// shape. Both the package and the policy must still match that root.
+		for schema := integrity.CurrentPolicySchema - 1; schema >= integrity.PolicySchemaWithoutSerial; schema-- {
+			policyRoot, err := integrity.PolicyRootForSchema(override, schema)
+			if err != nil {
+				continue
+			}
+			launchRoot := integrity.LaunchRoot(identity.PackageRoot, policyRoot)
+			if launchRoot == recorded {
+				identity.PolicyRoot = policyRoot
+				identity.LaunchRoot = launchRoot
+				identity.Verdict = LaunchRecognised
+				break
+			}
+		}
 	}
 	return identity, nil
 }

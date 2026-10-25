@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -110,6 +111,55 @@ func verifiedApplication() types.Application {
 		Config:         `{"config":{"Env":["PATH=/usr/bin"]}}`,
 		ParsedLayers:   []string{verifiedBaseLayer, verifiedTopLayer},
 		ParsedBinaries: []string{"/usr/bin/demo"},
+	}
+}
+
+func TestGateLaunchReadsOlderPolicySchemas(t *testing.T) {
+	for schema := integrity.PolicySchemaWithoutSerial; schema < integrity.CurrentPolicySchema; schema++ {
+		t.Run(strconv.Itoa(schema), func(t *testing.T) {
+			cp := newTestCpak(t)
+			useNoHostCeiling(t)
+			ledger := useAnchorLedger(t)
+			useEnforcement(t, systemauthority.EnforcementRefuse)
+			bindLayer(t, cp, verifiedBaseLayer, "state-base")
+			bindLayer(t, cp, verifiedTopLayer, "state-top")
+			app := verifiedApplication()
+			app.ParsedOverride.Network = true
+			policy := resolvedOverride(app)
+			identity, err := cp.verifyLaunch(app, policy, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity.PolicyRoot, err = integrity.PolicyRootForSchema(policy, schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity.LaunchRoot = integrity.LaunchRoot(identity.PackageRoot, identity.PolicyRoot)
+			enrol(t, ledger, identity)
+
+			found, err := cp.gateLaunch(app, policy, nil, nil)
+			if err != nil || found.Verdict != LaunchRecognised {
+				t.Fatalf("unchanged launch enrolled under schema %d was refused after an upgrade: %s, %v", schema, found.Verdict, err)
+			}
+			if found.PolicyRoot != identity.PolicyRoot || found.LaunchRoot != identity.LaunchRoot {
+				t.Fatal("the recognised launch does not name the recorded policy and launch roots")
+			}
+
+			changed := policy
+			changed.DeviceHidraw = true
+			if _, err := cp.gateLaunch(app, changed, nil, nil); !errors.Is(err, errLaunchUnrecognised) {
+				t.Fatalf("an older schema accepted a new raw HID grant: %v", err)
+			}
+			changed = policy
+			changed.Network = false
+			if _, err := cp.gateLaunch(app, changed, nil, nil); !errors.Is(err, errLaunchUnrecognised) {
+				t.Fatalf("a changed policy was mistaken for the recorded policy: %v", err)
+			}
+			app.Config = `{"config":{"Env":["CHANGED=1"]}}`
+			if _, err := cp.gateLaunch(app, policy, nil, nil); !errors.Is(err, errLaunchUnrecognised) {
+				t.Fatalf("a changed package was mistaken for the recorded package: %v", err)
+			}
+		})
 	}
 }
 
@@ -839,6 +889,45 @@ func TestASessionIsRecognisedByItsOwnPolicy(t *testing.T) {
 	}
 	if ordinary.Verdict != LaunchRecognised {
 		t.Fatalf("the application launch stopped being recognised: %v", ordinary.Verdict)
+	}
+}
+
+func TestGateSessionLaunchReadsAnOlderPolicySchema(t *testing.T) {
+	cp := newTestCpak(t)
+	useNoHostCeiling(t)
+	ledger := useAnchorLedger(t)
+	useEnforcement(t, systemauthority.EnforcementRefuse)
+	bindLayer(t, cp, verifiedBaseLayer, "state-base")
+	bindLayer(t, cp, verifiedTopLayer, "state-top")
+	policy := types.Override{SocketWayland: true}
+	app := verifiedApplication()
+	app.ParsedSessions = []types.Session{{ID: "demo-session", Entrypoint: "/usr/bin/demo", Override: policy}}
+	identity, err := cp.verifyLaunch(app, resolvedOverride(app), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPolicy, err := integrity.PolicyRootForSchema(policy, integrity.PolicySchemaWithoutHidraw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := integrity.Anchor{
+		ABI:          integrity.ABIVersion,
+		UID:          identity.UID,
+		Origin:       identity.Origin,
+		Generation:   1,
+		PackageRoot:  identity.PackageRoot,
+		PolicyRoot:   identity.PolicyRoot,
+		LaunchRoot:   identity.LaunchRoot,
+		SessionRoots: map[string]string{"demo-session": integrity.LaunchRoot(identity.PackageRoot, oldPolicy)},
+	}
+	if err := ledger.Store(anchor); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := cp.gateSessionLaunch(app, policy, "demo-session", nil, nil); err != nil || found.Verdict != LaunchRecognised {
+		t.Fatalf("unchanged session enrolled under an older schema was refused: %s, %v", found.Verdict, err)
+	}
+	if found, err := cp.gateSessionLaunch(app, policy, "unrecorded-session", nil, nil); err == nil || found.Verdict != LaunchUnenrolled {
+		t.Fatalf("an unrecorded session was recognised through another session's old schema: %s, %v", found.Verdict, err)
 	}
 }
 
