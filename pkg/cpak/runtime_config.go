@@ -187,7 +187,7 @@ func applyRuntimeEnvironment(base, runtime []string) []string {
 		name, _, _ := strings.Cut(entry, "=")
 		base = setEnvironmentValue(base, name, strings.TrimPrefix(entry, name+"="))
 	}
-	return base
+	return setEnvironmentValue(base, "PATH", buildContainerPath(base))
 }
 
 func (c *Cpak) runtimeIdentity() (string, error) {
