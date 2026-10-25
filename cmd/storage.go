@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
@@ -35,6 +37,14 @@ func (c *StorageCmd) Run() error {
 		c.Logger.Info("Prepared layers: %d of %d", status.Prepared, status.Layers)
 		return nil
 	case "migrate":
+		// Older updaters already invoke this step in the replacement binary.
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve cpak executable: %w", err)
+		}
+		if err := prepareUpdatedRuntime(context.Background(), executable); err != nil {
+			return err
+		}
 		status, err := cp.PrepareInstalledStorage()
 		if err != nil {
 			return err

@@ -120,6 +120,18 @@ func installedLayout() (layout, bool) {
 	return layoutFor(standardPrefix), false
 }
 
+// InstalledExecutable returns the trusted system copy usable on this host.
+func InstalledExecutable() (string, bool) {
+	if AppArmorUserNamespacesRestricted() {
+		return AppArmorRuntimeExecutable()
+	}
+	target, found := installedLayout()
+	if !found {
+		return "", false
+	}
+	return target.binary, true
+}
+
 func declarativeLayout() (layout, bool) {
 	binary, err := os.Executable()
 	if err != nil {
