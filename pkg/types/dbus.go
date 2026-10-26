@@ -108,6 +108,21 @@ func (p DBusPolicy) AllowsCall(name, path, interfaceName, member string) bool {
 	return false
 }
 
+// AllowsTalkTo answers whether any grant names this destination, without
+// asking about a particular path, interface or member. It is for questions
+// about the name itself rather than about a call to it.
+func (p DBusPolicy) AllowsTalkTo(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, grant := range p.Talk {
+		if grant.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (p DBusPolicy) AllowsOwn(name string) bool {
 	for _, allowed := range p.Own {
 		if dbusOwnRuleAllows(allowed, name) {
