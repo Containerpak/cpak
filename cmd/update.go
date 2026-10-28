@@ -22,6 +22,7 @@ type UpdateCmd struct {
 	Remote         string `arg:"remote" help:"Remote Git repository, all the installed cpak(s) if omitted"`
 	JSON           bool   `cli:"json,j" help:"Print output in JSON format"`
 	NonInteractive bool   `cli:"non-interactive,n" help:"Reject updates that request additional permissions"`
+	Approve        bool   `cli:"approve-permissions" help:"Approve the additional permissions that updates request, for front ends that already asked"`
 	Verbose        bool   `cli:"verbose,v" help:"Report every cpak, not only the ones that need attention"`
 	Check          bool   `cli:"check" help:"Report the updates that are available without applying them"`
 	JSONProgress   bool   `cli:"json-progress" help:"Report progress and the results as JSON lines on standard output"`
@@ -35,6 +36,9 @@ type UpdateCmd struct {
 // Run updates and exits with a code that tells a refusal of new permissions,
 // an unreachable remote and an answer that failed verification apart.
 func (c *UpdateCmd) Run() error {
+	if c.Approve && c.NonInteractive {
+		return fmt.Errorf("--approve-permissions cannot be combined with --non-interactive")
+	}
 	if c.JSONProgress {
 		if c.JSON || c.Check {
 			return fmt.Errorf("--json-progress cannot be combined with --json or --check")
@@ -81,6 +85,9 @@ func (c *UpdateCmd) update() error {
 	}
 	results, err := cp.UpdateWithOptions(remote, cpak.UpdateOptions{
 		ConfirmPermissions: func(requests []types.UpdateResult) bool {
+			if c.Approve {
+				return true
+			}
 			if c.NonInteractive || c.JSON {
 				return false
 			}
