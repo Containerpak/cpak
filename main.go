@@ -176,7 +176,7 @@ func (c *CLI) Before() error {
 	if err != nil || !available {
 		return nil
 	}
-	if startDesktopUpdate(checker, release.Version) {
+	if selfUpdateMode != "managed" && startDesktopUpdate(checker, release.Version) {
 		return nil
 	}
 	if selfUpdateMode == "managed" {
