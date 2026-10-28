@@ -20,8 +20,7 @@ import (
 
 const (
 	windowPollInterval = 100 * time.Millisecond
-	windowCloseGrace   = 5 * time.Second
-	windowHiddenGrace  = time.Minute
+	windowCloseGrace   = 2 * time.Second
 )
 
 type Options struct {
@@ -338,11 +337,7 @@ func (b *broker) tick() bool {
 		}
 	} else if b.seenWindow || b.options.ClientsAlive != nil && !b.options.ClientsAlive() {
 		if b.closeAt.IsZero() {
-			grace := windowCloseGrace
-			if b.options.ClientsAlive != nil && b.options.ClientsAlive() {
-				grace = windowHiddenGrace
-			}
-			b.closeAt = time.Now().Add(grace)
+			b.closeAt = time.Now().Add(windowCloseGrace)
 		} else if time.Now().After(b.closeAt) {
 			return true
 		}
@@ -483,7 +478,12 @@ func (b *broker) windowSizeWithinLimits(window xproto.Window, width, height uint
 
 func (b *broker) windowIsTransient(window xproto.Window) bool {
 	reply, err := xproto.GetProperty(b.nested.connection, false, window, xproto.AtomWmTransientFor, xproto.AtomWindow, 0, 1).Reply()
-	return err == nil && reply.Format == 32 && len(reply.Value) >= 4 && xproto.Window(xgb.Get32(reply.Value)) != xproto.WindowNone
+	if err != nil || reply.Format != 32 || len(reply.Value) < 4 {
+		return false
+	}
+	// ICCCM lets a window be transient for the root to mean its whole group.
+	owner := xproto.Window(xgb.Get32(reply.Value))
+	return owner != xproto.WindowNone && owner != b.nested.root && owner != window
 }
 
 func (b *broker) focusWindow(window xproto.Window) {

@@ -333,6 +333,43 @@ func TestX11BrokerAcknowledgesUnchangedGeometry(t *testing.T) {
 	}
 }
 
+func TestX11BrokerManagesWindowsTransientForTheRoot(t *testing.T) {
+	host, nested, runtime := testX11Displays(t)
+	stop := startTestX11Broker(t, host, nested, runtime, false, false)
+	defer stop()
+	application := connectTestX11(t, nested)
+	defer application.Close()
+	screen := xproto.Setup(application).DefaultScreen(application)
+	window, err := xproto.NewWindowId(application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = xproto.CreateWindowChecked(application, screen.RootDepth, window, screen.Root, 50, 40, 320, 240, 0, xproto.WindowClassInputOutput, screen.RootVisual, 0, nil).Check(); err != nil {
+		t.Fatal(err)
+	}
+	root := make([]byte, 4)
+	xgb.Put32(root, uint32(screen.Root))
+	if err = xproto.ChangePropertyChecked(application, xproto.PropModeReplace, window, xproto.AtomWmTransientFor, xproto.AtomWindow, 32, 1, root).Check(); err != nil {
+		t.Fatal(err)
+	}
+	xproto.MapWindow(application, window)
+	application.Sync()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		geometry, readErr := xproto.GetGeometry(application, xproto.Drawable(window)).Reply()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if geometry.X == 0 && geometry.Y == 0 && geometry.Width == screen.WidthInPixels && geometry.Height == screen.HeightInPixels {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("window transient for the root was left unmanaged at %dx%d+%d+%d", geometry.Width, geometry.Height, geometry.X, geometry.Y)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func testX11Displays(t *testing.T) (types.Container, types.Container, x11BridgeRuntime) {
 	t.Helper()
 	if os.Getenv("WAYLAND_DISPLAY") == "" || !socketIsLive(waylandSocketPath(strconv.Itoa(os.Getuid()))) {
