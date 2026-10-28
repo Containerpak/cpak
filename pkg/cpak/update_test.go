@@ -970,6 +970,20 @@ func TestRemoveStaleExportsForSameInstallation(t *testing.T) {
 	}
 }
 
+func TestSameInstallationIgnoresAnEmptyListReadBackAsNil(t *testing.T) {
+	stored := types.Application{CpakId: testCpakId("branch", "main"), ParsedOverride: types.Override{SocketWayland: true}}
+	updated := stored
+	updated.ParsedOverride.FsExtra = []string{}
+
+	if !sameInstallation(stored, updated) {
+		t.Fatalf("expected an empty list and a missing one to be the same installation")
+	}
+	updated.ParsedOverride.FsExtra = []string{"/srv"}
+	if sameInstallation(stored, updated) {
+		t.Fatalf("expected a new path to be a different installation")
+	}
+}
+
 func TestCreateExportsReportsMissingDesktopEntry(t *testing.T) {
 	c := newTestCpak(t)
 	app := types.Application{

@@ -6,6 +6,7 @@ package cpak
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -596,7 +597,21 @@ func sameInstallation(app types.Application, updated types.Application) bool {
 	if !reflect.DeepEqual(app.RuntimeSources, updated.RuntimeSources) {
 		return false
 	}
-	return reflect.DeepEqual(app.ParsedOverride, updated.ParsedOverride)
+	return sameOverride(app.ParsedOverride, updated.ParsedOverride)
+}
+
+// sameOverride compares overrides the way the store keeps them, so an empty
+// list read back as nil is not taken for a change of permissions.
+func sameOverride(stored, updated types.Override) bool {
+	first, err := json.Marshal(stored)
+	if err != nil {
+		return false
+	}
+	second, err := json.Marshal(updated)
+	if err != nil {
+		return false
+	}
+	return string(first) == string(second)
 }
 
 func failedUpdate(result types.UpdateResult, err error) types.UpdateResult {
