@@ -20,7 +20,8 @@ import (
 
 const (
 	windowPollInterval = 100 * time.Millisecond
-	windowCloseGrace   = 2 * time.Second
+	windowCloseGrace   = 5 * time.Second
+	windowHiddenGrace  = time.Minute
 )
 
 type Options struct {
@@ -319,7 +320,7 @@ func (b *broker) handleEvent(received endpointEvent) {
 
 func (b *broker) tick() bool {
 	windows := b.applicationWindows()
-	visible := len(windows) > 0 || b.options.ShowDisplay != nil && b.hasVisibleWindow()
+	visible := len(windows) > 0 || b.hasVisibleWindow()
 	if visible {
 		if !b.displayShown && b.options.ShowDisplay != nil {
 			if err := b.options.ShowDisplay(); err != nil {
@@ -337,7 +338,11 @@ func (b *broker) tick() bool {
 		}
 	} else if b.seenWindow || b.options.ClientsAlive != nil && !b.options.ClientsAlive() {
 		if b.closeAt.IsZero() {
-			b.closeAt = time.Now().Add(windowCloseGrace)
+			grace := windowCloseGrace
+			if b.options.ClientsAlive != nil && b.options.ClientsAlive() {
+				grace = windowHiddenGrace
+			}
+			b.closeAt = time.Now().Add(grace)
 		} else if time.Now().After(b.closeAt) {
 			return true
 		}
