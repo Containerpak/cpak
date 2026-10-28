@@ -22,6 +22,7 @@ var buildCapabilities = []string{
 	"list-json",
 	"update-check",
 	"json-progress",
+	"update-approve-permissions",
 }
 
 type CapabilitiesCmd struct {
