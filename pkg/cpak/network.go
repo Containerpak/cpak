@@ -10,13 +10,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -56,6 +59,31 @@ var slirpSources = map[string]types.RuntimeSource{
 }
 
 var slirpHTTPClient = &http.Client{Timeout: networkStartupTimeout}
+
+func loopbackProxyVariables(environment []string, override types.Override) []string {
+	if !override.Network || override.HostNetwork {
+		return nil
+	}
+	var names []string
+	for _, name := range []string{"http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"} {
+		value := environmentValue(environment, name)
+		if value == "" {
+			continue
+		}
+		if !strings.Contains(value, "://") {
+			value = "//" + value
+		}
+		proxy, err := url.Parse(value)
+		if err != nil {
+			continue
+		}
+		host := proxy.Hostname()
+		if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") || net.ParseIP(host).IsLoopback() {
+			names = append(names, name)
+		}
+	}
+	return names
+}
 
 type userNetworkPlan struct {
 	path string

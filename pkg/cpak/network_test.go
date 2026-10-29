@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -23,6 +24,40 @@ import (
 
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
+
+func TestLoopbackProxiesInPrivateNetworks(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		environment []string
+		override    types.Override
+		want        []string
+	}{
+		{"inherited HTTPS proxy", []string{"HTTPS_PROXY=http://127.0.0.1:8899"}, types.Override{Network: true}, []string{"HTTPS_PROXY"}},
+		{"IPv4 loopback range", []string{"http_proxy=http://127.42.1.2:8080"}, types.Override{Network: true}, []string{"http_proxy"}},
+		{"IPv6 proxy", []string{"ALL_PROXY=socks5h://[::1]:1080"}, types.Override{Network: true}, []string{"ALL_PROXY"}},
+		{"localhost without scheme", []string{"https_proxy=LOCALHOST.:8899"}, types.Override{Network: true}, []string{"https_proxy"}},
+		{"credentials stay private", []string{"HTTPS_PROXY=http://user:private-password@localhost:8899/private?token=private-token"}, types.Override{Network: true}, []string{"HTTPS_PROXY"}},
+		{"remote proxy", []string{"HTTPS_PROXY=http://proxy.example:8899"}, types.Override{Network: true}, nil},
+		{"similar hostname", []string{"HTTPS_PROXY=http://localhost.example:8899"}, types.Override{Network: true}, nil},
+		{"host network", []string{"HTTPS_PROXY=http://127.0.0.1:8899"}, types.Override{Network: true, HostNetwork: true}, nil},
+		{"disabled network", []string{"HTTPS_PROXY=http://127.0.0.1:8899"}, types.Override{}, nil},
+		{"unset proxy", []string{"HTTPS_PROXY="}, types.Override{Network: true}, nil},
+		{"malformed proxy", []string{"HTTPS_PROXY=http://[::1"}, types.Override{Network: true}, nil},
+		{"runtime replaces inherited proxy", []string{"HTTPS_PROXY=http://127.0.0.1:8899", "HTTPS_PROXY=http://proxy.example:8899"}, types.Override{Network: true}, nil},
+		{"runtime clears inherited proxy", []string{"HTTPS_PROXY=http://127.0.0.1:8899", "HTTPS_PROXY="}, types.Override{Network: true}, nil},
+		{"runtime selects loopback", []string{"HTTPS_PROXY=http://proxy.example:8899", "HTTPS_PROXY=http://127.0.0.1:8899"}, types.Override{Network: true}, []string{"HTTPS_PROXY"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := append([]string(nil), tc.environment...)
+			if got := loopbackProxyVariables(tc.environment, tc.override); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("proxy variable names: got %v, want %v", got, tc.want)
+			}
+			if !reflect.DeepEqual(original, tc.environment) {
+				t.Fatal("proxy diagnostics changed the application's environment")
+			}
+		})
+	}
+}
 
 func TestNetworkHelperIsOptional(t *testing.T) {
 	t.Setenv("PATH", "")
