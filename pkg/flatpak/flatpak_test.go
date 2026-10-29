@@ -31,8 +31,24 @@ func TestKeyFileReadsListsAndEscapes(t *testing.T) {
 	}
 }
 
+func TestKeyFileMergesARepeatedGroup(t *testing.T) {
+	file, err := ParseKeyFile([]byte("[Runtime]\nname=org.kde.Platform\n[Build]\nbuilt-extensions=a;\n[Extension org.kde.Platform.GL]\ndirectory=lib/GL\n[Build]\nbuilt-extensions=b;\nsdk=org.kde.Sdk\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := file.Groups(); !reflect.DeepEqual(got, []string{"Runtime", "Build", "Extension org.kde.Platform.GL"}) {
+		t.Fatalf("groups read as %q", got)
+	}
+	if got := file.List("Build", "built-extensions"); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Fatalf("a repeated key kept %q instead of its last value", got)
+	}
+	if got := file.String("Build", "sdk"); got != "org.kde.Sdk" {
+		t.Fatalf("a key of the repeated group read as %q", got)
+	}
+}
+
 func TestKeyFileRefusesMalformedInput(t *testing.T) {
-	for _, input := range []string{"key=value\n", "[Group\n", "[A]\nnovalue\n", "[A]\n[A]\n", "[A]\n=value\n"} {
+	for _, input := range []string{"key=value\n", "[Group\n", "[A]\nnovalue\n", "[A]\n=value\n"} {
 		if _, err := ParseKeyFile([]byte(input)); err == nil {
 			t.Fatalf("accepted %q", input)
 		}

@@ -27,7 +27,9 @@ type KeyFile struct {
 const maxKeyFile = 1 << 20
 
 // ParseKeyFile reads a key file. Localised keys such as Name[it] are kept
-// under their full name, so they never shadow the plain key.
+// under their full name, so they never shadow the plain key. A group that
+// appears again continues the first one and a repeated key keeps its last
+// value, as GLib reads it.
 func ParseKeyFile(data []byte) (*KeyFile, error) {
 	if len(data) > maxKeyFile {
 		return nil, fmt.Errorf("flatpak: key file exceeds %d bytes", maxKeyFile)
@@ -51,8 +53,9 @@ func ParseKeyFile(data []byte) (*KeyFile, error) {
 			if name == "" || strings.ContainsAny(name, "[]") {
 				return nil, fmt.Errorf("flatpak: line %d: invalid group name %q", line, name)
 			}
-			if _, seen := file.groups[name]; seen {
-				return nil, fmt.Errorf("flatpak: line %d: group %q appears twice", line, name)
+			if existing, seen := file.groups[name]; seen {
+				group = existing
+				continue
 			}
 			group = map[string]string{}
 			file.groups[name] = group
