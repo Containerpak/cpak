@@ -752,6 +752,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	}
 	containerEnv = setEnvironmentValue(containerEnv, "PATH", buildContainerPath(containerEnv))
 	containerEnv = applyRuntimeEnvironment(containerEnv, c.runtimeEnvironment)
+	for _, name := range loopbackProxyVariables(append(os.Environ(), containerEnv...), override) {
+		logger.Warnf("%s points to loopback in a private network; a host proxy is not reachable at localhost. Check this setting if the application appears offline", name)
+	}
 	for _, envVar := range containerEnv {
 		cmds = append(cmds, "--env", envVar)
 	}
@@ -1127,6 +1130,9 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 	}
 	envVars = applyRuntimeEnvironment(envVars, c.runtimeEnvironment)
 	envVars = c.applyDesktopActivationToken(envVars)
+	for _, name := range loopbackProxyVariables(envVars, override) {
+		logger.Warnf("%s points to loopback in a private network; a host proxy is not reachable at localhost. Check this setting if the application appears offline", name)
+	}
 
 	execSocketPath := container.ExecSocketPath
 	if execSocketPath == "" {
