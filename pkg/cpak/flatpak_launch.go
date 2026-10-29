@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mirkobrombin/cpak/pkg/flatpak"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -107,8 +108,8 @@ func flatpakPortalArguments(container types.Container, app types.Application, ov
 	for _, setting := range detectedHostFontSettings() {
 		arguments = append(arguments, "--"+setting[0], setting[1])
 	}
-	if override.SessionBus.Enabled() {
-		if policy, err := json.Marshal(override.SessionBus); err == nil {
+	if bus := flatpakSessionBus(app, override.SessionBus); bus.Enabled() {
+		if policy, err := json.Marshal(bus); err == nil {
 			arguments = append(arguments, "--policy", base64.RawURLEncoding.EncodeToString(policy))
 		}
 	}
@@ -135,6 +136,29 @@ func flatpakPortalArguments(container types.Container, app types.Application, ov
 		)
 	}
 	return arguments
+}
+
+// flatpakSessionBus adds the names Flatpak always lets an application own on
+// its bus: its own id and the names below it. GApplication registers the id
+// at startup and exits when the bus refuses it.
+func flatpakSessionBus(app types.Application, policy types.DBusPolicy) types.DBusPolicy {
+	if app.Flatpak == nil {
+		return policy
+	}
+	ref, err := flatpak.ParseRef(app.Flatpak.Ref)
+	if err != nil || ref.Kind != flatpak.KindApp {
+		return policy
+	}
+	result := types.DBusPolicy{Talk: policy.Talk, Own: append([]string{}, policy.Own...)}
+	for _, name := range []string{ref.ID, ref.ID + ".*"} {
+		if !result.AllowsOwn(name) {
+			result.Own = append(result.Own, name)
+		}
+	}
+	if types.ValidateDBusPolicy(result) != nil {
+		return policy
+	}
+	return result
 }
 
 // hostColorScheme reads the preference cpak already passes on as GTK_THEME,
