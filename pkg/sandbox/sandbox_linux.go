@@ -31,7 +31,7 @@ func ApplyLandlock(grants []PathGrant) (int, error) {
 	}
 
 	handled := landlockAccess(version)
-	ruleset, err := landlockCreate(&unix.LandlockRulesetAttr{Access_fs: handled}, 0)
+	ruleset, err := landlockCreate(&unix.LandlockRulesetAttr{Handled_access_fs: handled}, 0)
 	if err != nil {
 		return 0, fmt.Errorf("create landlock ruleset: %w", err)
 	}
