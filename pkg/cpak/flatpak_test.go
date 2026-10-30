@@ -464,3 +464,40 @@ func TestInstallReportsEveryCommitToTheEnd(t *testing.T) {
 		t.Fatalf("the installation ended on %+v", steps[len(steps)-1])
 	}
 }
+
+func TestApplyFlatpakExtraDataReattachesAStoredLayer(t *testing.T) {
+	c := &Cpak{Ctx: context.Background(), Options: Options{StorePath: t.TempDir()}}
+	source := &types.FlatpakSource{
+		Ref:       "app/com.example.Stub/x86_64/stable",
+		Commit:    "abc",
+		ExtraData: []types.FlatpakExtraData{{Name: "stub.deb", Checksum: "00", Size: 1}},
+	}
+	digest := flatpakExtraLayerDigest(source)
+	temporary, writer, err := c.beginFVSLayerSnapshot(digest, fvsrepo.SnapshotOptions{Message: "extra data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(temporary)
+	tree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tree, "file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.AddTreeProgress(tree, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishFVSLayer(temporary, c.fvsLayerPath(digest)); err != nil {
+		t.Fatal(err)
+	}
+	app := types.Application{ParsedLayers: []string{"base"}, Flatpak: source}
+	for range 2 {
+		if err := c.applyFlatpakExtraData(&app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(app.ParsedLayers) != 2 || app.ParsedLayers[1] != digest {
+		t.Fatalf("layers = %v, want the extra layer once after base", app.ParsedLayers)
+	}
+}

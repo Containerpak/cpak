@@ -101,6 +101,9 @@ func (c *Cpak) updateFlatpakApplication(app types.Application, deps updateDeps, 
 			return failedUpdate(result, err)
 		}
 	}
+	if err = c.applyFlatpakExtraData(&updated); err != nil {
+		return failedUpdate(result, err)
+	}
 	if sameInstallation(app, updated) {
 		if err = deps.createExports(updated); err != nil {
 			return failedUpdate(result, err)
