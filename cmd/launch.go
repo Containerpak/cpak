@@ -85,6 +85,12 @@ func (c *LaunchCmd) replaceTrees() error {
 		}
 		return nil
 	}
+	if err := keepParentTree("/usr", c.UsrFd != 0); err != nil {
+		return err
+	}
+	if err := keepParentTree("/app", c.AppFd != 0 || c.EmptyApp); err != nil {
+		return err
+	}
 	if err := bind(c.UsrFd, "/usr"); err != nil {
 		return err
 	}
@@ -99,13 +105,33 @@ func (c *LaunchCmd) replaceTrees() error {
 	return nil
 }
 
+// keepParentTree leaves a tree about to be replaced under /run/parent, where
+// Flatpak keeps it: a replacement /usr may link to the libraries of the one it
+// replaced.
+func keepParentTree(tree string, replaced bool) error {
+	if !replaced {
+		return nil
+	}
+	target := "/run/parent" + tree
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return fmt.Errorf("keep %s: %w", tree, err)
+	}
+	if err := syscall.Mount(tree, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("keep %s: %w", tree, err)
+	}
+	return nil
+}
+
 // grantsOnReplacedTrees drops the grants a replaced /usr or /app no longer
 // holds: they name files of the tree the command left behind.
 func (c *LaunchCmd) grantsOnReplacedTrees(grants []sandbox.PathGrant) []sandbox.PathGrant {
 	if c.UsrFd == 0 && c.AppFd == 0 && !c.EmptyApp {
 		return grants
 	}
-	kept := make([]sandbox.PathGrant, 0, len(grants))
+	kept := make([]sandbox.PathGrant, 0, len(grants)+1)
+	if _, err := os.Stat("/run/parent"); err == nil {
+		kept = append(kept, sandbox.PathGrant{Path: "/run/parent", ReadOnly: true})
+	}
 	for _, grant := range grants {
 		replaced := strings.HasPrefix(grant.Path, "/usr/") || strings.HasPrefix(grant.Path, "/app/")
 		if _, err := os.Stat(grant.Path); replaced && err != nil {
