@@ -5,6 +5,7 @@
 package desktopui
 
 import (
+	"os"
 	"time"
 )
 
@@ -47,6 +48,9 @@ func Progress(backend Backend, request ProgressRequest, action func(func(Progres
 		if handled {
 			return err
 		}
+	}
+	if os.Getenv("DISPLAY") == "" {
+		return <-done
 	}
 	return progressBuiltin(request, updates, done)
 }
