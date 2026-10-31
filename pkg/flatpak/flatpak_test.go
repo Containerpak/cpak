@@ -371,3 +371,10 @@ func TestParseMetadataReadsExtraData(t *testing.T) {
 		t.Fatal("a path in an extra data name was accepted")
 	}
 }
+
+func TestTranslationOfSteamKeepsItsX11(t *testing.T) {
+	translation := Translate(Metadata{Name: "com.valvesoftware.Steam", Context: Context{Shared: []string{"network"}, Sockets: []string{"wayland", "x11"}}})
+	if !translation.Override.DisplayX11 || !translation.Override.SocketWayland {
+		t.Fatal("Steam lost a display it needs")
+	}
+}

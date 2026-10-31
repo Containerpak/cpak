@@ -60,6 +60,11 @@ var sessionNames = map[string]string{
 	"org.freedesktop.Notifications": "notification",
 }
 
+// x11Clients draw only through X11, whatever else their metadata asks for.
+var x11Clients = map[string]bool{
+	"com.valvesoftware.Steam": true,
+}
+
 // handledNames are the bus names cpak answers inside the sandbox on its own,
 // so a request for them needs no grant and opens nothing on the host bus.
 var handledNames = []string{
@@ -105,7 +110,7 @@ func Translate(meta Metadata) Translation {
 			override.SocketWayland = true
 			t.add(request, Granted, "")
 		case "x11", "fallback-x11":
-			if sockets["wayland"] {
+			if sockets["wayland"] && !x11Clients[meta.Name] {
 				t.add(request, Narrowed, "the application uses Wayland, which it also asked for")
 				continue
 			}

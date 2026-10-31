@@ -725,6 +725,7 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		// under Flatpak, or a schema or icon it ships is shadowed by the
 		// runtime's.
 		containerEnv = prependEnvironmentPath(containerEnv, "XDG_DATA_DIRS", "/app/share", "/usr/share")
+		containerEnv = setEnvironmentValue(containerEnv, "XDG_RUNTIME_DIR", fmt.Sprintf("/run/user/%d", os.Getuid()))
 	}
 	if override.OpenURI {
 		containerEnv = openURIEnvironment(containerEnv)
