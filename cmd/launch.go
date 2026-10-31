@@ -164,20 +164,9 @@ func followReplacedEtc() error {
 // its overrides, so its own programs need those directories before they can run
 // and regenerate the cache themselves.
 func writeReplacedLibraryCache() error {
-	cache := "/run/parent/ld.so.cache"
-	if target, err := os.Readlink("/usr/etc/ld.so.cache"); err == nil && strings.HasPrefix(target, "/") {
-		if _, err := os.Stat(target); err == nil {
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("library cache: %w", err)
-		}
-		cache = target
-	} else {
-		os.Remove("/etc/ld.so.cache")
-		if err := os.Symlink(cache, "/etc/ld.so.cache"); err != nil {
-			return fmt.Errorf("library cache: %w", err)
-		}
+	cache, err := replacedCachePath()
+	if err != nil {
+		return fmt.Errorf("library cache: %w", err)
 	}
 	conf := "/run/parent/ld.so.conf"
 	dirs := []string{
@@ -220,6 +209,33 @@ func keepParentTree(tree string, replaced bool) error {
 		return fmt.Errorf("keep %s: %w", tree, err)
 	}
 	return nil
+}
+
+// replacedCachePath follows /etc/ld.so.cache to the file it ends on, and prepares
+// that file to be written. A chain ending in /etc lands on this command's own
+// tmpfs. A chain ending on a file of a tree it cannot write is cut short.
+func replacedCachePath() (string, error) {
+	path := "/etc/ld.so.cache"
+	for range 8 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			break
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
+	if strings.HasPrefix(path, "/etc/") {
+		os.Remove(path)
+		return path, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		return path, os.MkdirAll(filepath.Dir(path), 0o755)
+	}
+	path = "/run/parent/ld.so.cache"
+	os.Remove("/etc/ld.so.cache")
+	return path, os.Symlink(path, "/etc/ld.so.cache")
 }
 
 // grantsOnReplacedTrees drops the grants a replaced /usr or /app no longer
