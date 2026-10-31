@@ -45,6 +45,7 @@ func (c *LaunchCmd) Run() error {
 	if err := c.replaceTrees(); err != nil {
 		return err
 	}
+	grants = c.grantsOnReplacedTrees(grants)
 	// Landlock forbids filesystem topology changes, including mounts. Packages
 	// granted nested sandboxes rely on the container mount namespace instead.
 	if c.useLandlock() {
@@ -96,6 +97,23 @@ func (c *LaunchCmd) replaceTrees() error {
 		}
 	}
 	return nil
+}
+
+// grantsOnReplacedTrees drops the grants a replaced /usr or /app no longer
+// holds: they name files of the tree the command left behind.
+func (c *LaunchCmd) grantsOnReplacedTrees(grants []sandbox.PathGrant) []sandbox.PathGrant {
+	if c.UsrFd == 0 && c.AppFd == 0 && !c.EmptyApp {
+		return grants
+	}
+	kept := make([]sandbox.PathGrant, 0, len(grants))
+	for _, grant := range grants {
+		replaced := strings.HasPrefix(grant.Path, "/usr/") || strings.HasPrefix(grant.Path, "/app/")
+		if _, err := os.Stat(grant.Path); replaced && err != nil {
+			continue
+		}
+		kept = append(kept, grant)
+	}
+	return kept
 }
 
 func (c *LaunchCmd) useLandlock() bool {
