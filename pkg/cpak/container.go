@@ -1920,6 +1920,15 @@ func (c *Cpak) privateApplicationHome(applicationID string) (string, error) {
 	if err := securePrivateDirectory(path); err != nil {
 		return "", fmt.Errorf("prepare private application home: %w", err)
 	}
+	for _, directory := range []string{".config", ".cache", ".local/share", ".local/state"} {
+		target := filepath.Join(path, directory)
+		// An application may have replaced one with a link of its own.
+		if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(target, 0700); err != nil {
+				return "", fmt.Errorf("prepare private application home: %w", err)
+			}
+		}
+	}
 	return path, nil
 }
 
