@@ -240,12 +240,13 @@ func skippedExtension(id string) bool {
 	return strings.HasSuffix(id, ".Debug") || strings.HasSuffix(id, ".Sources") || strings.HasSuffix(id, ".Docs")
 }
 
-// glExtensionPoint reports the point a runtime takes its OpenGL driver from.
+// glExtensionPoint reports the point a runtime or a 32-bit application takes
+// its OpenGL driver from.
 // Flatpak picks a driver extension at run time; cpak always installs the
 // Mesa one and leaves NVIDIA to its own driver support, which uses the
 // libraries of the host driver and so always matches the kernel module.
 func glExtensionPoint(point flatpak.ExtensionPoint) bool {
-	return strings.HasSuffix(point.Name, ".GL") && point.Subdirectories
+	return (strings.HasSuffix(point.Name, ".GL") || strings.HasSuffix(point.Name, ".GL32")) && point.Subdirectories
 }
 
 // resolveFlatpakExtensions picks the extensions Flatpak would download for a
