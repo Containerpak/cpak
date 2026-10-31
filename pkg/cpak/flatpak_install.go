@@ -749,7 +749,22 @@ func flatpakInfo(plan *FlatpakPlan) []byte {
 	var out strings.Builder
 	fmt.Fprintf(&out, "[Application]\nname=%s\nruntime=%s\n\n", plan.App.Ref.ID, plan.Runtime.Ref.String())
 	fmt.Fprintf(&out, "[Instance]\napp-path=/app\napp-commit=%s\nruntime-path=/usr\nruntime-commit=%s\nbranch=%s\narch=%s\nflatpak-version=1.16.0\nsession-bus-proxy=true\n", plan.App.Commit.Checksum, plan.Runtime.Commit.Checksum, plan.App.Ref.Branch, plan.App.Ref.Arch)
+	flatpakInfoExtensions(&out, "app-extensions", plan.AppExtensions)
+	flatpakInfoExtensions(&out, "runtime-extensions", plan.RuntimeExtensions)
 	return []byte(out.String())
+}
+
+// flatpakInfoExtensions lists installed extensions as Flatpak records them.
+// Applications such as Steam read the list to learn what they can use.
+func flatpakInfoExtensions(out *strings.Builder, key string, extensions []FlatpakPart) {
+	if len(extensions) == 0 {
+		return
+	}
+	entries := make([]string, 0, len(extensions))
+	for _, extension := range extensions {
+		entries = append(entries, extension.Ref.ID+"="+extension.Commit.Checksum.String())
+	}
+	fmt.Fprintf(out, "%s=%s\n", key, strings.Join(entries, ";"))
 }
 
 // mergeFlatpakExtensionDirs presents the merge directories of an extension
