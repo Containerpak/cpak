@@ -672,12 +672,13 @@ func (c *Cpak) buildFlatpakCompatLayer(plan *FlatpakPlan, runtime types.Applicat
 	}
 
 	triplet := libraryTriplet(plan.App.Ref.Arch)
-	ldPaths := []string{"include /etc/ld.so.conf.d/*.conf", "/app/lib"}
+	ldPaths := []string{"include /etc/ld.so.conf.d/*.conf"}
 	for _, extension := range plan.AppExtensions {
 		if extension.Point.AddLdPath != "" {
 			ldPaths = append(ldPaths, path.Join(extension.Directory, extension.Point.AddLdPath))
 		}
 	}
+	ldPaths = append(ldPaths, "include /app/etc/ld.so.conf", "/app/lib")
 	for _, extension := range plan.RuntimeExtensions {
 		if extension.Point.AddLdPath != "" {
 			ldPaths = append(ldPaths, path.Join(extension.Directory, extension.Point.AddLdPath))
