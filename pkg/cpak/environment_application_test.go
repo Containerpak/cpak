@@ -152,3 +152,17 @@ func TestDeleteEnvironmentRemovesApplicationExports(t *testing.T) {
 		t.Fatalf("environment desktop entry still exists: %v", err)
 	}
 }
+
+func TestFlatpakBaseDirectoriesFollowTheContainerHome(t *testing.T) {
+	values := flatpakBaseDirectories([]string{"HOME=/home/user", "FLATPAK_ID=org.example.App", "XDG_DATA_HOME=/outside"})
+	if got := environmentValue(values, "XDG_DATA_HOME"); got != "/home/user/.local/share" {
+		t.Fatalf("XDG_DATA_HOME = %q", got)
+	}
+	if got := environmentValue(values, "XDG_STATE_HOME"); got != "/home/user/.local/state" {
+		t.Fatalf("XDG_STATE_HOME = %q", got)
+	}
+	plain := flatpakBaseDirectories([]string{"HOME=/home/user"})
+	if environmentValue(plain, "XDG_DATA_HOME") != "" {
+		t.Fatalf("a non Flatpak application got base directories: %v", plain)
+	}
+}

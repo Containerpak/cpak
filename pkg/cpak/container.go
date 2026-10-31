@@ -708,6 +708,7 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--extra-links", link)
 	}
 	containerEnv := append([]string{}, config.Config.Env...)
+	containerEnv = flatpakBaseDirectories(append(append([]string{}, "HOME="+os.Getenv("HOME")), containerEnv...))
 	containerEnv = append(containerEnv, override.Env...)
 	containerEnv = applyAddonEnvironment(containerEnv, addons)
 	if hostLocaleWins(app) {
@@ -1297,6 +1298,7 @@ func containerEnvironment(app types.Application, override types.Override, contai
 		envVars = setEnvironmentValue(envVars, "QT_QPA_PLATFORM", "wayland")
 	}
 	envVars = append(envVars, config.Config.Env...)
+	envVars = flatpakBaseDirectories(envVars)
 	envVars = append(envVars, override.Env...)
 	envVars = applyAddonEnvironment(envVars, addons)
 	envVars = setEnvironmentValue(envVars, "PATH", buildContainerPath(envVars))
@@ -1536,6 +1538,20 @@ func ensureOpenURIMimeApps(environment []string) error {
 		return fmt.Errorf("configure open URI integration: replace defaults: %w", err)
 	}
 	return nil
+}
+
+// flatpakBaseDirectories sets the base directories Flatpak gives every
+// application, which some of them read without a fallback. A value inherited
+// from the host would point outside the sandbox.
+func flatpakBaseDirectories(environment []string) []string {
+	home := environmentValue(environment, "HOME")
+	if environmentValue(environment, "FLATPAK_ID") == "" || home == "" {
+		return environment
+	}
+	environment = setEnvironmentValue(environment, "XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	environment = setEnvironmentValue(environment, "XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	environment = setEnvironmentValue(environment, "XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	return setEnvironmentValue(environment, "XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 }
 
 func environmentValue(environment []string, name string) string {
