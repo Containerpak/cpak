@@ -482,7 +482,7 @@ func (c *Cpak) flatpakApplicationRecord(plan *FlatpakPlan, runtime types.Applica
 	if err != nil {
 		return types.Application{}, err
 	}
-	compat, err := c.buildFlatpakCompatLayer(plan, runtime)
+	compat, err := c.buildFlatpakCompatLayer(plan, runtime, extensions)
 	if err != nil {
 		return types.Application{}, err
 	}
@@ -644,7 +644,7 @@ type compatEntry struct {
 // directories Flatpak merges out of driver extensions, the font directories
 // cpak shares, and the /.flatpak-info toolkits look for before they talk to
 // portals. It holds nothing from the package that is not its own metadata.
-func (c *Cpak) buildFlatpakCompatLayer(plan *FlatpakPlan, runtime types.Application) (string, error) {
+func (c *Cpak) buildFlatpakCompatLayer(plan *FlatpakPlan, runtime types.Application, appExtensions []types.FlatpakExtension) (string, error) {
 	entries := map[string]compatEntry{}
 	dir := func(name string, mode uint32) { entries[name] = compatEntry{kind: fvsrepo.EntryDir, mode: mode} }
 	link := func(name, target string) { entries[name] = compatEntry{kind: fvsrepo.EntrySymlink, link: target} }
@@ -692,7 +692,10 @@ func (c *Cpak) buildFlatpakCompatLayer(plan *FlatpakPlan, runtime types.Applicat
 	file("run/host/font-dirs.xml", []byte(flatpakHostFontsConfig))
 	file(".flatpak-info", flatpakInfo(plan))
 
-	if err := c.mergeFlatpakExtensionDirs(plan.RuntimeExtensions, runtime, entries); err != nil {
+	if err := c.mergeFlatpakExtensionDirs(plan.RuntimeExtensions, runtime.Flatpak.Extensions, "/usr", entries); err != nil {
+		return "", err
+	}
+	if err := c.mergeFlatpakExtensionDirs(plan.AppExtensions, appExtensions, "/app", entries); err != nil {
 		return "", err
 	}
 
@@ -772,13 +775,13 @@ func flatpakInfoExtensions(out *strings.Builder, key string, extensions []Flatpa
 // mergeFlatpakExtensionDirs presents the merge directories of an extension
 // point the way Flatpak does, as one directory of links into every installed
 // subdirectory, which is where the loaders inside the runtime look.
-func (c *Cpak) mergeFlatpakExtensionDirs(extensions []FlatpakPart, runtime types.Application, entries map[string]compatEntry) error {
+func (c *Cpak) mergeFlatpakExtensionDirs(extensions []FlatpakPart, imported []types.FlatpakExtension, base string, entries map[string]compatEntry) error {
 	for _, extension := range extensions {
 		if len(extension.Point.MergeDirs) == 0 || !extension.Point.Subdirectories {
 			continue
 		}
 		layer := ""
-		for _, recorded := range runtime.Flatpak.Extensions {
+		for _, recorded := range imported {
 			if recorded.Ref == extension.Ref.String() {
 				layer = recorded.Layer
 			}
@@ -790,7 +793,7 @@ func (c *Cpak) mergeFlatpakExtensionDirs(extensions []FlatpakPart, runtime types
 		if err != nil {
 			return err
 		}
-		pointDir := strings.TrimPrefix(path.Join("/usr", extension.Point.Directory), "/")
+		pointDir := strings.TrimPrefix(path.Join(base, extension.Point.Directory), "/")
 		mount := strings.TrimPrefix(extension.Directory, "/")
 		for _, merge := range extension.Point.MergeDirs {
 			source, ok := resolveLayerDirectory(files, mount, merge)
