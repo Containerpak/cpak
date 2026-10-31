@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -66,9 +67,10 @@ func (c *LaunchCmd) Run() error {
 }
 
 // replaceTrees gives the command the /usr and /app its caller asked for, which
-// is how a Flatpak application starts a program on another runtime. The mounts
-// live in the namespace this command was started in and nothing above it sees
-// them.
+// is how a Flatpak application starts a program on another runtime. The command
+// gets a root of its own with those trees in it, and enters it with pivot_root:
+// a mount made over the /usr of the sandbox would reach its other processes on a
+// kernel whose mount namespaces share one table.
 func (c *LaunchCmd) replaceTrees() error {
 	if c.UsrFd == 0 && c.AppFd == 0 && !c.EmptyApp {
 		return nil
@@ -76,56 +78,168 @@ func (c *LaunchCmd) replaceTrees() error {
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make the mounts of a replaced tree private: %w", err)
 	}
-	bind := func(descriptor int, target string) error {
+	cwd, _ := os.Getwd()
+	root, err := c.buildReplacedRoot()
+	if err != nil {
+		return err
+	}
+	old := filepath.Join(root, ".old")
+	if err := os.Mkdir(old, 0o755); err != nil {
+		return fmt.Errorf("enter the replaced root: %w", err)
+	}
+	if err := syscall.PivotRoot(root, old); err != nil {
+		return fmt.Errorf("enter the replaced root: %w", err)
+	}
+	if err := syscall.Chdir("/"); err != nil {
+		return fmt.Errorf("enter the replaced root: %w", err)
+	}
+	if err := syscall.Unmount("/.old", syscall.MNT_DETACH); err != nil {
+		return fmt.Errorf("leave the old root: %w", err)
+	}
+	if err := os.Remove("/.old"); err != nil {
+		return fmt.Errorf("leave the old root: %w", err)
+	}
+	if cwd != "" {
+		_ = syscall.Chdir(cwd)
+	}
+	if c.UsrFd == 0 {
+		return nil
+	}
+	for _, name := range []string{".ref", "lib32"} {
+		if _, err := os.Lstat("/usr/" + name); err != nil {
+			continue
+		}
+		if err := os.Symlink("usr/"+name, "/"+name); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("link /%s: %w", name, err)
+		}
+	}
+	return followReplacedEtc()
+}
+
+// buildReplacedRoot assembles the new root: everything at the top of the old one
+// by reference, the replaced trees from their descriptors, and what they replaced
+// under /run/parent, where Flatpak keeps it because a replacement /usr may link
+// to the libraries of the one it replaced.
+func (c *LaunchCmd) buildReplacedRoot() (string, error) {
+	const prefix = ".cpak-root-"
+	entries, err := os.ReadDir("/")
+	if err != nil {
+		return "", fmt.Errorf("read the old root: %w", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			os.Remove("/" + entry.Name())
+		}
+	}
+	root := "/" + prefix + strconv.Itoa(os.Getpid())
+	fail := func(err error) (string, error) {
+		return "", fmt.Errorf("build the replaced root: %w", err)
+	}
+	if err := os.Mkdir(root, 0o755); err != nil {
+		return fail(err)
+	}
+	if err := syscall.Mount("tmpfs", root, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+		return fail(err)
+	}
+	bind := func(source, target string) error {
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return err
+		}
+		return syscall.Mount(source, target, "", syscall.MS_BIND|syscall.MS_REC, "")
+	}
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, prefix) || seen[name] {
+			continue
+		}
+		seen[name] = true
+		source, target := "/"+name, filepath.Join(root, name)
+		info, err := os.Lstat(source)
+		if err != nil {
+			return fail(err)
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(source)
+			if err != nil {
+				return fail(err)
+			}
+			err = os.Symlink(link, target)
+			if err != nil {
+				return fail(err)
+			}
+		case info.IsDir():
+			if name == "usr" && c.UsrFd != 0 || name == "app" && (c.AppFd != 0 || c.EmptyApp) || name == "etc" && c.UsrFd != 0 {
+				continue
+			}
+			if err := bind(source, target); err != nil {
+				return fail(err)
+			}
+		case info.Mode().IsRegular():
+			content, err := os.ReadFile(source)
+			if err != nil {
+				return fail(err)
+			}
+			if err := os.WriteFile(target, content, info.Mode().Perm()); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	parent := filepath.Join(root, "run/parent")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fail(err)
+	}
+	if err := syscall.Mount("tmpfs", parent, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+		return fail(err)
+	}
+	keep := []struct {
+		tree     string
+		replaced bool
+	}{
+		{"/etc", c.UsrFd != 0},
+		{"/usr", c.UsrFd != 0},
+		{"/app", c.AppFd != 0 || c.EmptyApp},
+	}
+	for _, kept := range keep {
+		if !kept.replaced {
+			continue
+		}
+		if _, err := os.Stat(kept.tree); err != nil {
+			continue
+		}
+		if err := bind(kept.tree, filepath.Join(parent, kept.tree)); err != nil {
+			return fail(err)
+		}
+	}
+	replace := func(descriptor int, tree string) error {
 		if descriptor == 0 {
 			return nil
 		}
 		defer syscall.Close(descriptor)
-		if err := syscall.Mount(fmt.Sprintf("/proc/self/fd/%d", descriptor), target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-			return fmt.Errorf("replace %s: %w", target, err)
-		}
-		return nil
+		return bind(fmt.Sprintf("/proc/self/fd/%d", descriptor), filepath.Join(root, tree))
 	}
-	if err := syscall.Mount("tmpfs", "/run/parent", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
-		if err := os.MkdirAll("/run/parent", 0o755); err != nil {
-			return fmt.Errorf("keep the replaced trees: %w", err)
-		}
-		if err := syscall.Mount("tmpfs", "/run/parent", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
-			return fmt.Errorf("keep the replaced trees: %w", err)
-		}
+	if err := replace(c.UsrFd, "usr"); err != nil {
+		return fail(err)
 	}
-	if err := keepParentTree("/etc", c.UsrFd != 0); err != nil {
-		return err
-	}
-	if err := keepParentTree("/usr", c.UsrFd != 0); err != nil {
-		return err
-	}
-	if err := keepParentTree("/app", c.AppFd != 0 || c.EmptyApp); err != nil {
-		return err
-	}
-	if err := bind(c.UsrFd, "/usr"); err != nil {
-		return err
-	}
-	if err := bind(c.AppFd, "/app"); err != nil {
-		return err
-	}
-	if c.EmptyApp {
-		if err := syscall.Mount("tmpfs", "/app", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
-			return fmt.Errorf("empty /app: %w", err)
-		}
+	if err := replace(c.AppFd, "app"); err != nil {
+		return fail(err)
 	}
 	if c.UsrFd != 0 {
-		for _, name := range []string{".ref", "lib32"} {
-			if _, err := os.Lstat("/usr/" + name); err != nil {
-				continue
-			}
-			if err := os.Symlink("usr/"+name, "/"+name); err != nil && !os.IsExist(err) {
-				return fmt.Errorf("link /%s: %w", name, err)
-			}
+		if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+			return fail(err)
 		}
-		return followReplacedEtc()
 	}
-	return nil
+	if c.EmptyApp {
+		app := filepath.Join(root, "app")
+		if err := os.MkdirAll(app, 0o755); err != nil {
+			return fail(err)
+		}
+		if err := syscall.Mount("tmpfs", app, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+			return fail(err)
+		}
+	}
+	return root, nil
 }
 
 // parentEtcKept names what /etc keeps from the sandbox when /usr is replaced:
@@ -139,9 +253,6 @@ var parentEtcKept = map[string]bool{
 // writes the library cache it names, since no other process has written one
 // yet when the command starts.
 func followReplacedEtc() error {
-	if err := syscall.Mount("tmpfs", "/etc", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
-		return fmt.Errorf("replace /etc: %w", err)
-	}
 	parent, err := os.ReadDir("/run/parent/etc")
 	if err != nil {
 		return fmt.Errorf("replace /etc: %w", err)
@@ -200,23 +311,6 @@ func writeReplacedLibraryCache() error {
 		return nil
 	}
 	return fmt.Errorf("library cache: no ldconfig")
-}
-
-// keepParentTree leaves a tree about to be replaced under /run/parent, where
-// Flatpak keeps it: a replacement /usr may link to the libraries of the one it
-// replaced.
-func keepParentTree(tree string, replaced bool) error {
-	if !replaced {
-		return nil
-	}
-	target := "/run/parent" + tree
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		return fmt.Errorf("keep %s: %w", tree, err)
-	}
-	if err := syscall.Mount(tree, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("keep %s: %w", tree, err)
-	}
-	return nil
 }
 
 // replacedCachePath follows /etc/ld.so.cache to the file it ends on, and prepares
