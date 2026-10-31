@@ -140,3 +140,21 @@ func TestContainsModeMatchesAnExactIdentifier(t *testing.T) {
 		t.Fatal("missing mode was reported as available")
 	}
 }
+
+func TestDisplayStaysWhileMixedClientsAreConnected(t *testing.T) {
+	alive := true
+	mixed := &broker{seenWindow: true, options: Options{ClientsAlive: func() bool { return alive }}}
+	if mixed.displayIdle() {
+		t.Fatal("display stopped while an application was connected")
+	}
+	alive = false
+	if !mixed.displayIdle() {
+		t.Fatal("display kept after its last application disconnected")
+	}
+	if (&broker{}).displayIdle() {
+		t.Fatal("X11 display stopped before showing a window")
+	}
+	if !(&broker{seenWindow: true}).displayIdle() {
+		t.Fatal("X11 display kept after its last window closed")
+	}
+}

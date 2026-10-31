@@ -335,7 +335,7 @@ func (b *broker) tick() bool {
 			b.fitWindow(b.primary)
 			b.syncHostWindow()
 		}
-	} else if b.seenWindow || b.options.ClientsAlive != nil && !b.options.ClientsAlive() {
+	} else if b.displayIdle() {
 		if b.closeAt.IsZero() {
 			b.closeAt = time.Now().Add(windowCloseGrace)
 		} else if time.Now().After(b.closeAt) {
@@ -346,6 +346,13 @@ func (b *broker) tick() bool {
 	}
 	b.clipboard.poll()
 	return false
+}
+
+func (b *broker) displayIdle() bool {
+	if b.options.ClientsAlive != nil {
+		return !b.options.ClientsAlive()
+	}
+	return b.seenWindow
 }
 
 func (b *broker) hasVisibleWindow() bool {
