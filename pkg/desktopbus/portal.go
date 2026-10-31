@@ -158,6 +158,11 @@ func (b *portalBus) dispatch(ctx context.Context, client *serializedConn, connec
 	interfaceName, _ := headerValue[string](call, dbus.FieldInterface)
 	member, _ := headerValue[string](call, dbus.FieldMember)
 	destination, _ := headerValue[string](call, dbus.FieldDestination)
+	// Every object answers Peer, and clients ping the root to find a service.
+	if interfaceName == "org.freedesktop.DBus.Peer" && member == "Ping" && (destination == portalUniqueName || destination == flatpakPortalName || b.isPortal(destination)) {
+		b.reply(client, connection, call, portalUniqueName)
+		return
+	}
 	switch {
 	case destination == busName || destination == "" && path == busPath:
 		b.busMethod(client, connection, call, interfaceName, member)
