@@ -29,6 +29,7 @@ const (
 	flatpakPortalPath      = dbus.ObjectPath("/org/freedesktop/portal/Flatpak")
 	flatpakPortalInterface = "org.freedesktop.portal.Flatpak"
 
+	spawnFlagEmptyApp    = 128
 	spawnFlagNotifyStart = 64
 	spawnFlagWatchBus    = 16
 
@@ -149,6 +150,37 @@ func decodeSpawn(call *dbus.Message, fds []int) (spawnRequest, error) {
 		}
 		spawn.request.Descriptors = append(spawn.request.Descriptors, target)
 		spawn.descriptors = append(spawn.descriptors, fds[index])
+	}
+	options, _ := call.Body[5].(map[string]dbus.Variant)
+	spawn.request.EmptyApp = flags&spawnFlagEmptyApp != 0
+	next := 3
+	for _, target := range targets {
+		next = max(next, target+1)
+	}
+	tree := func(name string) (int, error) {
+		value, present := options[name]
+		if !present {
+			return 0, nil
+		}
+		index, ok := value.Value().(dbus.UnixFDIndex)
+		if !ok || int(index) < 0 || int(index) >= len(fds) {
+			return 0, fmt.Errorf("Spawn names a %s it did not send", name)
+		}
+		target := next
+		next++
+		spawn.request.Descriptors = append(spawn.request.Descriptors, target)
+		spawn.descriptors = append(spawn.descriptors, fds[index])
+		return target, nil
+	}
+	var err error
+	if spawn.request.UsrDescriptor, err = tree("usr-fd"); err != nil {
+		return spawnRequest{}, err
+	}
+	if spawn.request.AppDescriptor, err = tree("app-fd"); err != nil {
+		return spawnRequest{}, err
+	}
+	if len(spawn.request.Descriptors) > runtimeproto.MaxDescriptors {
+		return spawnRequest{}, errors.New("Spawn passes too many descriptors")
 	}
 	return spawn, nil
 }

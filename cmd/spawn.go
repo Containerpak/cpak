@@ -2174,13 +2174,31 @@ func (c *SpawnCmd) launchArguments(command []string, grants []sandbox.PathGrant)
 	return append(args, command...)
 }
 
+// treeLaunchArguments asks a launch to replace the trees a request named.
+func treeLaunchArguments(arguments []string, request runtimeproto.Request) []string {
+	result := append([]string{}, arguments[0])
+	if request.UsrDescriptor != 0 {
+		result = append(result, "--usr-fd", strconv.Itoa(request.UsrDescriptor))
+	}
+	if request.AppDescriptor != 0 {
+		result = append(result, "--app-fd", strconv.Itoa(request.AppDescriptor))
+	}
+	if request.EmptyApp {
+		result = append(result, "--empty-app")
+	}
+	return append(result, arguments[1:]...)
+}
+
 // runDescribedCommand starts a command on descriptors its caller handed over,
 // which is how a process inside the sandbox starts another one beside it: the
 // new process is launched like any other command of this container, never
 // with more than the container allows, and the caller is told only when it
 // exits. Closing the connection stops it.
 func (c *SpawnCmd) runDescribedCommand(connection *net.UnixConn, writer *runtimeproto.Writer, request runtimeproto.Request, descriptors []*os.File, baseEnv []string, grants []sandbox.PathGrant, reaper *childReaper) {
-	command := runtimeLaunchCommand(c.launchArguments(request.Args, grants), append(append([]string{}, baseEnv...), request.Env...))
+	command := runtimeLaunchCommand(treeLaunchArguments(c.launchArguments(request.Args, grants), request), append(append([]string{}, baseEnv...), request.Env...))
+	if request.UsrDescriptor != 0 || request.AppDescriptor != 0 || request.EmptyApp {
+		command.SysProcAttr.Cloneflags = syscall.CLONE_NEWNS
+	}
 	if request.Directory != "" {
 		command.Dir = request.Directory
 	}

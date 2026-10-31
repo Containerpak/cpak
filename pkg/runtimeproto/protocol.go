@@ -43,6 +43,13 @@ type Request struct {
 	// descriptors gets no streamed input or output: its standard streams are
 	// among them, and only the exit frame comes back.
 	Descriptors []int `json:"descriptors,omitempty"`
+
+	// UsrDescriptor and AppDescriptor name the descriptors among Descriptors
+	// of the trees the command sees as /usr and /app, in a mount namespace of
+	// its own. Zero leaves the container's. EmptyApp gives it an empty /app.
+	UsrDescriptor int  `json:"usr_descriptor,omitempty"`
+	AppDescriptor int  `json:"app_descriptor,omitempty"`
+	EmptyApp      bool `json:"empty_app,omitempty"`
 }
 
 // MaxDescriptors bounds what a request may hand to the command it starts.

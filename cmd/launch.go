@@ -25,6 +25,9 @@ type LaunchCmd struct {
 	LandlockReadOnly   []string `cli:"landlock-read-only" help:"grant read-only filesystem access"`
 	LandlockWriteFiles []string `cli:"landlock-write-files" help:"grant writes to existing files"`
 	LandlockReadWrite  []string `cli:"landlock-read-write" help:"grant read-write filesystem access"`
+	UsrFd              int      `cli:"usr-fd" help:"descriptor of the tree to see as /usr"`
+	AppFd              int      `cli:"app-fd" help:"descriptor of the tree to see as /app"`
+	EmptyApp           bool     `cli:"empty-app" help:"see an empty /app"`
 	ExtraArgs          []string `arg:"extra" help:"command and arguments"`
 
 	cli.Base
@@ -38,6 +41,9 @@ func (c *LaunchCmd) Run() error {
 	grants := c.landlockGrants()
 	if len(grants) == 0 {
 		return fmt.Errorf("landlock grants are required: launch runs a command inside an existing sandbox, use cpak run to start a package")
+	}
+	if err := c.replaceTrees(); err != nil {
+		return err
 	}
 	// Landlock forbids filesystem topology changes, including mounts. Packages
 	// granted nested sandboxes rely on the container mount namespace instead.
@@ -55,6 +61,41 @@ func (c *LaunchCmd) Run() error {
 		return err
 	}
 	return syscall.Exec(path, c.ExtraArgs, os.Environ())
+}
+
+// replaceTrees gives the command the /usr and /app its caller asked for, which
+// is how a Flatpak application starts a program on another runtime. The mounts
+// live in the namespace this command was started in and nothing above it sees
+// them.
+func (c *LaunchCmd) replaceTrees() error {
+	if c.UsrFd == 0 && c.AppFd == 0 && !c.EmptyApp {
+		return nil
+	}
+	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("make the mounts of a replaced tree private: %w", err)
+	}
+	bind := func(descriptor int, target string) error {
+		if descriptor == 0 {
+			return nil
+		}
+		defer syscall.Close(descriptor)
+		if err := syscall.Mount(fmt.Sprintf("/proc/self/fd/%d", descriptor), target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+			return fmt.Errorf("replace %s: %w", target, err)
+		}
+		return nil
+	}
+	if err := bind(c.UsrFd, "/usr"); err != nil {
+		return err
+	}
+	if err := bind(c.AppFd, "/app"); err != nil {
+		return err
+	}
+	if c.EmptyApp {
+		if err := syscall.Mount("tmpfs", "/app", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+			return fmt.Errorf("empty /app: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *LaunchCmd) useLandlock() bool {
