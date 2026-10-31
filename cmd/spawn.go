@@ -2237,6 +2237,9 @@ func (c *SpawnCmd) runDescribedCommand(connection *net.UnixConn, writer *runtime
 	if waitErr := reaper.wait(command); waitErr != nil {
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			code = exitErr.ExitCode()
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				code = 128 + int(status.Signal())
+			}
 		} else {
 			code = 125
 		}
