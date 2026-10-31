@@ -115,6 +115,14 @@ func (c *LaunchCmd) replaceTrees() error {
 		}
 	}
 	if c.UsrFd != 0 {
+		for _, name := range []string{".ref", "lib32"} {
+			if _, err := os.Lstat("/usr/" + name); err != nil {
+				continue
+			}
+			if err := os.Symlink("usr/"+name, "/"+name); err != nil && !os.IsExist(err) {
+				return fmt.Errorf("link /%s: %w", name, err)
+			}
+		}
 		return followReplacedEtc()
 	}
 	return nil
