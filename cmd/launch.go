@@ -139,7 +139,7 @@ func followReplacedEtc() error {
 		return fmt.Errorf("replace /etc: %w", err)
 	}
 	for _, entry := range parent {
-		if err := os.Symlink("/run/parent/etc/"+entry.Name(), "/etc/"+entry.Name()); err != nil {
+		if err := os.Symlink("/run/parent/etc/"+entry.Name(), "/etc/"+entry.Name()); err != nil && !os.IsExist(err) {
 			return fmt.Errorf("replace /etc: %w", err)
 		}
 	}
@@ -152,7 +152,7 @@ func followReplacedEtc() error {
 			continue
 		}
 		os.Remove("/etc/" + entry.Name())
-		if err := os.Symlink("/usr/etc/"+entry.Name(), "/etc/"+entry.Name()); err != nil {
+		if err := os.Symlink("/usr/etc/"+entry.Name(), "/etc/"+entry.Name()); err != nil && !os.IsExist(err) {
 			return fmt.Errorf("replace /etc: %w", err)
 		}
 	}
