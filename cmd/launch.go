@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -85,6 +86,17 @@ func (c *LaunchCmd) replaceTrees() error {
 		}
 		return nil
 	}
+	if err := syscall.Mount("tmpfs", "/run/parent", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+		if err := os.MkdirAll("/run/parent", 0o755); err != nil {
+			return fmt.Errorf("keep the replaced trees: %w", err)
+		}
+		if err := syscall.Mount("tmpfs", "/run/parent", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+			return fmt.Errorf("keep the replaced trees: %w", err)
+		}
+	}
+	if err := keepParentTree("/etc", c.UsrFd != 0); err != nil {
+		return err
+	}
 	if err := keepParentTree("/usr", c.UsrFd != 0); err != nil {
 		return err
 	}
@@ -102,7 +114,95 @@ func (c *LaunchCmd) replaceTrees() error {
 			return fmt.Errorf("empty /app: %w", err)
 		}
 	}
+	if c.UsrFd != 0 {
+		return followReplacedEtc()
+	}
 	return nil
+}
+
+// parentEtcKept names what /etc keeps from the sandbox when /usr is replaced:
+// the rest of the configuration belongs to the new /usr.
+var parentEtcKept = map[string]bool{
+	"passwd": true, "group": true, "hosts": true, "machine-id": true,
+	"resolv.conf": true, "localtime": true, "mtab": true, "nsswitch.conf": true,
+}
+
+// followReplacedEtc rebuilds /etc from the configuration of the new /usr, and
+// writes the library cache it names, since no other process has written one
+// yet when the command starts.
+func followReplacedEtc() error {
+	if err := syscall.Mount("tmpfs", "/etc", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+		return fmt.Errorf("replace /etc: %w", err)
+	}
+	parent, err := os.ReadDir("/run/parent/etc")
+	if err != nil {
+		return fmt.Errorf("replace /etc: %w", err)
+	}
+	for _, entry := range parent {
+		if err := os.Symlink("/run/parent/etc/"+entry.Name(), "/etc/"+entry.Name()); err != nil {
+			return fmt.Errorf("replace /etc: %w", err)
+		}
+	}
+	own, err := os.ReadDir("/usr/etc")
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace /etc: %w", err)
+	}
+	for _, entry := range own {
+		if parentEtcKept[entry.Name()] {
+			continue
+		}
+		os.Remove("/etc/" + entry.Name())
+		if err := os.Symlink("/usr/etc/"+entry.Name(), "/etc/"+entry.Name()); err != nil {
+			return fmt.Errorf("replace /etc: %w", err)
+		}
+	}
+	return writeReplacedLibraryCache()
+}
+
+// writeReplacedLibraryCache writes the cache /etc/ld.so.cache leads to. Pressure
+// vessel removes the C library from the /usr it hands over and keeps it among
+// its overrides, so its own programs need those directories before they can run
+// and regenerate the cache themselves.
+func writeReplacedLibraryCache() error {
+	cache := "/run/parent/ld.so.cache"
+	if target, err := os.Readlink("/usr/etc/ld.so.cache"); err == nil && strings.HasPrefix(target, "/") {
+		if _, err := os.Stat(target); err == nil {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("library cache: %w", err)
+		}
+		cache = target
+	} else {
+		os.Remove("/etc/ld.so.cache")
+		if err := os.Symlink(cache, "/etc/ld.so.cache"); err != nil {
+			return fmt.Errorf("library cache: %w", err)
+		}
+	}
+	conf := "/run/parent/ld.so.conf"
+	dirs := []string{
+		"/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu",
+		"/usr/lib/pressure-vessel/overrides/lib/i386-linux-gnu",
+		"/app/lib",
+		"/usr/lib/x86_64-linux-gnu",
+		"/usr/lib/i386-linux-gnu",
+		"/usr/lib",
+		"/run/parent/usr/lib/x86_64-linux-gnu",
+	}
+	if err := os.WriteFile(conf, []byte(strings.Join(dirs, "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("library cache: %w", err)
+	}
+	for _, ldconfig := range []string{"/run/parent/usr/bin/ldconfig", "/run/parent/usr/sbin/ldconfig", "/usr/sbin/ldconfig"} {
+		if _, err := os.Stat(ldconfig); err != nil {
+			continue
+		}
+		output, err := exec.Command(ldconfig, "-X", "-C", cache, "-f", conf).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("library cache: %w: %s", err, output)
+		}
+		return nil
+	}
+	return fmt.Errorf("library cache: no ldconfig")
 }
 
 // keepParentTree leaves a tree about to be replaced under /run/parent, where
