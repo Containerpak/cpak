@@ -296,7 +296,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		container.SystemBrokerTokenPath = ""
 	}
 	if desktopBusProxyRequested(override) || app.Flatpak != nil {
-		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "desktop-bus.sock")
+		container.DesktopBusSocketPath = filepath.Join(container.StatePath, "dbus.sock")
 		container.DesktopBusProxyPid, err = startDesktopBusProxy(container, app, override, c.flatpakIconTheme())
 		if err != nil {
 			cleanupDesktopBusProxy(container)
@@ -316,7 +316,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		}
 	}
 	if bluetoothProxyRequested(override) {
-		container.BluetoothBusSocketPath = filepath.Join(container.StatePath, "bluetooth-bus.sock")
+		container.BluetoothBusSocketPath = filepath.Join(container.StatePath, "bt.sock")
 		container.BluetoothBusProxyPid, err = startBluetoothBusProxy(container)
 		if err != nil {
 			cleanupBluetoothBusProxy(container)
