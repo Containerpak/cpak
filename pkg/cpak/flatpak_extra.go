@@ -173,6 +173,9 @@ func (c *Cpak) buildFlatpakExtraLayer(app types.Application, digest string) erro
 // sandbox, from /app/extra, without network and with only that directory
 // writable.
 func (c *Cpak) runApplyExtra(app types.Application, extra string) error {
+	if err := c.prepareSocketListener(); err != nil {
+		return fmt.Errorf("apply_extra of %s failed: %w", app.Name, err)
+	}
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return err
