@@ -5,11 +5,14 @@
 package cpak
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +43,75 @@ func openWAL(dir string, timeout time.Duration) (*wal.Manager, error) {
 	}
 }
 
+// openBitcask opens one table and rebuilds its index. A crash can leave the end
+// of the newest log unreadable; that tail is set aside so the records before it
+// stay usable and cpak keeps working.
+func openBitcask[T any](dir string, codec func(T) ([]byte, error), decoder func([]byte) (T, error), indexes func(*engine.Bitcask[T])) (*engine.Bitcask[T], error) {
+	for attempt := 0; ; attempt++ {
+		var table *engine.Bitcask[T]
+		manager, err := openWAL(dir, storeLockTimeout)
+		if err == nil {
+			table = engine.NewBitcask(manager, codec, decoder)
+			indexes(table)
+			if err = table.Engine().Recover(); err == nil {
+				return table, nil
+			}
+		}
+		var corrupt *wal.CorruptionError
+		if attempt > 0 || !errors.As(err, &corrupt) || !newestSegment(dir, corrupt.SegmentID) {
+			if table == nil {
+				return nil, err
+			}
+			logger.Errorf("Store: failed to recover index of %s: %v", dir, err)
+			return table, nil
+		}
+		if table != nil {
+			if closeErr := table.Close(); closeErr != nil {
+				return nil, closeErr
+			}
+		}
+		logger.Errorf("Store: dropping the unreadable end of %s: %v", dir, err)
+		if err := cutSegmentTail(dir, corrupt.SegmentID, corrupt.Offset); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func newestSegment(dir string, segment uint64) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		name, isLog := strings.CutSuffix(entry.Name(), ".log")
+		if !isLog {
+			continue
+		}
+		if id, err := strconv.ParseUint(name, 16, 64); err == nil && id > segment {
+			return false
+		}
+	}
+	return true
+}
+
+func cutSegmentTail(dir string, segment uint64, offset int64) error {
+	path := filepath.Join(dir, fmt.Sprintf("%016x.log", segment))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if offset < 0 || offset > int64(len(data)) {
+		return fmt.Errorf("store: corrupt offset %d outside %s", offset, path)
+	}
+	tail := data[offset:]
+	if len(bytes.Trim(tail, "\x00")) != 0 {
+		if err := os.WriteFile(path+".corrupt", tail, 0o600); err != nil {
+			return err
+		}
+	}
+	return os.Truncate(path, offset)
+}
+
 func NewStore(storePath string) (s *Store, err error) {
 	appsDir := filepath.Join(storePath, "db", "apps")
 	containersDir := filepath.Join(storePath, "db", "containers")
@@ -61,15 +133,12 @@ func NewStore(storePath string) (s *Store, err error) {
 		return app, err
 	}
 
-	appWal, err := openWAL(appsDir, storeLockTimeout)
+	apps, err := openBitcask(appsDir, appCodec, appDecoder, func(b *engine.Bitcask[types.Application]) {
+		b.AddIndex("origin", func(app types.Application) string { return app.Origin })
+		b.AddIndex("version", func(app types.Application) string { return app.Version })
+	})
 	if err != nil {
 		return nil, err
-	}
-	apps := engine.NewBitcask(appWal, appCodec, appDecoder)
-	apps.AddIndex("origin", func(app types.Application) string { return app.Origin })
-	apps.AddIndex("version", func(app types.Application) string { return app.Version })
-	if err := apps.Engine().Recover(); err != nil {
-		logger.Errorf("Store: failed to recover apps index: %v", err)
 	}
 
 	containerCodec := func(c types.Container) ([]byte, error) { return json.Marshal(c) }
@@ -79,15 +148,12 @@ func NewStore(storePath string) (s *Store, err error) {
 		return c, err
 	}
 
-	containerWal, err := openWAL(containersDir, storeLockTimeout)
+	containers, err := openBitcask(containersDir, containerCodec, containerDecoder, func(b *engine.Bitcask[types.Container]) {
+		b.AddIndex("application_cpak_id", func(c types.Container) string { return c.ApplicationCpakId })
+	})
 	if err != nil {
 		_ = apps.Close()
 		return nil, err
-	}
-	containers := engine.NewBitcask(containerWal, containerCodec, containerDecoder)
-	containers.AddIndex("application_cpak_id", func(c types.Container) string { return c.ApplicationCpakId })
-	if err := containers.Engine().Recover(); err != nil {
-		logger.Errorf("Store: failed to recover containers index: %v", err)
 	}
 
 	s = &Store{

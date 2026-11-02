@@ -5,7 +5,9 @@
 package cpak
 
 import (
+	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -107,5 +109,45 @@ func TestOpenWALStopsWaitingAtTheDeadline(t *testing.T) {
 	}
 	if time.Since(started) < 40*time.Millisecond {
 		t.Fatal("lock wait returned before its deadline")
+	}
+}
+
+func TestStoreSurvivesAnUnreadableLogTail(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.NewApplication(types.Application{CpakId: "kept", Origin: "origin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	log := filepath.Join(root, "db", "apps", "0000000000000000.log")
+	f, err := os.OpenFile(log, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.NewApplication(types.Application{CpakId: "added", Origin: "other"}); err != nil {
+		t.Fatalf("store is not writable after the repair: %v", err)
+	}
+	for _, id := range []string{"kept", "added"} {
+		if _, err := store.Apps.Get(context.Background(), id); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
 	}
 }
