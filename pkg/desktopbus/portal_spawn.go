@@ -28,6 +28,8 @@ const (
 	flatpakPortalName      = "org.freedesktop.portal.Flatpak"
 	flatpakPortalPath      = dbus.ObjectPath("/org/freedesktop/portal/Flatpak")
 	flatpakPortalInterface = "org.freedesktop.portal.Flatpak"
+	updateMonitorPrefix    = "/org/freedesktop/portal/Flatpak/update_monitor/"
+	updateMonitorInterface = "org.freedesktop.portal.Flatpak.UpdateMonitor"
 
 	spawnFlagEmptyApp    = 128
 	spawnFlagNotifyStart = 64
@@ -44,6 +46,10 @@ type spawned struct {
 }
 
 func (b *portalBus) flatpakMethod(client *serializedConn, connection *portalConnection, call *dbus.Message, fds []int, path dbus.ObjectPath, interfaceName, member string) {
+	if strings.HasPrefix(string(path), updateMonitorPrefix) {
+		b.updateMonitorMethod(client, connection, call, interfaceName, member)
+		return
+	}
 	if path != flatpakPortalPath {
 		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "no such object")
 		return
@@ -92,6 +98,52 @@ func (b *portalBus) flatpakMethod(client *serializedConn, connection *portalConn
 		_ = process.connection.Close()
 		b.reply(client, connection, call, portalUniqueName)
 	case "CreateUpdateMonitor":
+		b.reply(client, connection, call, portalUniqueName, updateMonitorPath(connection.name(), call))
+	default:
+		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "unknown method")
+	}
+}
+
+// An application that watches for its own updates gets a monitor that never
+// reports one, since cpak is what updates it. Refusing the monitor instead
+// makes some applications ask again in a tight loop.
+func updateMonitorPath(sender string, call *dbus.Message) dbus.ObjectPath {
+	token := "cpak"
+	if len(call.Body) == 1 {
+		if options, ok := call.Body[0].(map[string]dbus.Variant); ok {
+			if value, ok := options["handle_token"].Value().(string); ok && validToken(value) {
+				token = value
+			}
+		}
+	}
+	name := strings.ReplaceAll(strings.TrimPrefix(sender, ":"), ".", "_")
+	if !validToken(name) {
+		name = "client"
+	}
+	return dbus.ObjectPath(updateMonitorPrefix + name + "/" + token)
+}
+
+func validToken(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, r := range value {
+		if !(r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *portalBus) updateMonitorMethod(client *serializedConn, connection *portalConnection, call *dbus.Message, interfaceName, member string) {
+	if interfaceName != updateMonitorInterface {
+		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "unknown interface")
+		return
+	}
+	switch member {
+	case "Close":
+		b.reply(client, connection, call, portalUniqueName)
+	case "Update":
 		b.fail(client, connection, call, portalUniqueName, errorNotAllowed, "cpak updates applications itself")
 	default:
 		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "unknown method")
