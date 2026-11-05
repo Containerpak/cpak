@@ -399,6 +399,10 @@ func (c *Cpak) InstallFlatpak(plan *FlatpakPlan) error {
 			_ = c.Remove(app.Origin, app.Branch, "", "")
 			return err
 		}
+		if err := c.PrepareApplicationStorage(app); err != nil {
+			_ = c.Remove(app.Origin, app.Branch, "", "")
+			return err
+		}
 		if err := c.storeApplication(app); err != nil {
 			return err
 		}

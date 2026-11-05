@@ -15,11 +15,13 @@ import (
 	"sync"
 	"testing"
 
+	storage "github.com/containerpak/storage/pkg/driver"
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
 	"github.com/mirkobrombin/cpak/pkg/flatpak"
 	"github.com/mirkobrombin/cpak/pkg/gvariant"
 	"github.com/mirkobrombin/cpak/pkg/ostree"
 	"github.com/mirkobrombin/cpak/pkg/ostree/ostreetest"
+	"github.com/mirkobrombin/cpak/pkg/storaged"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -500,4 +502,84 @@ func TestApplyFlatpakExtraDataReattachesAStoredLayer(t *testing.T) {
 	if len(app.ParsedLayers) != 2 || app.ParsedLayers[1] != digest {
 		t.Fatalf("layers = %v, want the extra layer once after base", app.ParsedLayers)
 	}
+}
+
+type recordingStorageDriver struct {
+	storage.Handler
+	prepared [][]string
+}
+
+func (d *recordingStorageDriver) Prepare(ctx context.Context, request storage.PrepareRequest) (storage.PrepareResult, error) {
+	d.prepared = append(d.prepared, slices.Clone(request.Layers))
+	return d.Handler.Prepare(ctx, request)
+}
+
+func TestExtraDataLayerIsPreparedBeforeTheFirstLaunch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_DIRS", t.TempDir())
+	c := flatpakTestCpak(t)
+	handler, err := storaged.NewFVS(c.fvsRoot(), c.storageDriverRoot("fvs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver := &recordingStorageDriver{Handler: handler}
+	c.storageDriver = driver
+	repo := localRemote(t, c)
+	metadata := "[Application]\nname=org.example.Extra\nruntime=org.example.Platform/x86_64/1\ncommand=example\n\n" +
+		"[Extra Data]\nname=stub.deb\nuri=https://example.com/stub.deb\nchecksum=" + strings.Repeat("0", 64) + "\nsize=1\n"
+	repo.Commit("app/org.example.Extra/x86_64/stable", map[string]ostreetest.File{
+		"files/bin/example": {Content: []byte("#!/bin/sh\n"), Mode: 0o755},
+	}, map[string]gvariant.Variant{"xa.metadata": {Signature: "s", Value: metadata}})
+	plan, err := c.ResolveFlatpak(FlatpakRequest{ID: "org.example.Extra", Remote: "local", Arch: "x86_64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := flatpakExtraLayerDigest(&types.FlatpakSource{
+		Ref:       plan.App.Ref.String(),
+		Commit:    plan.App.Commit.Checksum.String(),
+		ExtraData: flatpakExtraData(plan.App.Metadata.ExtraData),
+	})
+	temporary, writer, err := c.beginFVSLayerSnapshot(digest, fvsrepo.SnapshotOptions{Message: "extra data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(temporary)
+	tree := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tree, "app", "extra"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "app", "extra", "payload"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.AddTreeProgress(tree, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishFVSLayer(temporary, c.fvsLayerPath(digest)); err != nil {
+		t.Fatal(err)
+	}
+	preparedLast := func(stage string) {
+		t.Helper()
+		if len(driver.prepared) == 0 || !slices.Contains(driver.prepared[len(driver.prepared)-1], digest) {
+			t.Fatalf("%s did not prepare the extra data layer: %v", stage, driver.prepared)
+		}
+	}
+
+	if err := c.InstallFlatpak(plan); err != nil {
+		t.Fatal(err)
+	}
+	preparedLast("the installation")
+	app, err := c.getStoredApplication(plan.Origin, "stable", "stable", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.prepared = nil
+	deps := c.newUpdateDeps()
+	deps.stop = func(types.Application) error { return nil }
+	if result := c.updateFlatpakApplication(app, deps, nil); result.Status == types.UpdateStatusFailed {
+		t.Fatalf("the update failed: %s", result.Reason)
+	}
+	preparedLast("the update")
 }
