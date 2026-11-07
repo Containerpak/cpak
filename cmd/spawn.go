@@ -38,6 +38,7 @@ import (
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
+	"golang.org/x/term"
 )
 
 const cpakInContainerPath = "/usr/local/bin/cpak"
@@ -2242,6 +2243,12 @@ func (c *SpawnCmd) runDescribedCommand(connection *net.UnixConn, writer *runtime
 		switch target {
 		case 0:
 			command.Stdin = descriptors[index]
+			if term.IsTerminal(int(descriptors[index].Fd())) {
+				command.SysProcAttr.Setpgid = false
+				command.SysProcAttr.Setsid = true
+				command.SysProcAttr.Setctty = true
+				command.SysProcAttr.Ctty = 0
+			}
 		case 1:
 			command.Stdout = descriptors[index]
 		case 2:
