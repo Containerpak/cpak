@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -117,4 +118,32 @@ func runtimeLaunchCommand(args, env []string) *exec.Cmd {
 	command.Env = env
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return command
+}
+
+func abnormalExit(err error, countCodes bool) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return true
+	}
+	return countCodes && exitErr.ExitCode() > 128
+}
+
+func terminateProcessGroup(pgid int, grace time.Duration) {
+	if pgid <= 1 {
+		return
+	}
+	if syscall.Kill(-pgid, syscall.SIGTERM) != nil {
+		return
+	}
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(-pgid, 0) != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }

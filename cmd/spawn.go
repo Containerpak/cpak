@@ -1860,6 +1860,7 @@ func (c *SpawnCmd) serveRuntime(listener *net.UnixListener, envVars []string, gr
 	lastActivity := time.Now()
 	var active atomic.Int64
 	var completed atomic.Int64
+	var stopping atomic.Bool
 	for {
 		if idleTimeout > 0 {
 			lastCompleted := time.Unix(0, completed.Load())
@@ -1875,6 +1876,12 @@ func (c *SpawnCmd) serveRuntime(listener *net.UnixListener, envVars []string, gr
 			}
 		}
 		connection, err := listener.AcceptUnix()
+		if stopping.Load() && active.Load() == 0 {
+			if connection != nil {
+				connection.Close()
+			}
+			return nil
+		}
 		if err != nil {
 			var netErr net.Error
 			if idleTimeout > 0 && errors.As(err, &netErr) && netErr.Timeout() {
@@ -1893,9 +1900,13 @@ func (c *SpawnCmd) serveRuntime(listener *net.UnixListener, envVars []string, gr
 		lastActivity = time.Now()
 		active.Add(1)
 		go func() {
-			defer active.Add(-1)
-			defer func() { completed.Store(time.Now().UnixNano()) }()
-			c.handleRuntimeConnection(connection, envVars, grants, reaper)
+			dirty := c.handleRuntimeConnection(connection, envVars, grants, reaper)
+			completed.Store(time.Now().UnixNano())
+			if active.Add(-1) == 0 && dirty {
+				c.spawnVerbose("Stopping the container after the application ended abnormally")
+				stopping.Store(true)
+				_ = listener.SetDeadline(time.Now())
+			}
 		}()
 	}
 }
@@ -2033,7 +2044,7 @@ func (w runtimeOutputWriter) Write(payload []byte) (int, error) {
 	return len(payload), nil
 }
 
-func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string, grants []sandbox.PathGrant, reaper *childReaper) {
+func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []string, grants []sandbox.PathGrant, reaper *childReaper) (dirty bool) {
 	defer connection.Close()
 	kind, payload, descriptors, err := runtimeproto.ReadRequest(connection)
 	defer func() {
@@ -2104,6 +2115,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 		return
 	}
 
+	var lost atomic.Bool
 	inputDone := make(chan struct{})
 	go func() {
 		defer close(inputDone)
@@ -2111,6 +2123,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 		for {
 			frameKind, framePayload, readErr := runtimeproto.Read(connection)
 			if readErr != nil {
+				lost.Store(true)
 				_ = command.Process.Kill()
 				return
 			}
@@ -2150,6 +2163,10 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 			code = 125
 		}
 	}
+	dirty = lost.Load() || abnormalExit(waitErr, terminal == nil)
+	if dirty {
+		terminateProcessGroup(command.Process.Pid, 3*time.Second)
+	}
 	_ = writer.Write(runtimeproto.FrameExit, runtimeproto.EncodeExit(code))
 	_ = connection.CloseWrite()
 	select {
@@ -2157,6 +2174,7 @@ func (c *SpawnCmd) handleRuntimeConnection(connection *net.UnixConn, baseEnv []s
 	default:
 	}
 	_, _ = io.Copy(io.Discard, connection)
+	return dirty
 }
 
 // launchArguments wraps a command in the launcher that applies the same
