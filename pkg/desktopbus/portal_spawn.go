@@ -30,10 +30,15 @@ const (
 	flatpakPortalInterface = "org.freedesktop.portal.Flatpak"
 	updateMonitorPrefix    = "/org/freedesktop/portal/Flatpak/update_monitor/"
 	updateMonitorInterface = "org.freedesktop.portal.Flatpak.UpdateMonitor"
+	flatpakHostName        = "org.freedesktop.Flatpak"
+	developmentPath        = dbus.ObjectPath("/org/freedesktop/Flatpak/Development")
+	developmentInterface   = "org.freedesktop.Flatpak.Development"
 
 	spawnFlagEmptyApp    = 128
 	spawnFlagNotifyStart = 64
 	spawnFlagWatchBus    = 16
+
+	hostCommandFlagWatchBus = 2
 
 	supportsExposePids = 1
 
@@ -81,27 +86,84 @@ func (b *portalBus) flatpakMethod(client *serializedConn, connection *portalConn
 	case "Spawn":
 		b.spawn(client, connection, call, fds)
 	case "SpawnSignal":
-		if len(call.Body) != 3 {
-			b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, "expected a process, a signal and a group flag")
-			return
-		}
-		pid, _ := call.Body[0].(uint32)
-		connection.mu.Lock()
-		process := connection.spawned[pid]
-		connection.mu.Unlock()
-		if process == nil {
-			b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, "no such process")
-			return
-		}
-		// The runtime ends a command whose caller hangs up, which is the
-		// one signal cpak delivers: anything asked for stops the process.
-		_ = process.connection.Close()
-		b.reply(client, connection, call, portalUniqueName)
+		b.signalSpawned(client, connection, call)
 	case "CreateUpdateMonitor":
 		b.reply(client, connection, call, portalUniqueName, updateMonitorPath(connection.name(), call))
 	default:
 		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "unknown method")
 	}
+}
+
+func (b *portalBus) signalSpawned(client *serializedConn, connection *portalConnection, call *dbus.Message) {
+	if len(call.Body) != 3 {
+		b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, "expected a process, a signal and a group flag")
+		return
+	}
+	pid, _ := call.Body[0].(uint32)
+	connection.mu.Lock()
+	process := connection.spawned[pid]
+	connection.mu.Unlock()
+	if process == nil {
+		b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, "no such process")
+		return
+	}
+	// The runtime ends a command whose caller hangs up, which is the
+	// one signal cpak delivers: anything asked for stops the process.
+	_ = process.connection.Close()
+	b.reply(client, connection, call, portalUniqueName)
+}
+
+func (b *portalBus) developmentMethod(client *serializedConn, connection *portalConnection, call *dbus.Message, fds []int, path dbus.ObjectPath, interfaceName, member string) {
+	if path != developmentPath {
+		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "no such object")
+		return
+	}
+	switch interfaceName {
+	case propertiesInterface:
+		switch member {
+		case "Get":
+			if len(call.Body) == 2 && call.Body[0] == developmentInterface && call.Body[1] == "version" {
+				b.reply(client, connection, call, portalUniqueName, dbus.MakeVariant(uint32(1)))
+				return
+			}
+			b.fail(client, connection, call, portalUniqueName, "org.freedesktop.DBus.Error.UnknownProperty", "unknown property")
+		case "GetAll":
+			b.reply(client, connection, call, portalUniqueName, map[string]dbus.Variant{"version": dbus.MakeVariant(uint32(1))})
+		default:
+			b.fail(client, connection, call, portalUniqueName, errorAccessDenied, "properties are read-only")
+		}
+		return
+	case developmentInterface:
+	default:
+		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "unknown interface")
+		return
+	}
+	switch member {
+	case "HostCommand":
+		b.hostCommand(client, connection, call, fds)
+	case "HostCommandSignal":
+		b.signalSpawned(client, connection, call)
+	default:
+		b.fail(client, connection, call, portalUniqueName, errorUnknownMethod, "unknown method")
+	}
+}
+
+func (b *portalBus) hostCommand(client *serializedConn, connection *portalConnection, call *dbus.Message, fds []int) {
+	if len(call.Body) != 5 {
+		b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, fmt.Sprintf("HostCommand expects five arguments, got %d (%s)", len(call.Body), dbus.SignatureOf(call.Body...)))
+		return
+	}
+	flags, _ := call.Body[4].(uint32)
+	body := append(append([]any{}, call.Body[:4]...), uint32(0), map[string]dbus.Variant{})
+	spawn, err := decodeSpawn(&dbus.Message{Body: body}, fds)
+	if err != nil {
+		b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, err.Error())
+		return
+	}
+	if flags&hostCommandFlagWatchBus != 0 {
+		spawn.flags = spawnFlagWatchBus
+	}
+	b.start(client, connection, call, spawn, developmentPath, developmentInterface, "HostCommandExited")
 }
 
 // An application that watches for its own updates gets a monitor that never
@@ -247,6 +309,14 @@ func (b *portalBus) spawn(client *serializedConn, connection *portalConnection, 
 		b.fail(client, connection, call, portalUniqueName, errorInvalidArgs, err.Error())
 		return
 	}
+	b.start(client, connection, call, spawn, flatpakPortalPath, flatpakPortalInterface, "SpawnExited")
+}
+
+func (b *portalBus) start(client *serializedConn, connection *portalConnection, call *dbus.Message, spawn spawnRequest, path dbus.ObjectPath, interfaceName, exited string) {
+	if b.proxy.options.ExecSocketPath == "" {
+		b.fail(client, connection, call, portalUniqueName, errorNotAllowed, "starting processes is not available in this cpak")
+		return
+	}
 	runtime, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: b.proxy.options.ExecSocketPath, Net: "unix"})
 	if err == nil {
 		err = runtimeproto.WriteRequest(runtime, spawn.request, spawn.descriptors)
@@ -279,7 +349,7 @@ func (b *portalBus) spawn(client *serializedConn, connection *portalConnection, 
 	connection.mu.Unlock()
 	b.reply(client, connection, call, portalUniqueName, pid)
 	if spawn.flags&spawnFlagNotifyStart != 0 {
-		b.flatpakSignal(client, destination, "SpawnStarted", pid, pid)
+		b.flatpakSignal(client, path, interfaceName, destination, "SpawnStarted", pid, pid)
 	}
 	go func() {
 		status := uint32(syscall.SIGKILL)
@@ -305,11 +375,11 @@ func (b *portalBus) spawn(client *serializedConn, connection *portalConnection, 
 		connection.mu.Lock()
 		delete(connection.spawned, pid)
 		connection.mu.Unlock()
-		b.flatpakSignal(client, destination, "SpawnExited", pid, status)
+		b.flatpakSignal(client, path, interfaceName, destination, exited, pid, status)
 	}()
 }
 
-func (b *portalBus) flatpakSignal(client *serializedConn, destination, member string, values ...uint32) {
+func (b *portalBus) flatpakSignal(client *serializedConn, path dbus.ObjectPath, interfaceName, destination, member string, values ...uint32) {
 	body := make([]any, 0, len(values))
 	for _, value := range values {
 		body = append(body, value)
@@ -317,8 +387,8 @@ func (b *portalBus) flatpakSignal(client *serializedConn, destination, member st
 	_ = client.writeSyntheticMessage(&dbus.Message{
 		Type: dbus.TypeSignal,
 		Headers: map[dbus.HeaderField]dbus.Variant{
-			dbus.FieldPath:        dbus.MakeVariant(flatpakPortalPath),
-			dbus.FieldInterface:   dbus.MakeVariant(flatpakPortalInterface),
+			dbus.FieldPath:        dbus.MakeVariant(path),
+			dbus.FieldInterface:   dbus.MakeVariant(interfaceName),
 			dbus.FieldMember:      dbus.MakeVariant(member),
 			dbus.FieldSender:      dbus.MakeVariant(portalUniqueName),
 			dbus.FieldDestination: dbus.MakeVariant(destination),

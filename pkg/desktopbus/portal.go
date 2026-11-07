@@ -159,7 +159,7 @@ func (b *portalBus) dispatch(ctx context.Context, client *serializedConn, connec
 	member, _ := headerValue[string](call, dbus.FieldMember)
 	destination, _ := headerValue[string](call, dbus.FieldDestination)
 	// Every object answers Peer, and clients ping the root to find a service.
-	if interfaceName == "org.freedesktop.DBus.Peer" && member == "Ping" && (destination == portalUniqueName || destination == flatpakPortalName || b.isPortal(destination)) {
+	if interfaceName == "org.freedesktop.DBus.Peer" && member == "Ping" && (destination == portalUniqueName || destination == flatpakPortalName || destination == flatpakHostName && b.proxy.options.ExecSocketPath != "" || b.isPortal(destination)) {
 		b.reply(client, connection, call, portalUniqueName)
 		return
 	}
@@ -168,6 +168,8 @@ func (b *portalBus) dispatch(ctx context.Context, client *serializedConn, connec
 		b.busMethod(client, connection, call, interfaceName, member)
 	case destination == portalUniqueName && path == flatpakPortalPath && b.proxy.options.ExecSocketPath != "":
 		b.flatpakMethod(client, connection, call, fds, path, interfaceName, member)
+	case (destination == flatpakHostName || destination == portalUniqueName && path == developmentPath) && b.proxy.options.ExecSocketPath != "":
+		b.developmentMethod(client, connection, call, fds, path, interfaceName, member)
 	case destination == portalUniqueName && path == notificationsPath && b.proxy.options.Notifications:
 		b.notificationsMethod(ctx, client, connection, call, path, interfaceName, member)
 	case b.isPortal(destination):
@@ -197,6 +199,8 @@ func (b *portalBus) owner(connection *portalConnection, name string) (string, bo
 	case name == notificationsName && b.proxy.options.Notifications:
 		return portalUniqueName, true
 	case name == flatpakPortalName && b.proxy.options.ExecSocketPath != "":
+		return portalUniqueName, true
+	case name == flatpakHostName && b.proxy.options.ExecSocketPath != "":
 		return portalUniqueName, true
 	}
 	connection.mu.Lock()
@@ -253,7 +257,7 @@ func (b *portalBus) busMethod(client *serializedConn, connection *portalConnecti
 	case "ListNames", "ListActivatableNames":
 		names := []string{busName, portalDestination}
 		if b.proxy.options.ExecSocketPath != "" {
-			names = append(names, flatpakPortalName)
+			names = append(names, flatpakPortalName, flatpakHostName)
 		}
 		if b.proxy.options.Notifications {
 			names = append(names, notificationsName)

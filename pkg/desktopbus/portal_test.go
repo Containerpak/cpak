@@ -6,6 +6,7 @@ package desktopbus
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -259,6 +260,69 @@ func TestFlatpakSpawnStartsTheCommandInTheContainer(t *testing.T) {
 	}
 	if signal := nextSignal(t, signals, flatpakPortalInterface+".SpawnExited"); signal.Body[0] != pid || signal.Body[1] != uint32(7<<8) {
 		t.Fatalf("the caller was told %v", signal.Body)
+	}
+}
+
+func TestFlatpakHostCommandStartsTheCommandInTheContainer(t *testing.T) {
+	execSocket := filepath.Join(t.TempDir(), "exec.sock")
+	received := make(chan runtimeproto.Request, 1)
+	fakeRuntime(t, execSocket, received)
+	harness := startPortalBus(t, Options{ExecSocketPath: execSocket})
+	connection := harness.connection
+	signals := make(chan *dbus.Signal, 4)
+	connection.Signal(signals)
+	if err := connection.AddMatchSignal(dbus.WithMatchInterface(developmentInterface)); err != nil {
+		t.Fatal(err)
+	}
+	var owned bool
+	if err := connection.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, flatpakHostName).Store(&owned); err != nil || !owned {
+		t.Fatalf("%s has an owner: %v %v", flatpakHostName, owned, err)
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	fds := map[uint32]dbus.UnixFD{1: dbus.UnixFD(writer.Fd())}
+	argv := [][]byte{append([]byte("/bin/bash"), 0), append([]byte("-l"), 0)}
+	env := map[string]string{"TERM": "xterm-256color", "LD_PRELOAD": "/evil.so"}
+	var pid uint32
+	err = connection.Object(flatpakHostName, developmentPath).Call(developmentInterface+".HostCommand", 0,
+		append([]byte("/home"), 0), argv, fds, env, uint32(hostCommandFlagWatchBus)).Store(&pid)
+	writer.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-received:
+		if strings.Join(request.Args, " ") != "/bin/bash -l" || request.Directory != "/home" {
+			t.Fatalf("the container was asked to run %+v", request)
+		}
+		if len(request.Descriptors) != 1 || request.Descriptors[0] != 1 {
+			t.Fatalf("the descriptors were placed at %v", request.Descriptors)
+		}
+		if strings.Join(request.Env, " ") != "TERM=xterm-256color" {
+			t.Fatalf("the environment passed was %v", request.Env)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the container was never asked to start the command")
+	}
+	output := make([]byte, 8)
+	if _, err := reader.Read(output); err != nil || string(output) != "spawned\n" {
+		t.Fatalf("the descriptor handed over was not the caller's: %q %v", output, err)
+	}
+	if signal := nextSignal(t, signals, developmentInterface+".HostCommandExited"); signal.Path != developmentPath || signal.Body[0] != pid || signal.Body[1] != uint32(7<<8) {
+		t.Fatalf("the caller was told %v on %s", signal.Body, signal.Path)
+	}
+}
+
+func TestFlatpakHostCommandIsUnknownWithoutTheRuntime(t *testing.T) {
+	harness := startPortalBus(t, Options{})
+	err := harness.connection.Object(flatpakHostName, developmentPath).Call(developmentInterface+".HostCommand", 0,
+		append([]byte("/"), 0), [][]byte{append([]byte("/bin/sh"), 0)}, map[uint32]dbus.UnixFD{}, map[string]string{}, uint32(0)).Err
+	var dbusErr dbus.Error
+	if !errors.As(err, &dbusErr) || dbusErr.Name != errorServiceUnknown {
+		t.Fatalf("HostCommand without a runtime answered %v", err)
 	}
 }
 

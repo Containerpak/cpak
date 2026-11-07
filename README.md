@@ -338,8 +338,9 @@ The application reaches the desktop the way it would under Flatpak, through
 portals, but no portal service is involved. cpak serves the session bus of the
 sandbox itself and answers the file chooser, links, notifications, settings,
 network status and proxy resolution through the cpak broker; helper processes
-started through `flatpak-spawn` run in the same sandbox, never on the host. No
-host session bus is needed.
+started through `flatpak-spawn` run in the same sandbox, never on the host, and
+so do commands asked for with `flatpak-spawn --host`, which is how terminals
+start their shell. No host session bus is needed.
 
 The linker cache is indexed by cpak at every launch, so the NVIDIA libraries of
 the host driver are used through cpak's own NVIDIA support. Mesa comes from the
