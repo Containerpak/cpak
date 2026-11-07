@@ -1106,6 +1106,19 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, n
 			content = []byte("nameserver " + nameserver + "\n")
 			readErr = nil
 		}
+		if readErr == nil && conf == "/etc/passwd" {
+			if uid, ok := outsideIdentity("/proc/self/uid_map"); ok {
+				content = containerPasswd(content, uid, func(shell string) bool {
+					info, err := os.Stat(filepath.Join(rootFs, shell))
+					return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0
+				})
+			}
+		}
+		if readErr == nil && conf == "/etc/group" {
+			if gid, ok := outsideIdentity("/proc/self/gid_map"); ok {
+				content = containerGroup(content, gid)
+			}
+		}
 		if os.IsNotExist(readErr) {
 			continue
 		}
