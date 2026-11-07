@@ -611,6 +611,7 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	}
 	xproto.DestroyWindow(restarted, restartedWindow)
 	restarted.Sync()
+	restarted.Close()
 	deadline = time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() != nil {
@@ -621,7 +622,6 @@ func TestXwaylandReceivesWaylandPointerInput(t *testing.T) {
 	if exec.Command(wlrctl, "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() == nil {
 		t.Fatal("a closed standalone dialog left an empty Xwayland display")
 	}
-	restarted.Close()
 	_ = process.Process.Kill()
 	_, _ = process.Process.Wait()
 	select {
