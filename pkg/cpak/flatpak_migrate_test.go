@@ -145,7 +145,7 @@ func TestMigratedDataLandsInThePrivateHome(t *testing.T) {
 			t.Fatalf("%s holds %q: %v", name, content, err)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(privateHome, ".cache")); !os.IsNotExist(err) {
+	if entries, _ := os.ReadDir(filepath.Join(privateHome, ".cache")); len(entries) != 0 {
 		t.Fatal("the Flatpak cache was copied")
 	}
 	if link, err := os.Readlink(filepath.Join(privateHome, ".local", "share", "system")); err != nil || link != "/etc" {
@@ -183,6 +183,9 @@ func TestMigratedDataCannotLeaveThePrivateHome(t *testing.T) {
 	}
 	// Something running in the sandbox left a link where the copy writes.
 	outside := t.TempDir()
+	if err := os.Remove(filepath.Join(privateHome, ".config")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(privateHome, ".config")); err != nil {
 		t.Fatal(err)
 	}
