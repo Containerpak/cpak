@@ -8,6 +8,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/background"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ type ExtractCmd struct {
 }
 
 func (c *ExtractCmd) Run() error {
+	background.EnterUnlessFollowed()
 	origin, err := cpak.NormalizeRepositoryOrigin(c.Remote)
 	if err != nil {
 		return err

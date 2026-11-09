@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/background"
 	"runtime"
 
 	"github.com/mirkobrombin/cpak/pkg/bootstrap"
@@ -30,6 +31,7 @@ type InstallCmd struct {
 }
 
 func (c *InstallCmd) Run() error {
+	background.EnterUnlessFollowed()
 	if c.Flatpak {
 		return c.installFlatpak()
 	}

@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/background"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
@@ -22,6 +23,7 @@ type RemoveCmd struct {
 }
 
 func (c *RemoveCmd) Run() error {
+	background.EnterUnlessFollowed()
 	cp, err := cpak.NewCpak()
 	if err != nil {
 		return fmt.Errorf("an error occurred while removing cpak: %s", err)

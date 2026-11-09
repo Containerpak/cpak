@@ -7,6 +7,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/background"
 	"os"
 	"regexp"
 	"slices"
@@ -36,6 +37,7 @@ type UpdateCmd struct {
 // Run updates and exits with a code that tells a refusal of new permissions,
 // an unreachable remote and an answer that failed verification apart.
 func (c *UpdateCmd) Run() error {
+	background.EnterUnlessFollowed()
 	if c.Approve && c.NonInteractive {
 		return fmt.Errorf("--approve-permissions cannot be combined with --non-interactive")
 	}

@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"github.com/mirkobrombin/cpak/pkg/background"
 	"io"
 	"os"
 	"os/exec"
@@ -46,6 +47,7 @@ type flatpakMigration struct {
 // reached, 12 when an answer failed verification and 1 for anything else, so
 // a caller that runs it unattended knows whether to try again.
 func (c *MigrateFlatpakCmd) Run() error {
+	background.EnterUnlessFollowed()
 	return exitWith(c.run())
 }
 
