@@ -7,7 +7,7 @@
     let
       version = "2.14.18";
       vendorHash = "sha256-32I5R+ZSnEVyvwSeoKZDP1tstvAESRd6jrLkbe6Qvgo=";
-      buildGoModuleFor = pkgs: pkgs.buildGoModule.override {
+      buildGoModuleFor = pkgs: pkgs.buildGo126Module.override {
         go = pkgs.go.overrideAttrs (final: previous: {
           version = "1.26.9";
           src = pkgs.fetchurl {
