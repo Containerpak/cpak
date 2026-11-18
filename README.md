@@ -499,6 +499,22 @@ effective permission change.
 Manifest v3 requires an immutable digest in `image`. Manifest v2 remains
 supported for repositories that select OCI tags through `image_ref: source`.
 
+### Build-time image pins
+
+Use `cpak lock-image` in package CI to resolve an OCI tag or a Nixery package
+list before publishing the manifest:
+
+```sh
+cpak lock-image ghcr.io/example/runtime:latest --architecture amd64
+cpak lock-image --nixery shell --nixery qt6.qtbase --architecture arm64
+```
+
+The command prints an immutable reference for the requested architecture. Put
+it in that architecture's `image` field before signing the package. It checks
+the image config and verifies a second pull by digest. Nixery package names
+are build requests, so they never enter the install-time manifest. Use
+`--registry` for another Nixery instance. Host Nix store paths are not reused.
+
 ## Private registries
 
 cpak pulls OCI manifests, indexes, configs and layers directly. It does not use

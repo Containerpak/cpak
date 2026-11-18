@@ -115,6 +115,29 @@ type imageManifest struct {
 
 // Resolve resolves a tag or digest to an OCI image.
 func (c *Client) Resolve(ctx context.Context, value string) (Image, error) {
+	return c.resolve(ctx, value, nativePlatform())
+}
+
+// ResolvePlatform selects and verifies a build target without using the host architecture.
+func (c *Client) ResolvePlatform(ctx context.Context, value string, platform Platform) (Image, error) {
+	if platform.OS != "linux" || platform.Architecture == "" {
+		return Image{}, errors.New("oci: a Linux target architecture is required")
+	}
+	image, err := c.resolve(ctx, value, platform)
+	if err != nil {
+		return Image{}, err
+	}
+	var config ConfigFile
+	if err = json.Unmarshal(image.Config, &config); err != nil {
+		return Image{}, fmt.Errorf("oci: decode target image config: %w", err)
+	}
+	if config.OS != platform.OS || config.Architecture != platform.Architecture {
+		return Image{}, fmt.Errorf("oci: image config is %s/%s, requested %s/%s", config.OS, config.Architecture, platform.OS, platform.Architecture)
+	}
+	return image, nil
+}
+
+func (c *Client) resolve(ctx context.Context, value string, platform Platform) (Image, error) {
 	ref, err := ParseReference(value)
 	if err != nil {
 		return Image{}, err
@@ -139,9 +162,9 @@ func (c *Client) Resolve(ctx context.Context, value string) (Image, error) {
 				return Image{}, fmt.Errorf("oci: invalid manifest descriptor in image index")
 			}
 		}
-		descriptor, found := platformManifest(index.Manifests)
+		descriptor, found := platformManifestFor(index.Manifests, platform)
 		if !found {
-			return Image{}, fmt.Errorf("oci: image has no linux/%s manifest", runtime.GOARCH)
+			return Image{}, fmt.Errorf("oci: image has no %s/%s manifest", platform.OS, platform.Architecture)
 		}
 		body, digest, mediaType, err = c.fetchManifest(ctx, ref, descriptor.Digest)
 		if err != nil {
@@ -569,13 +592,21 @@ func (c *Client) cacheToken(key, value string, expiresAt time.Time) {
 	c.tokens[key] = cachedToken{value: value, expiresAt: expiresAt}
 }
 
-func platformManifest(manifests []Descriptor) (Descriptor, bool) {
-	variant := ""
+func nativePlatform() Platform {
+	platform := Platform{OS: "linux", Architecture: runtime.GOARCH}
 	if runtime.GOARCH == "arm" {
-		variant = "v" + strconv.Itoa(7)
+		platform.Variant = "v" + strconv.Itoa(7)
 	}
+	return platform
+}
+
+func platformManifest(manifests []Descriptor) (Descriptor, bool) {
+	return platformManifestFor(manifests, nativePlatform())
+}
+
+func platformManifestFor(manifests []Descriptor, platform Platform) (Descriptor, bool) {
 	for _, descriptor := range manifests {
-		if descriptor.Platform.OS == "linux" && descriptor.Platform.Architecture == runtime.GOARCH && (variant == "" || descriptor.Platform.Variant == "" || descriptor.Platform.Variant == variant) {
+		if descriptor.Platform.OS == platform.OS && descriptor.Platform.Architecture == platform.Architecture && (platform.Variant == "" || descriptor.Platform.Variant == "" || descriptor.Platform.Variant == platform.Variant) {
 			return descriptor, true
 		}
 	}

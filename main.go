@@ -50,6 +50,7 @@ type CLI struct {
 	Dedup              cmd.DedupCmd              `cmd:"dedup" help:"Deduplicate layers in the local store"`
 	GC                 cmd.GCCmd                 `cmd:"gc" help:"Find or remove unreferenced data"`
 	Audit              cmd.AuditCmd              `cmd:"audit" help:"Audit the local store for integrity"`
+	LockImage          cmd.LockImageCmd          `cmd:"lock-image" help:"Resolve a build-time image to an immutable reference"`
 	Lock               cmd.LockCmd               `cmd:"lock" help:"Resolve a reproducible package lock file"`
 	Dev                cmd.DevCmd                `cmd:"dev" help:"Install and launch a local package in isolation"`
 	Test               cmd.TestCmd               `cmd:"test" help:"Validate a local package in isolation"`
