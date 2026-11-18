@@ -134,7 +134,7 @@ func TestX11ServerFallsBackToXephyrOnX11(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/Xephyr", "-auth", "/tmp/authority", "-nolisten", "tcp", "-screen", "1280x800", "-resizeable", "-name", "cpak-test"}
+	want := []string{"/usr/bin/Xephyr", "-auth", "/tmp/authority", "-nolisten", "tcp", "-extension", "MIT-SHM", "-screen", "1280x800", "-resizeable", "-name", "cpak-test"}
 	if !reflect.DeepEqual(server.command.Args, want) {
 		t.Fatalf("Xephyr arguments: got %v, want %v", server.command.Args, want)
 	}
@@ -673,6 +673,19 @@ func TestX11BridgeStartsAReachableDisplayOnX11(t *testing.T) {
 			t.Fatalf("authenticate to private X11 display after %d completed clients: %v\n%s", attempt, err, log)
 		}
 		time.Sleep(150 * time.Millisecond)
+	}
+	t.Setenv("XAUTHORITY", container.X11AuthorityPath)
+	connection, err := xgb.NewConnDisplay(x11BrokerDisplay(container))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	extension, err := xproto.QueryExtension(connection, uint16(len("MIT-SHM")), "MIT-SHM").Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extension.Present {
+		t.Fatal("Xephyr advertises shared memory outside the application's IPC namespace")
 	}
 	if !containerX11BridgeAlive(container) {
 		t.Fatal("private X11 display exited after its clients disconnected")

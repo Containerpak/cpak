@@ -281,8 +281,10 @@ func x11ServerCommand(authorityPath, hostWindowName string, clipboard types.Clip
 	if os.Getenv("DISPLAY") != "" {
 		server, err := findX11Server("Xephyr")
 		if err == nil {
+			// SysV shared memory IDs belong to the application's private IPC
+			// namespace. Xephyr must not advertise an attachment it cannot use.
 			return x11Server{
-				command:    exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-screen", "1280x800", "-resizeable", "-name", hostWindowName),
+				command:    exec.Command(server, "-auth", authorityPath, "-nolisten", "tcp", "-extension", "MIT-SHM", "-screen", "1280x800", "-resizeable", "-name", hostWindowName),
 				hostWindow: true,
 			}, nil
 		}
