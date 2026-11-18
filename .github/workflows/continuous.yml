@@ -196,7 +196,7 @@ jobs:
       - name: Install Wayland test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y labwc wlrctl x11-utils xwayland
+          sudo apt-get install -y labwc wlrctl grim x11-utils xwayland
 
       - name: Test lazy Xwayland input
         run: |

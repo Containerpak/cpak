@@ -5,11 +5,15 @@
 package cpak
 
 import (
+	"bytes"
 	"encoding/binary"
+	"image"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,8 +42,8 @@ func TestXwaylandTraySurvivesHiddenWindowsAndRestoresThem(t *testing.T) {
 	if os.Getenv("CPAK_WAYLAND_INPUT_TEST") != "1" {
 		t.Skip("private Wayland test disabled")
 	}
-	if _, err := exec.LookPath("wlrctl"); err != nil {
-		t.Skip("wlrctl unavailable")
+	if _, err := exec.LookPath("grim"); err != nil {
+		t.Fatal("grim is required for the private Wayland display test")
 	}
 	testTrayBroker(t, true)
 }
@@ -158,9 +162,13 @@ func testTrayBroker(t *testing.T, wayland bool) {
 	if err = xproto.CreateWindowChecked(client, screen.RootDepth, window, screen.Root, 0, 0, 320, 240, 0, xproto.WindowClassInputOutput, screen.RootVisual, xproto.CwBackPixel, []uint32{0x40a080}).Check(); err != nil {
 		t.Fatal(err)
 	}
+	var background image.Image
+	if wayland {
+		background = trayTestScreenshot(t)
+	}
 	visible := func() bool {
 		if wayland {
-			return exec.Command("wlrctl", "toplevel", "find", "app_id:org.freedesktop.Xwayland").Run() == nil
+			return !reflect.DeepEqual(background, trayTestScreenshot(t))
 		}
 		host := connectHostX11(t)
 		defer host.Close()
@@ -224,4 +232,19 @@ func testTrayBroker(t *testing.T, wayland bool) {
 	xproto.DestroyWindow(client, icon)
 	client.Sync()
 	waitTestCondition(t, 5*time.Second, func() bool { return !sameContainerProcess(container, container.Pid) }, "last icon and window did not release the application")
+}
+
+// Older compositors can retain foreign-toplevel handles after a surface unmaps.
+// Compare rendered pixels so the test checks what remains on the desktop.
+func trayTestScreenshot(t *testing.T) image.Image {
+	t.Helper()
+	data, err := exec.Command("grim", "-t", "png", "-").Output()
+	if err != nil {
+		t.Fatalf("capture private tray display: %v", err)
+	}
+	screenshot, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return screenshot
 }
