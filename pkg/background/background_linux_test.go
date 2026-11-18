@@ -2,6 +2,7 @@ package background
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -9,11 +10,20 @@ import (
 
 func TestEnterLowersEveryThread(t *testing.T) {
 	done := make(chan struct{})
+	defer close(done)
+	ready := make(chan struct{}, 4)
 	for i := 0; i < 4; i++ {
-		go func() { <-done }()
+		go func() {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			ready <- struct{}{}
+			<-done
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		<-ready
 	}
 	Enter()
-	close(done)
 	entries, err := os.ReadDir("/proc/self/task")
 	if err != nil {
 		t.Skip("no /proc")
