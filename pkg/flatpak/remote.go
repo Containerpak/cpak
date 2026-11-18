@@ -200,6 +200,22 @@ func (r *Remotes) Add(remote Remote) error {
 	return r.save()
 }
 
+func (r *Remotes) Remove(name string) error {
+	if _, builtin := builtinRemotes()[name]; builtin {
+		return fmt.Errorf("flatpak: remote %s is built in and cannot be removed", name)
+	}
+	if _, ok := r.entries[name]; !ok {
+		return fmt.Errorf("flatpak: no remote named %s", name)
+	}
+	delete(r.entries, name)
+	return r.save()
+}
+
+func IsBuiltinRemote(name string) bool {
+	_, builtin := builtinRemotes()[name]
+	return builtin
+}
+
 func (r *Remotes) save() error {
 	stored := make([]Remote, 0, len(r.entries))
 	for _, remote := range r.List() {

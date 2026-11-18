@@ -23,6 +23,7 @@ var buildCapabilities = []string{
 	"update-check",
 	"json-progress",
 	"update-approve-permissions",
+	"flatpak-remotes",
 }
 
 type CapabilitiesCmd struct {

@@ -76,6 +76,7 @@ type CLI struct {
 	Discover           cmd.DiscoverCmd           `cmd:"discover" help:"Integrate cpak with software centers"`
 	Environment        cmd.EnvironmentCmd        `cmd:"environment" help:"Manage persistent package environments"`
 	Completion         cmd.CompletionCmd         `cmd:"completion" help:"Generate shell completion"`
+	Remote             cmd.RemoteCmd             `cmd:"remote" help:"Manage Flatpak remotes"`
 	Capabilities       cmd.CapabilitiesCmd       `cmd:"capabilities" help:"List what this cpak build can do"`
 
 	cli.Base

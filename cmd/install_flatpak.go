@@ -48,7 +48,7 @@ func (c *InstallCmd) runFlatpakInstall(progress *progressWriter) error {
 	}
 	request := cpak.FlatpakRequest{Branch: c.Branch, Remote: c.FlatpakRemote}
 	if strings.HasSuffix(c.Remote, ".flatpakref") {
-		data, err := readFlatpakRefFile(c.Remote)
+		data, err := readFlatpakDescription(c.Remote)
 		if err != nil {
 			return err
 		}
@@ -76,14 +76,14 @@ func (c *InstallCmd) runFlatpakInstall(progress *progressWriter) error {
 	return cp.InstallFlatpak(plan)
 }
 
-// readFlatpakRefFile reads a .flatpakref from a path or an HTTPS address. It
-// carries the key the repository is then trusted through, so it is never read
-// over plain HTTP.
-func readFlatpakRefFile(location string) ([]byte, error) {
+// readFlatpakDescription reads a .flatpakref or .flatpakrepo from a path or an
+// HTTPS address. It carries the key the repository is then trusted through, so
+// it is never read over plain HTTP.
+func readFlatpakDescription(location string) ([]byte, error) {
 	parsed, err := url.Parse(location)
 	if err == nil && parsed.Scheme != "" {
 		if parsed.Scheme != "https" {
-			return nil, fmt.Errorf("a .flatpakref is only read over HTTPS")
+			return nil, fmt.Errorf("a Flatpak description is only read over HTTPS")
 		}
 		client := &http.Client{Timeout: 30 * time.Second}
 		response, err := client.Get(location)
@@ -110,7 +110,7 @@ func readLimited(reader io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > maxFlatpakRefFile {
-		return nil, errors.New("the .flatpakref is too large")
+		return nil, errors.New("the Flatpak description is too large")
 	}
 	return data, nil
 }
