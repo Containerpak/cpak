@@ -380,7 +380,7 @@ func TestTranslationOfSteamKeepsItsX11(t *testing.T) {
 }
 
 func TestDesktopEntryGrantsStayPrivate(t *testing.T) {
-	home := t.TempDir()
+	home := "/home/cpak-test"
 	t.Setenv("HOME", home)
 	for _, request := range []string{
 		"xdg-data/applications",
