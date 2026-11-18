@@ -4,10 +4,12 @@ package storaged
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	storage "github.com/containerpak/storage/pkg/driver"
@@ -29,6 +31,9 @@ func newRoots(source, driver string) (roots, error) {
 	}
 	driver, err = filepath.Abs(driver)
 	if err != nil {
+		return roots{}, err
+	}
+	if err := ValidateLocks(source); err != nil {
 		return roots{}, err
 	}
 	if source == driver {
@@ -122,4 +127,32 @@ func treeSize(root string) (int64, error) {
 		return nil
 	})
 	return size, err
+}
+
+// ValidateLocks never replaces a live lock inode. A repaired lock must
+// be created only after every process using the old store has stopped.
+func ValidateLocks(root string) error {
+	locks, err := filepath.Glob(filepath.Join(root, "layers", "*", ".fvs2", "lock"))
+	if err != nil {
+		return err
+	}
+	locks = append(locks,
+		filepath.Join(root, "blocks", ".objects", "lock"),
+		filepath.Join(root, "blocks", ".objects", "transaction.lock"))
+	for _, path := range locks {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect storage lock %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("storage lock is not a regular file: %s", path)
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink > 1 {
+			return fmt.Errorf("storage lock is hardlinked: %s; stop all cpak and cpak-storaged processes before repairing the lock files", path)
+		}
+	}
+	return nil
 }

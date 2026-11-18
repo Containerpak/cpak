@@ -15,6 +15,7 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	"github.com/mirkobrombin/cpak/pkg/logger"
+	"github.com/mirkobrombin/cpak/pkg/storaged"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/mirkobrombin/go-foundation/v2/core/configuration"
@@ -114,6 +115,10 @@ func (c *Cpak) desktopFileSpan() (desktopFileSpan, bool) {
 func NewCpak() (cpak Cpak, err error) {
 	cpak.Options, err = getCpakOptions()
 	if err != nil {
+		return
+	}
+
+	if err = storaged.ValidateLocks(cpak.fvsRoot()); err != nil {
 		return
 	}
 

@@ -5,11 +5,9 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
-	"github.com/mirkobrombin/dabadee/v2/pkg/store"
 	"github.com/mirkobrombin/go-cli-builder/v3/pkg/cli"
 )
 
@@ -38,13 +36,7 @@ func (c *DedupCmd) Run() error {
 		return err
 	}
 
-	s, err := store.Open(cp.Options.DaBaDeeStoreOptions)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-
-	result, err := s.DeduplicateTree(context.Background(), c.Path)
+	result, err := cp.DeduplicatePath(c.Path)
 	if err != nil {
 		return err
 	}
