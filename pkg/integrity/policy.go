@@ -229,6 +229,7 @@ func Restricts(current, candidate types.Override) bool {
 		{candidate.Notification, current.Notification},
 		{candidate.OpenURI, current.OpenURI},
 		{candidate.HostApplications, current.HostApplications},
+		{candidate.HostFonts, current.HostFonts},
 		{candidate.Network, current.Network},
 		{candidate.HostNetwork, current.HostNetwork},
 		{candidate.Process, current.Process},

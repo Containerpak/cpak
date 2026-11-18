@@ -411,6 +411,11 @@
           "description": "Allow opening external URIs",
           "default": false
         },
+        "hostFonts": {
+          "type": "boolean",
+          "description": "Read host fonts with a private cache",
+          "default": false
+        },
         "hostApplications": {
           "type": "boolean",
           "description": "Expose and launch host desktop applications",

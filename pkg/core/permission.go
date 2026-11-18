@@ -49,6 +49,7 @@ func Intersect(parent, child types.Override, h Host) types.Override {
 		DeviceAll:           parent.DeviceAll && child.DeviceAll,
 		Notification:        parent.Notification && child.Notification,
 		OpenURI:             parent.OpenURI && child.OpenURI,
+		HostFonts:           parent.HostFonts && child.HostFonts,
 		HostApplications:    parent.HostApplications && child.HostApplications,
 		HostActions:         types.IntersectHostActions(parent.HostActions, child.HostActions),
 		FilePicker:          IntersectFilePicker(parent.FilePicker, child.FilePicker),

@@ -314,6 +314,7 @@ func intersectOverrides(parent, child types.Override) types.Override {
 		DeviceAll:        parent.DeviceAll && child.DeviceAll,
 		Notification:     parent.Notification && child.Notification,
 		OpenURI:          parent.OpenURI && child.OpenURI,
+		HostFonts:        parent.HostFonts && child.HostFonts,
 		HostApplications: parent.HostApplications && child.HostApplications,
 		HostActions:      types.IntersectHostActions(parent.HostActions, child.HostActions),
 		FilePicker:       intersectFilePicker(parent.FilePicker, child.FilePicker),

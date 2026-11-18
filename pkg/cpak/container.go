@@ -683,6 +683,13 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--secret", secret.Name+"="+secret.Source)
 	}
 	cmds = append(cmds, c.flatpakLaunchArguments(app)...)
+	if app.Flatpak == nil {
+		fonts, fontErr := c.nativeFontArguments(container, override)
+		if fontErr != nil {
+			return "", 0, "", fontErr
+		}
+		cmds = append(cmds, fonts...)
+	}
 
 	if container.SystemBrokerSocketPath != "" {
 		cmds = append(cmds, "--env", "CPAK_SYSTEM_BROKER_SOCKET="+systemBrokerSocketTarget)
@@ -1351,6 +1358,9 @@ func containerEnvironment(app types.Application, override types.Override, contai
 	if container.X11SocketPath != "" {
 		envVars = setEnvironmentValue(envVars, "DISPLAY", container.X11Display)
 		envVars = setEnvironmentValue(envVars, "XAUTHORITY", x11AuthorityTarget)
+	}
+	if override.HostFonts && app.Flatpak == nil {
+		envVars = setEnvironmentValue(envVars, "FONTCONFIG_FILE", hostFontConfigTarget)
 	}
 	return envVars, nil
 }
