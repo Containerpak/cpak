@@ -378,3 +378,29 @@ func TestTranslationOfSteamKeepsItsX11(t *testing.T) {
 		t.Fatal("Steam lost a display it needs")
 	}
 }
+
+func TestDesktopEntryGrantsStayPrivate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, request := range []string{
+		"xdg-data/applications",
+		"~/.local/share/applications:create",
+		home + "/.local/share/applications:ro",
+		"xdg-data/applications/browser.desktop",
+	} {
+		t.Run(request, func(t *testing.T) {
+			meta := Metadata{}
+			meta.Context.Filesystems = []string{request, "xdg-download"}
+			translation := Translate(meta)
+			if err := types.RefuseCpakStateGrants(translation.Override.Filesystem, types.CpakStateDirectories(home)); err != nil {
+				t.Fatalf("translation retained a grant on host launchers: %v", err)
+			}
+			if len(translation.Override.Filesystem) != 1 || translation.Override.Filesystem[0].Path != "xdg-download" {
+				t.Fatalf("unexpected filesystem grants: %+v", translation.Override.Filesystem)
+			}
+			if got, _ := decision(translation, "filesystems="+request); got != Narrowed {
+				t.Fatalf("desktop entry request was not reported as narrowed: %v", got)
+			}
+		})
+	}
+}

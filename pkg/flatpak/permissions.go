@@ -5,7 +5,9 @@
 package flatpak
 
 import (
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -262,19 +264,28 @@ func (t *translator) filesystem(value string) {
 		return
 	}
 	grant := func(target string) {
-		t.override.Filesystem = append(t.override.Filesystem, types.FilesystemPermission{Path: target, Access: access})
+		permission := types.FilesystemPermission{Path: target, Access: access}
+		source, _, err := types.ResolveFilesystemPermission(permission)
+		home, homeErr := os.UserHomeDir()
+		if err == nil && homeErr == nil && home != "" {
+			entries := filepath.Join(home, ".local", "share", "applications")
+			if source == entries || strings.HasPrefix(source, entries+string(filepath.Separator)) {
+				t.add(request, Narrowed, "desktop entries stay inside the application; host launchers are not shared")
+				return
+			}
+		}
+		t.override.Filesystem = append(t.override.Filesystem, permission)
+		t.add(request, Granted, "")
 	}
 
 	head, rest, _ := strings.Cut(location, "/")
 	switch {
 	case location == "home" || location == "~":
 		grant("home")
-		t.add(request, Granted, "")
 	case location == "host" || location == "host-os" || location == "host-etc" || location == "host-root":
 		t.add(request, Refused, "the host root is never shared with a Flatpak application; grant the folders it needs instead")
 	case xdgDirectories[location]:
 		grant(location)
-		t.add(request, Granted, "")
 	case xdgDirectories[head]:
 		t.add(request, Refused, "cpak grants the "+head+" folder only as a whole; grant it with an override if the application needs it")
 	case homeSubdirectories[head] != "":
@@ -283,7 +294,6 @@ func (t *translator) filesystem(value string) {
 			return
 		}
 		grant(path.Join("home", homeSubdirectories[head], rest))
-		t.add(request, Granted, "")
 	case head == "xdg-run":
 		t.add(request, Refused, "other services' runtime sockets are never shared")
 	case head == "~":
@@ -292,7 +302,6 @@ func (t *translator) filesystem(value string) {
 			return
 		}
 		grant(path.Join("home", rest))
-		t.add(request, Granted, "")
 	case strings.HasPrefix(location, "/"):
 		clean := path.Clean(location)
 		if clean == "/" || !safeAbsolute(clean) {
@@ -300,7 +309,6 @@ func (t *translator) filesystem(value string) {
 			return
 		}
 		grant(clean)
-		t.add(request, Granted, "")
 	default:
 		t.add(request, Refused, "no cpak equivalent")
 	}

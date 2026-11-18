@@ -7,6 +7,7 @@ package cpak
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -224,7 +225,7 @@ func TestImportPublishesNothingWhenAnObjectIsForged(t *testing.T) {
 
 // localRemote serves an application, its runtime and their extensions from a
 // signed repository on this machine and registers it as a remote.
-func localRemote(t *testing.T, c *Cpak) *ostreetest.Repo {
+func localRemote(t *testing.T, c *Cpak, filesystems ...string) *ostreetest.Repo {
 	t.Helper()
 	key := testFlatpakKey()
 	repo := ostreetest.NewRepo(true, key)
@@ -246,8 +247,11 @@ func localRemote(t *testing.T, c *Cpak) *ostreetest.Repo {
 	}, nil)
 	repo.Commit("runtime/org.example.Platform.Debug/x86_64/1", map[string]ostreetest.File{"files/x": {Content: []byte("x")}}, nil)
 
+	if len(filesystems) == 0 {
+		filesystems = []string{"host", "xdg-download"}
+	}
 	appMetadata := "[Application]\nname=org.example.App\nruntime=org.example.Platform/x86_64/1\ncommand=example\n\n" +
-		"[Context]\nshared=network;ipc;\nsockets=wayland;fallback-x11;session-bus;\nfilesystems=host;xdg-download;\n\n" +
+		"[Context]\nshared=network;ipc;\nsockets=wayland;fallback-x11;session-bus;\nfilesystems=" + strings.Join(filesystems, ";") + ";\n\n" +
 		"[Session Bus Policy]\norg.freedesktop.Notifications=talk\n"
 	repo.Commit("app/org.example.App/x86_64/stable", map[string]ostreetest.File{
 		"files/bin/example": {Content: []byte("#!/bin/sh\n"), Mode: 0o755},
@@ -582,4 +586,73 @@ func TestExtraDataLayerIsPreparedBeforeTheFirstLaunch(t *testing.T) {
 		t.Fatalf("the update failed: %s", result.Reason)
 	}
 	preparedLast("the update")
+}
+
+func TestFlatpakDesktopEntryRequestInstallsAndMigrates(t *testing.T) {
+	for _, migrate := range []bool{false, true} {
+		t.Run(fmt.Sprint(migrate), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_DATA_DIRS", t.TempDir())
+			entries := filepath.Join(home, ".local", "share", "applications")
+			if err := os.MkdirAll(entries, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			launcher := filepath.Join(entries, "keep.desktop")
+			if err := os.WriteFile(launcher, []byte("host launcher"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c := flatpakTestCpak(t)
+			c.SetStoragePreparationHandler(func(func() error) error { return nil })
+			repo := localRemote(t, c, "xdg-data/applications:create", "xdg-download")
+			var plan *FlatpakPlan
+			var err error
+			if migrate {
+				source := hostInstallation(t, "local", repo.URL(), testFlatpakKey().Public())
+				plan, err = c.ResolveFlatpakMigration(source)
+			} else {
+				plan, err = c.ResolveFlatpak(FlatpakRequest{ID: "org.example.App", Remote: "local", Arch: "x86_64"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.InstallFlatpak(plan); err != nil {
+				t.Fatalf("desktop entry request prevented installation: %v", err)
+			}
+			app, err := c.InstalledFlatpak(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.refuseCpakStateGrants(app.ParsedOverride, nil); err != nil {
+				t.Fatalf("installed application can reach host launchers: %v", err)
+			}
+			if filesystemIncludesHostHome(app.ParsedOverride) {
+				t.Fatal("desktop entry request enabled the host home")
+			}
+			if migrate {
+				data := filepath.Join(home, ".var", "app", "org.example.App", ".local", "share", "applications")
+				if err := os.MkdirAll(data, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(data, "keep.desktop"), []byte("application launcher"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.MigrateFlatpakData(app); err != nil {
+					t.Fatal(err)
+				}
+				private, err := c.privateApplicationHome(app.CpakId)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(filepath.Join(private, ".local", "share", "applications", "keep.desktop"))
+				if err != nil || string(got) != "application launcher" {
+					t.Fatalf("desktop entry did not migrate to the private home: %q %v", got, err)
+				}
+			}
+			got, err := os.ReadFile(launcher)
+			if err != nil || string(got) != "host launcher" {
+				t.Fatalf("host launcher changed: %q %v", got, err)
+			}
+		})
+	}
 }
