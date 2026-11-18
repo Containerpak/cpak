@@ -105,7 +105,7 @@
             enable = lib.mkEnableOption "cpak system authority";
             package = lib.mkOption {
               type = lib.types.package;
-              default = self.packages.${pkgs.system}.cpak;
+              default = self.packages.${pkgs.stdenv.hostPlatform.system}.cpak;
               description = "The cpak package to use.";
             };
           };
