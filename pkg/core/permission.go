@@ -21,7 +21,12 @@ import (
 // Every boolean is an and, every list is a smaller list, and every limit is the
 // tighter of the two.
 func Intersect(parent, child types.Override, h Host) types.Override {
+	tray := ""
+	if parent.TrayProxy == child.TrayProxy {
+		tray = child.TrayProxy
+	}
 	return types.Override{
+		TrayProxy:           tray,
 		SocketX11:           parent.SocketX11 && child.SocketX11,
 		DisplayX11:          parent.DisplayX11 && child.DisplayX11,
 		SocketWayland:       parent.SocketWayland && child.SocketWayland,

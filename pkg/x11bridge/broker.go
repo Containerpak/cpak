@@ -34,6 +34,8 @@ type Options struct {
 	StopContainer func()
 	Ready         func() error
 	ShowDisplay   func() error
+	HideDisplay   func() error
+	TrayActive    func() bool
 }
 
 type endpoint struct {
@@ -114,11 +116,12 @@ func Run(ctx context.Context, options Options) error {
 		}
 	}
 	b := &broker{
-		options: options,
-		nested:  nested,
-		host:    host,
-		randr:   resize,
-		events:  make(chan endpointEvent, 128),
+		options:      options,
+		nested:       nested,
+		host:         host,
+		displayShown: host != nil,
+		randr:        resize,
+		events:       make(chan endpointEvent, 128),
 	}
 	b.clipboard = newClipboardBridge(nested, host, options.HostToApp, options.AppToHost)
 	if options.Ready != nil {
@@ -321,8 +324,8 @@ func (b *broker) tick() bool {
 	windows := b.applicationWindows()
 	visible := len(windows) > 0 || b.hasVisibleWindow()
 	if visible {
-		if !b.displayShown && b.options.ShowDisplay != nil {
-			if err := b.options.ShowDisplay(); err != nil {
+		if !b.displayShown {
+			if err := b.showDisplay(); err != nil {
 				xgb.Logger.Printf("show isolated X11 display: %v", err)
 				return true
 			}
@@ -334,6 +337,14 @@ func (b *broker) tick() bool {
 			b.primary = windows[0]
 			b.fitWindow(b.primary)
 			b.syncHostWindow()
+		}
+	} else if b.options.TrayActive != nil && b.options.TrayActive() {
+		b.closeAt = time.Time{}
+		if b.displayShown {
+			if err := b.hideDisplay(); err != nil {
+				return true
+			}
+			b.displayShown = false
 		}
 	} else if b.displayIdle() {
 		if b.closeAt.IsZero() {
@@ -348,7 +359,36 @@ func (b *broker) tick() bool {
 	return false
 }
 
+func (b *broker) showDisplay() error {
+	if b.host != nil && b.hostWindow == 0 {
+		b.hostWindow = findClassWindow(b.host.connection, b.host.root, b.options.HostWindow)
+	}
+	if b.options.ShowDisplay != nil {
+		return b.options.ShowDisplay()
+	}
+	if b.host != nil && b.hostWindow != 0 {
+		return xproto.MapWindowChecked(b.host.connection, b.hostWindow).Check()
+	}
+	return nil
+}
+
+func (b *broker) hideDisplay() error {
+	if b.host != nil && b.hostWindow == 0 {
+		b.hostWindow = findClassWindow(b.host.connection, b.host.root, b.options.HostWindow)
+	}
+	if b.options.HideDisplay != nil {
+		return b.options.HideDisplay()
+	}
+	if b.host != nil && b.hostWindow != 0 {
+		return xproto.UnmapWindowChecked(b.host.connection, b.hostWindow).Check()
+	}
+	return nil
+}
+
 func (b *broker) displayIdle() bool {
+	if b.options.TrayActive != nil && b.options.TrayActive() {
+		return false
+	}
 	if b.options.ClientsAlive != nil {
 		return !b.options.ClientsAlive()
 	}

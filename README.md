@@ -439,6 +439,12 @@ display is not exposed. cpak keeps the application window sized with the nested
 display, forwards its title, icon and fullscreen state to the Xephyr window, and
 stops the instance after its last application window closes.
 
+Set `"trayProxy": "xembed"` alongside `"displayX11": true` for legacy tray
+icons. The broker presents them through StatusNotifierItem on the desktop.
+A docked icon keeps the app running while its windows are hidden; clicking the
+icon can restore the window or open the app's context menu. The desktop needs a
+StatusNotifierWatcher. The app does not receive access to the host session bus.
+
 Clipboard access through `displayX11` is explicit and directional:
 
 ```json

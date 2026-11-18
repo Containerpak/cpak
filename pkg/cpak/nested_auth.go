@@ -286,7 +286,12 @@ func heldToNamed(requested, restricted types.Override, named map[string]bool) ty
 var hostCeiling = func() systemauthority.Ceiling { return systemauthority.HostCeiling() }
 
 func intersectOverrides(parent, child types.Override) types.Override {
+	tray := ""
+	if parent.TrayProxy == child.TrayProxy {
+		tray = child.TrayProxy
+	}
 	return types.Override{
+		TrayProxy:        tray,
 		SocketX11:        parent.SocketX11 && child.SocketX11,
 		DisplayX11:       parent.DisplayX11 && child.DisplayX11,
 		SocketWayland:    parent.SocketWayland && child.SocketWayland,

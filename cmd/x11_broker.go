@@ -10,6 +10,8 @@ import (
 )
 
 type X11BrokerCmd struct {
+	TrayProxy          string `cli:"tray-proxy" help:"private tray presentation mode"`
+	TrayName           string `cli:"tray-name" help:"fallback application tray title"`
 	NestedDisplay      string `cli:"nested-display" help:"isolated X11 display"`
 	NestedAuthority    string `cli:"nested-authority" help:"isolated X11 authority file"`
 	HostDisplay        string `cli:"host-display" help:"host X11 display"`
@@ -40,6 +42,6 @@ func (c *X11BrokerCmd) Run() error {
 		ContainerID: c.ContainerID, ReadyFD: c.ReadyFD,
 		ListenFD: c.ListenFD, ListenPath: c.ListenPath, X11Server: c.X11Server, MixedWayland: c.MixedWayland,
 		HostToApp: c.HostToApp, AppToHost: c.AppToHost,
-		DeviceDri: c.DeviceDri,
+		DeviceDri: c.DeviceDri, TrayProxy: c.TrayProxy, TrayName: c.TrayName,
 	})
 }

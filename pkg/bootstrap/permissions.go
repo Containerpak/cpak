@@ -76,6 +76,7 @@ func SummarizePermissions(override types.Override) []Permission {
 
 	add(override.Notification, "Notifications", "desktop notifications")
 	add(override.OpenURI, "External links", "open URIs on the host")
+	add(override.TrayProxy != "", "Tray icons", "private XEmbed icons through the desktop tray")
 	add(override.HostFonts, "Host fonts", "read-only font directories and a private cache")
 	add(override.HostApplications, "Host applications", "desktop catalog and launch broker")
 	clipboard := []string{}

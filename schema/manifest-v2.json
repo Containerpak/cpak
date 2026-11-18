@@ -426,6 +426,14 @@
           "description": "Allow opening external URIs",
           "default": false
         },
+        "trayProxy": {
+          "type": "string",
+          "enum": [
+            "",
+            "xembed"
+          ],
+          "description": "Present private XEmbed icons through the desktop tray"
+        },
         "hostFonts": {
           "type": "boolean",
           "description": "Read host fonts with a private cache",

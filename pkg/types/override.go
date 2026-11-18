@@ -7,6 +7,7 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -46,6 +47,7 @@ type Override struct {
 
 	Notification     bool              `json:"notification" jsonschema:"description=Enable desktop notifications,default=false" flag:"notification,bool"`
 	OpenURI          bool              `json:"openURI" jsonschema:"description=Allow opening external URIs,default=false" flag:"openURI,bool"`
+	TrayProxy        string            `json:"trayProxy,omitempty" jsonschema:"enum=,enum=xembed,description=Present private XEmbed icons through the desktop tray" flag:"trayProxy,string"`
 	HostFonts        bool              `json:"hostFonts,omitempty" jsonschema:"description=Read host fonts with a private cache,default=false" flag:"hostFonts,bool"`
 	HostApplications bool              `json:"hostApplications" jsonschema:"description=Expose and launch host desktop applications,default=false" flag:"hostApplications,bool"`
 	HostActions      []HostActionGrant `json:"hostActions,omitempty" jsonschema:"description=Typed host service capabilities"`
@@ -395,4 +397,14 @@ func manifestV3RemovedPermission(key string) bool {
 	default:
 		return false
 	}
+}
+
+func ValidateTrayProxy(mode string, displayX11 bool) error {
+	if mode != "" && mode != "xembed" {
+		return fmt.Errorf("unknown tray proxy mode: %q", mode)
+	}
+	if mode != "" && !displayX11 {
+		return fmt.Errorf("trayProxy requires an isolated X11 display")
+	}
+	return nil
 }

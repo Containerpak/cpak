@@ -200,6 +200,9 @@ func canonicalPolicy(override types.Override) types.Override {
 func Restricts(current, candidate types.Override) bool {
 	current = current.WithMigratedFilesystem()
 	candidate = candidate.WithMigratedFilesystem()
+	if candidate.TrayProxy != "" && candidate.TrayProxy != current.TrayProxy {
+		return false
+	}
 	for _, pair := range [][2]bool{
 		{candidate.SocketX11, current.SocketX11},
 		{candidate.DisplayX11, current.DisplayX11},

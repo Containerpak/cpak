@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jezek/xgb"
+	"github.com/mirkobrombin/cpak/pkg/trayproxy"
 	"github.com/mirkobrombin/cpak/pkg/types"
 	"github.com/mirkobrombin/cpak/pkg/unixsocket"
 	"github.com/mirkobrombin/cpak/pkg/x11bridge"
@@ -31,7 +32,7 @@ import (
 
 const x11BrokerStartupTimeout = 5 * time.Second
 
-func startX11Broker(container types.Container, override types.Override, runtime *x11BridgeRuntime) (types.Container, error) {
+func startX11Broker(container types.Container, override types.Override, runtime *x11BridgeRuntime, name string) (types.Container, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return container, fmt.Errorf("find cpak binary for X11 broker: %w", err)
@@ -63,6 +64,9 @@ func startX11Broker(container types.Container, override types.Override, runtime 
 	}
 	if container.X11HostWindowName != "" {
 		arguments = append(arguments, "--host-display", os.Getenv("DISPLAY"), "--host-window", container.X11HostWindowName)
+	}
+	if override.TrayProxy != "" {
+		arguments = append(arguments, "--tray-proxy", override.TrayProxy, "--tray-name", name)
 	}
 	if override.DeviceDri || override.DeviceAll {
 		arguments = append(arguments, "--device-dri")
@@ -146,6 +150,8 @@ func startX11Broker(container types.Container, override types.Override, runtime 
 }
 
 type X11BrokerOptions struct {
+	TrayProxy          string
+	TrayName           string
 	NestedDisplay      string
 	NestedAuthority    string
 	HostDisplay        string
@@ -166,6 +172,9 @@ type X11BrokerOptions struct {
 }
 
 func RunX11Broker(options X11BrokerOptions) error {
+	if err := types.ValidateTrayProxy(options.TrayProxy, true); err != nil {
+		return err
+	}
 	if !filepath.IsAbs(options.NestedDisplay) || !filepath.IsAbs(options.NestedAuthority) || options.ContainerPid <= 0 || options.ContainerStartTime == 0 || options.ContainerID == "" || options.ReadyFD < 3 {
 		return errors.New("invalid X11 broker configuration")
 	}
@@ -202,6 +211,8 @@ func RunX11Broker(options X11BrokerOptions) error {
 	defer nested.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	trayActive, stopTray := startX11TrayProxy(ctx, options.NestedDisplay, options)
+	defer stopTray()
 	container := types.Container{CpakId: options.ContainerID, Pid: options.ContainerPid, ProcessStartTime: options.ContainerStartTime}
 	var stop sync.Once
 	stopContainer := func() {
@@ -215,7 +226,7 @@ func RunX11Broker(options X11BrokerOptions) error {
 		})
 	}
 	return x11bridge.Run(ctx, x11bridge.Options{
-		Nested: nested, Host: host, HostWindow: options.HostWindow,
+		Nested: nested, Host: host, HostWindow: options.HostWindow, TrayActive: trayActive,
 		HostToApp: options.HostToApp, AppToHost: options.AppToHost,
 		ServerAlive:   func() bool { return sameRecordedProcess(options.ServerPid, options.ServerStartTime) },
 		StopContainer: stopContainer,
@@ -475,6 +486,8 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 			stopServer()
 		})
 	}
+	trayActive, stopTray := startX11TrayProxy(ctx, serverDisplay, options)
+	defer stopTray()
 	var stopProxy func()
 	var activeClients atomic.Int64
 	var clientsAlive func() bool
@@ -483,7 +496,7 @@ func runLazyX11Display(ctx context.Context, listener *os.File, container types.C
 	}
 	err = x11bridge.Run(ctx, x11bridge.Options{
 		Nested: nested, HostToApp: options.HostToApp, AppToHost: options.AppToHost,
-		ShowDisplay: display.show,
+		ShowDisplay: display.show, HideDisplay: display.hide, TrayActive: trayActive,
 		ServerAlive: func() bool {
 			return sameRecordedProcess(command.Process.Pid, serverStart) && sameContainerProcess(container, options.ContainerPid)
 		},
@@ -634,4 +647,42 @@ func forwardX11Message(destination, source *net.UnixConn, data, ancillary []byte
 		written += count
 	}
 	return nil
+}
+
+func startX11TrayProxy(ctx context.Context, display string, options X11BrokerOptions) (func() bool, func()) {
+	if options.TrayProxy == "" {
+		return nil, func() {}
+	}
+	connection, err := x11Connection(display, options.NestedAuthority)
+	if err != nil {
+		xgb.Logger.Printf("connect private tray display: %v", err)
+		return nil, func() {}
+	}
+	proxy, err := trayproxy.New(trayproxy.Options{Connection: connection, BusAddress: os.Getenv("DBUS_SESSION_BUS_ADDRESS"), Name: options.TrayName})
+	if err != nil {
+		connection.Close()
+		xgb.Logger.Printf("start private tray proxy: %v", err)
+		return nil, func() {}
+	}
+	trayContext, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = proxy.Run(trayContext) }()
+	return proxy.Active, func() { cancel(); <-done }
+}
+
+// RunTrayProxy presents icons from an explicitly selected private X11 display.
+func RunTrayProxy(ctx context.Context, display, authority, name string) error {
+	if !filepath.IsAbs(display) || !filepath.IsAbs(authority) {
+		return errors.New("tray proxy requires a private display socket and authority file")
+	}
+	connection, err := x11Connection(display, authority)
+	if err != nil {
+		return err
+	}
+	proxy, err := trayproxy.New(trayproxy.Options{Connection: connection, BusAddress: os.Getenv("DBUS_SESSION_BUS_ADDRESS"), Name: name})
+	if err != nil {
+		connection.Close()
+		return err
+	}
+	return proxy.Run(ctx)
 }

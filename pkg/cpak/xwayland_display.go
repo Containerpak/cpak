@@ -246,3 +246,25 @@ func closeWaylandFDs(fds []int) {
 		_ = syscall.Close(fd)
 	}
 }
+
+func (d *xwaylandDisplay) hide() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.visible || d.root == 0 {
+		return nil
+	}
+	d.visible = false
+	d.pending = false
+	attach := make([]byte, 20)
+	binary.NativeEndian.PutUint32(attach, d.root)
+	binary.NativeEndian.PutUint32(attach[4:], 20<<16|1)
+	if err := writeWaylandMessage(d.host, attach, nil); err != nil {
+		return err
+	}
+	if err := writeWaylandMessage(d.host, waylandCommit(d.root), nil); err != nil {
+		return err
+	}
+	// Request a fresh xdg configure while the surface is unmapped. The client
+	// receives it before the next application window makes its buffer visible.
+	return writeWaylandMessage(d.host, waylandCommit(d.root), nil)
+}

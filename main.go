@@ -41,6 +41,7 @@ type CLI struct {
 	Orchestrate        cmd.OrchestrateCmd        `cmd:"orchestrate" help:"Run multiple cpak applications"`
 	Spawn              cmd.SpawnCmd              `cmd:"spawn" help:"Spawn a container for a package"`
 	NetworkHelper      cmd.NetworkHelperCmd      `cmd:"network-helper" help:"Supervise userspace container networking"`
+	TrayProxy          cmd.TrayProxyCmd          `cmd:"tray-proxy" help:"Present private XEmbed icons on the desktop tray"`
 	X11Broker          cmd.X11BrokerCmd          `cmd:"x11-broker" help:"Mediate an isolated X11 display"`
 	Launch             cmd.LaunchCmd             `cmd:"launch" help:"Run a command inside an existing container sandbox"`
 	ChromiumLaunch     cmd.ChromiumLaunchCmd     `cmd:"chromium-launch" help:"Launch or forward a Chromium command"`

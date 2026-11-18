@@ -111,6 +111,9 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		}
 	}
 	override := policy.effective
+	if err = types.ValidateTrayProxy(override.TrayProxy, override.DisplayX11); err != nil {
+		return types.Container{}, err
+	}
 	x11Runtime := x11BridgeRuntime{}
 	defer x11Runtime.close()
 
@@ -392,7 +395,7 @@ func (c *Cpak) prepareContainer(app types.Application, policy launchPolicy, scop
 		return types.Container{}, fmt.Errorf("identify container process: %w", err)
 	}
 	if container.X11SocketPath != "" {
-		container, err = startX11Broker(container, override, &x11Runtime)
+		container, err = startX11Broker(container, override, &x11Runtime, app.Name)
 		if err != nil {
 			terminateContainerProcess(container)
 			c.CleanupContainer(container)
