@@ -40,6 +40,7 @@ type Cpak struct {
 	fileSpan           *desktopFileSpan
 	runtimeEnvironment []string
 	runtimeSecrets     []types.RuntimeSecret
+	workingDirectory   string
 	applicationService string
 	flatpakProgress    func(FlatpakProgress)
 	writableLinks      []string

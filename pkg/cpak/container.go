@@ -1150,13 +1150,21 @@ func (c *Cpak) ExecInContainer(app types.Application, override types.Override, c
 	if terminal {
 		envVars = runtimeTerminalEnvironment(envVars, os.Getenv("TERM"), os.Getenv("COLORTERM"))
 	}
+	directory, err := c.runtimeWorkingDirectory(override)
+	if err != nil {
+		return err
+	}
+	if directory != "" {
+		envVars = setEnvironmentValue(envVars, "PWD", directory)
+	}
 	request, err := runtimeproto.EncodeRequest(runtimeproto.Request{
-		Args:     command,
-		Env:      envVars,
-		AsRoot:   override.AsRoot,
-		Terminal: terminal,
-		Rows:     rows,
-		Columns:  columns,
+		Directory: directory,
+		Args:      command,
+		Env:       envVars,
+		AsRoot:    override.AsRoot,
+		Terminal:  terminal,
+		Rows:      rows,
+		Columns:   columns,
 	})
 	if err != nil {
 		return err

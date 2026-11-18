@@ -21,6 +21,7 @@ type RunCmd struct {
 	Binary string   `arg:"binary" help:"Binary to launch"`
 	Extra  []string `arg:"extra" help:"Extra arguments for the binary"`
 
+	Directory       string   `cli:"working-directory" help:"Start in an already shared host directory"`
 	Verbose         bool     `cli:"verbose,v" help:"Enable verbose output"`
 	DesktopLaunch   bool     `cli:"desktop-launch" help:"Grant files opened through a desktop launcher"`
 	DesktopFileSpan string   `cli:"desktop-file-span" help:"How many launcher arguments precede and follow the selected files"`
@@ -56,6 +57,9 @@ func (c *RunCmd) Run() error {
 	c.configureStorageMigration(&cp)
 	if c.Service != "" && c.Binary != "" {
 		return c.runError(fmt.Errorf("service and binary are mutually exclusive"))
+	}
+	if err := cp.SetWorkingDirectory(c.Directory); err != nil {
+		return c.runError(err)
 	}
 	if err := cp.ConfigureRuntime(c.Env, c.EnvFile, c.Secret); err != nil {
 		return c.runError(err)
