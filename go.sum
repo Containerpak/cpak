@@ -301,6 +301,8 @@ github.com/mirkobrombin/dabadee/v2 v2.0.1 h1:BZAWElb5Zk+LawqmSMASMWQhIQX5FiFfx1u
 github.com/mirkobrombin/dabadee/v2 v2.0.1/go.mod h1:IiLyOOlKpGp7z306fTEydSK/WouFFtoq/cPBOb6UXWk=
 github.com/mirkobrombin/go-cli-builder/v3 v3.0.2 h1:ZmKXMRmMkguBdvmIVc8itVkLCmAAZnv0OfzPY7lksI4=
 github.com/mirkobrombin/go-cli-builder/v3 v3.0.2/go.mod h1:s+7oN/tmololI2kOcrQcNGdAlMqEDlzDcqkeRQ1RNTk=
+github.com/mirkobrombin/go-cli-builder/v3 v3.0.3 h1:fVa+a0qI3cyJs66y9+j3LRPsIjjexcx0tJ0OzEOpLfQ=
+github.com/mirkobrombin/go-cli-builder/v3 v3.0.3/go.mod h1:s+7oN/tmololI2kOcrQcNGdAlMqEDlzDcqkeRQ1RNTk=
 github.com/mirkobrombin/go-foundation/v2 v2.3.2 h1:aIWAg6s82hhMZlRMjKIex7yPxtsU4qlAkJvO5/A412Q=
 github.com/mirkobrombin/go-foundation/v2 v2.3.2/go.mod h1:fYCg04t/V9/vJ10itHY9kk6qbix7D1POxBoHec0x1CE=
 github.com/mirkobrombin/go-slipstream v1.1.0 h1:S8+m5wtaapqxQt9aG54ENsbm5eVo+nRlWg/d2JE/xAE=

@@ -31,7 +31,7 @@ func TestCompletion(t *testing.T) {
 	for shell, expected := range map[string]string{
 		"bash": "complete -F _cpak_completions cpak",
 		"zsh":  "#compdef cpak",
-		"fish": "complete -c cpak",
+		"fish": "complete -c 'cpak'",
 	} {
 		t.Run(shell, func(t *testing.T) {
 			var output bytes.Buffer
