@@ -6,7 +6,7 @@
   outputs = { self, nixpkgs }:
     let
       version = "2.14.18";
-      vendorHash = "sha256-vO3SYC0ni0c+9aF0k0f/yhniALhqXbprpRbv3MS+Kwo=";
+      vendorHash = "sha256-lxRSKn7Edlw/lyHDJhkSMdSZsUxqwXIW8jwa/CIqWgM=";
       buildGoModuleFor = pkgs: pkgs.buildGo126Module.override {
         go = pkgs.go_1_26.overrideAttrs (final: previous: {
           version = "1.26.9";
