@@ -164,7 +164,12 @@ func testTrayBroker(t *testing.T, wayland bool) {
 	}
 	var background image.Image
 	if wayland {
-		background = trayTestScreenshot(t)
+		waitTestCondition(t, 3*time.Second, func() bool {
+			background = trayTestScreenshot(t)
+			bounds := background.Bounds()
+			red, green, blue, _ := background.At(bounds.Min.X+8, bounds.Min.Y+8).RGBA()
+			return red>>8 == 0x28 && green>>8 == 0x46 && blue>>8 == 0x68
+		}, "private compositor background did not render")
 	}
 	visible := func() bool {
 		if wayland {

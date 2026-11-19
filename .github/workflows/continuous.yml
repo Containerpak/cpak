@@ -196,7 +196,7 @@ jobs:
       - name: Install Wayland test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y labwc wlrctl grim x11-utils xwayland
+          sudo apt-get install -y labwc wlrctl grim swaybg x11-utils xwayland
 
       - name: Test lazy Xwayland input
         run: |
@@ -223,7 +223,27 @@ jobs:
             exit 1
           fi
           export WAYLAND_DISPLAY="${socket##*/}"
+          swaybg -c '#284668' >/tmp/cpak-swaybg.log 2>&1 &
+          background_pid=$!
+          trap 'kill "${background_pid}" "${labwc_pid}" 2>/dev/null || true' EXIT
           CPAK_WAYLAND_INPUT_TEST=1 go test -race ./pkg/cpak -run 'TestX(11|wayland)' -count=1 -v
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          source = Path("pkg/cpak/xwayland_display.go")
+          prefix, _ = source.read_text().split("func (d *xwaylandDisplay) hide() error {", 1)
+          source.write_text(prefix + "func (d *xwaylandDisplay) hide() error { return nil }\n")
+          PYTHON
+          set +e
+          CPAK_WAYLAND_INPUT_TEST=1 go test -race ./pkg/cpak -run '^TestXwaylandTraySurvivesHiddenWindowsAndRestoresThem$' -count=1 -timeout 45s -v >"${RUNNER_TEMP}/cpak-tray-negative.log" 2>&1
+          negative_status=$?
+          set -e
+          git restore pkg/cpak/xwayland_display.go
+          cat "${RUNNER_TEMP}/cpak-tray-negative.log"
+          if [ "${negative_status}" -eq 0 ] || ! grep -q 'tray-only application left an empty desktop window' "${RUNNER_TEMP}/cpak-tray-negative.log"; then
+            echo 'The tray test did not detect the disabled display hide operation'
+            exit 1
+          fi
+          echo 'The tray test detects an empty display when hiding is disabled'
 
   nixos:
     name: NixOS
