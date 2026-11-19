@@ -225,7 +225,7 @@ jobs:
           export WAYLAND_DISPLAY="${socket##*/}"
           swaybg -c '#284668' >/tmp/cpak-swaybg.log 2>&1 &
           background_pid=$!
-          trap 'kill "${background_pid}" "${labwc_pid}" 2>/dev/null || true' EXIT
+          trap 'cat /tmp/cpak-swaybg.log /tmp/cpak-labwc.log; kill "${background_pid}" "${labwc_pid}" 2>/dev/null || true' EXIT
           CPAK_WAYLAND_INPUT_TEST=1 go test -race ./pkg/cpak -run 'TestX(11|wayland)' -count=1 -v
           python3 - <<'PYTHON'
           from pathlib import Path
