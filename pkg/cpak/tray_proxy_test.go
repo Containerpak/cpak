@@ -50,6 +50,15 @@ func TestXwaylandTraySurvivesHiddenWindowsAndRestoresThem(t *testing.T) {
 
 func testTrayBroker(t *testing.T, wayland bool) {
 	t.Helper()
+	var background image.Image
+	if wayland {
+		waitTestCondition(t, 3*time.Second, func() bool {
+			background = trayTestScreenshot(t)
+			bounds := background.Bounds()
+			red, green, blue, _ := background.At(bounds.Min.X+8, bounds.Min.Y+8).RGBA()
+			return red>>8 == 0x28 && green>>8 == 0x46 && blue>>8 == 0x68
+		}, "private compositor background did not render")
+	}
 	if _, err := exec.LookPath("dbus-daemon"); err != nil {
 		t.Skip("dbus-daemon unavailable")
 	}
@@ -161,15 +170,6 @@ func testTrayBroker(t *testing.T, wayland bool) {
 	}
 	if err = xproto.CreateWindowChecked(client, screen.RootDepth, window, screen.Root, 0, 0, 320, 240, 0, xproto.WindowClassInputOutput, screen.RootVisual, xproto.CwBackPixel, []uint32{0x40a080}).Check(); err != nil {
 		t.Fatal(err)
-	}
-	var background image.Image
-	if wayland {
-		waitTestCondition(t, 3*time.Second, func() bool {
-			background = trayTestScreenshot(t)
-			bounds := background.Bounds()
-			red, green, blue, _ := background.At(bounds.Min.X+8, bounds.Min.Y+8).RGBA()
-			return red>>8 == 0x28 && green>>8 == 0x46 && blue>>8 == 0x68
-		}, "private compositor background did not render")
 	}
 	visible := func() bool {
 		if wayland {
