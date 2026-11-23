@@ -446,7 +446,7 @@ func (c *Cpak) installFlatpakRuntime(plan *FlatpakPlan) (types.Application, erro
 	if err := c.storeApplication(runtime); err != nil {
 		return types.Application{}, err
 	}
-	c.EnrolPublishedApplication(runtime, PublishedPackage{})
+	c.enrolFlatpakRuntime(runtime)
 	return runtime, nil
 }
 

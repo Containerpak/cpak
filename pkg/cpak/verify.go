@@ -440,6 +440,7 @@ func sessionIdentities(sessions []types.Session) []string {
 // shipped. An anchor records the installation as it stood when it was written,
 // which is trust on first install and not authenticity.
 type AnchorState struct {
+	Version    string `json:"version,omitempty"`
 	Origin     string `json:"origin"`
 	Enrolled   bool   `json:"enrolled"`
 	Generation uint64 `json:"generation,omitempty"`
@@ -493,7 +494,7 @@ func (c *Cpak) AnchorStates() ([]AnchorState, error) {
 // application it cannot read says nothing about the rest, and because a ledger
 // that would not answer still leaves a launch root worth showing.
 func (c *Cpak) anchorState(uid uint32, app types.Application, recorded bool) AnchorState {
-	state := AnchorState{Origin: app.Origin}
+	state := AnchorState{Origin: app.Origin, Version: app.Version}
 	anchor, enrolled, err := launchAnchors.Load(uid, app.Origin)
 	if err != nil {
 		state.Unreadable = err.Error()

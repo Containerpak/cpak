@@ -6,6 +6,7 @@ package cpak
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/mirkobrombin/cpak/pkg/flatpak"
@@ -58,8 +59,8 @@ func (c *Cpak) preflightFlatpakUpdate(app types.Application) (types.UpdateResult
 // ref, its runtime and their extensions. Every commit already in the store is
 // reused, so an update that changed nothing downloads nothing and ends as
 // up to date.
-func (c *Cpak) updateFlatpakApplication(app types.Application, deps updateDeps, approvedAdditions map[string]bool) types.UpdateResult {
-	result := types.UpdateResult{
+func (c *Cpak) updateFlatpakApplication(app types.Application, deps updateDeps, approvedAdditions map[string]bool) (result types.UpdateResult) {
+	result = types.UpdateResult{
 		Origin:     app.Origin,
 		Name:       app.Name,
 		SourceType: app.SourceType(),
@@ -85,6 +86,13 @@ func (c *Cpak) updateFlatpakApplication(app types.Application, deps updateDeps, 
 		}
 	}
 
+	if c.launchRecognised(app) {
+		defer func() {
+			if result.Status == types.UpdateStatusFailed {
+				c.restoreEnrolment(app)
+			}
+		}()
+	}
 	runtime, err := c.updateFlatpakRuntime(plan, app)
 	if err != nil {
 		return failedUpdate(result, err)
@@ -171,6 +179,7 @@ func (c *Cpak) updateFlatpakRuntime(plan *FlatpakPlan, app types.Application) (t
 	}
 	commit := plan.Runtime.Commit.Checksum.String()
 	if existing.Flatpak != nil && existing.Flatpak.Commit == commit && sameLayers(existing.ParsedLayers, layers) {
+		c.enrolFlatpakRuntime(existing)
 		return existing, nil
 	}
 	updated := existing
@@ -184,10 +193,19 @@ func (c *Cpak) updateFlatpakRuntime(plan *FlatpakPlan, app types.Application) (t
 	if err := c.PrepareApplicationStorage(updated); err != nil {
 		return types.Application{}, err
 	}
+	dependents, err := c.recognisedDependents(existing)
+	if err != nil {
+		return types.Application{}, err
+	}
 	if err := c.replaceApplication(existing, updated); err != nil {
 		return types.Application{}, fmt.Errorf("update the runtime %s: %w", ref.ID, err)
 	}
-	c.EnrolPublishedApplication(updated, PublishedPackage{})
+	c.enrolFlatpakRuntime(updated)
+	for _, dependent := range dependents {
+		if enrolment := c.EnrolApplication(dependent); enrolment.Reason != nil {
+			logger.Printf("Warning: %s was not enrolled on the updated runtime: %v", dependent.Name, enrolment.Reason)
+		}
+	}
 	logger.Printf("Updated the runtime %s", ref.ID)
 	return updated, nil
 }
@@ -202,4 +220,57 @@ func sameLayers(first, second []string) bool {
 		}
 	}
 	return true
+}
+
+func (c *Cpak) launchRecognised(app types.Application) bool {
+	components, addons, err := c.launchComposition(app)
+	if err != nil {
+		return false
+	}
+	identity, err := c.verifySessionLaunch(app, resolvedOverride(app), "", components, addons)
+	return err == nil && identity.Verdict == LaunchRecognised
+}
+
+func (c *Cpak) restoreEnrolment(app types.Application) {
+	installed, err := c.getStoredApplication(app.Origin, app.Version, app.Branch, app.Commit, app.Release)
+	if err != nil || installed.CpakId == "" {
+		logger.Printf("Warning: %s could not be read to restore its enrolment: %v", app.Name, err)
+		return
+	}
+	if enrolment := c.EnrolApplication(installed); enrolment.Reason != nil {
+		logger.Printf("Warning: the enrolment of %s was not restored: %v", app.Name, enrolment.Reason)
+	}
+}
+
+func (c *Cpak) recognisedDependents(runtime types.Application) ([]types.Application, error) {
+	installed, err := c.GetInstalledApps()
+	if err != nil {
+		return nil, fmt.Errorf("read what runs on %s: %w", runtime.Name, err)
+	}
+	var dependents []types.Application
+	for _, app := range installed {
+		if app.CpakId != runtime.CpakId && declaresDependency(app, runtime) && c.launchRecognised(app) {
+			dependents = append(dependents, app)
+		}
+	}
+	return dependents, nil
+}
+
+func (c *Cpak) enrolFlatpakRuntime(runtime types.Application) {
+	installations, err := c.installationsOf(runtime.Origin)
+	if err != nil {
+		logger.Printf("Warning: the installations of %s could not be read: %v", runtime.Origin, err)
+		return
+	}
+	if len(installations) < 2 {
+		c.EnrolPublishedApplication(runtime, PublishedPackage{})
+		return
+	}
+	uid := uint32(os.Getuid())
+	if _, held, err := launchAnchors.Load(uid, runtime.Origin); err != nil || !held {
+		return
+	}
+	if err := forgetAnchor(uid, runtime.Origin); err != nil {
+		logger.Printf("Warning: the anchor shared by the branches of %s was not removed: %v", runtime.Origin, err)
+	}
 }

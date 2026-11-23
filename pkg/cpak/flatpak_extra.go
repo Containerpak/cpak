@@ -16,6 +16,7 @@ import (
 	"time"
 
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
+	"github.com/google/uuid"
 	"github.com/mirkobrombin/cpak/pkg/flatpak"
 	"github.com/mirkobrombin/cpak/pkg/integrity"
 	"github.com/mirkobrombin/cpak/pkg/logger"
@@ -105,6 +106,11 @@ func (c *Cpak) applyFlatpakExtraData(app *types.Application) error {
 		return nil
 	}
 	digest := flatpakExtraLayerDigest(source)
+	unlock, err := c.lockContainerScope("extra-data:" + digest)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	available, err := c.fvsLayerAvailable(digest)
 	if err != nil {
 		return err
@@ -176,6 +182,9 @@ func (c *Cpak) runApplyExtra(app types.Application, extra string) error {
 	if err := c.prepareSocketListener(); err != nil {
 		return fmt.Errorf("apply_extra of %s failed: %w", app.Name, err)
 	}
+	if enrolment := c.EnrolPublishedApplication(app, PublishedPackage{}); enrolment.Reason != nil {
+		logger.Printf("Warning: %s was not enrolled before apply_extra: %v", app.Name, enrolment.Reason)
+	}
 	store, err := NewStore(c.Options.StorePath)
 	if err != nil {
 		return err
@@ -190,8 +199,9 @@ func (c *Cpak) runApplyExtra(app types.Application, extra string) error {
 	previous := c.writableLinks
 	c.writableLinks = append(append([]string{}, previous...), extra+":/app/extra")
 	defer func() { c.writableLinks = previous }()
-	defer func() { _ = c.StopContainerInstance(app, extraDataInstance) }()
-	err = c.runApplicationInstanceWithStore(app, policy, extraDataInstance, "@/bin/sh", false, false, store,
+	instance := extraDataInstance + "-" + uuid.New().String()
+	defer func() { _ = c.StopContainerInstance(app, instance) }()
+	err = c.runApplicationInstanceWithStore(app, policy, instance, "@/bin/sh", false, false, store,
 		"-c", "cd /app/extra && exec /app/bin/apply_extra")
 	if err != nil {
 		return fmt.Errorf("apply_extra of %s failed: %w", app.Name, err)

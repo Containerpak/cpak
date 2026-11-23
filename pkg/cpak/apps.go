@@ -536,7 +536,11 @@ func (c *Cpak) stopApplicationContainers(app types.Application) (err error) {
 		return err
 	}
 
-	containers, err := store.GetApplicationContainers(app)
+	if app.CpakId == "" {
+		_ = store.Close()
+		return errors.New("application CpakId is required to stop its containers")
+	}
+	containers, err := store.GetContainers()
 	closeErr := store.Close()
 	if err != nil {
 		return err
@@ -545,7 +549,11 @@ func (c *Cpak) stopApplicationContainers(app types.Application) (err error) {
 		return closeErr
 	}
 
+	owner := map[string]types.Application{app.CpakId: app}
 	for _, container := range containers {
+		if _, owned := applicationForContainer(owner, container); !owned {
+			continue
+		}
 		terminateContainerProcess(container)
 		if cleanupErr := c.CleanupContainer(container); cleanupErr != nil {
 			logger.Printf("Warning: error during container cleanup %s: %v", container.CpakId, cleanupErr)

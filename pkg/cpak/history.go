@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/mirkobrombin/cpak/pkg/logger"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -131,6 +132,7 @@ func (c *Cpak) Rollback(origin string) (result RollbackResult, err error) {
 		return result, errors.New("no rollback history available")
 	}
 	previous := history[len(history)-1]
+	recognised := c.launchRecognised(app)
 	transaction, err := c.beginUpdateTransaction(app, previous)
 	if err != nil {
 		return result, err
@@ -155,6 +157,11 @@ func (c *Cpak) Rollback(origin string) (result RollbackResult, err error) {
 	}
 	if err = c.finishUpdateTransaction(transaction); err != nil {
 		return result, err
+	}
+	if recognised {
+		if enrolment := c.EnrolApplication(previous); enrolment.Reason != nil {
+			logger.Printf("Warning: the rolled back %s was not enrolled: %v", previous.Name, enrolment.Reason)
+		}
 	}
 	return RollbackResult{
 		Origin:      app.Origin,

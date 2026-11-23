@@ -62,7 +62,7 @@ func (c *AuditCmd) reportIntegrity(cp *cpak.Cpak) error {
 	}
 	held := make(map[string]cpak.AnchorState, len(anchors))
 	for _, state := range anchors {
-		held[state.Origin] = state
+		held[state.Origin+" "+state.Version] = state
 	}
 	// Who published an application is the one thing in this section that
 	// neither the store nor this host can state: it is read out of the
@@ -82,7 +82,7 @@ func (c *AuditCmd) reportIntegrity(cp *cpak.Cpak) error {
 		return nil
 	}
 	for _, app := range report.Applications {
-		c.reportApplication(app, held[app.Origin], signed[app.Origin])
+		c.reportApplication(app, held[app.Origin+" "+app.Version], signed[app.Origin])
 	}
 	c.summariseIntegrity(report, anchors, signatures)
 	return nil
