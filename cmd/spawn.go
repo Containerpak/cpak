@@ -524,6 +524,9 @@ func (c *SpawnCmd) setupMountPoints(userUid int, rootFs string, overrideMounts [
 	if err != nil {
 		return nil, err
 	}
+	if err = prepareApplicationRuntimeDirectory(filepath.Join(rootFs, runtimeGrant.Path), c.Env); err != nil {
+		return nil, err
+	}
 	grants = append(grants, runtimeGrant)
 	deviceGrants, err := c.setupBaseDevices(rootFs)
 	if err != nil {
@@ -656,6 +659,29 @@ func setupUserRuntimeDirectory(userUid int, rootFs string) (sandbox.PathGrant, e
 		return sandbox.PathGrant{}, fmt.Errorf("mount:%s: an error occurred while spawning the namespace: %w", runtimePath, err)
 	}
 	return sandbox.PathGrant{Path: runtimePath}, nil
+}
+
+func prepareApplicationRuntimeDirectory(runtimeDirectory string, environment []string) error {
+	id := ""
+	for _, entry := range environment {
+		if value, found := strings.CutPrefix(entry, "FLATPAK_ID="); found {
+			id = value
+		}
+	}
+	if id == "" {
+		return nil
+	}
+	if id == "." || id == ".." || strings.Contains(id, "/") {
+		return fmt.Errorf("invalid application id: %q", id)
+	}
+	path := runtimeDirectory
+	for _, name := range []string{"app", id} {
+		path = filepath.Join(path, name)
+		if err := os.Mkdir(path, 0700); err != nil {
+			return fmt.Errorf("create application runtime directory %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 type loginSessionStateMount struct {
