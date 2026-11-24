@@ -40,6 +40,8 @@ func main() {
 		err = probeAddon()
 	case "loopback":
 		err = probeLoopback()
+	case "host-configuration":
+		err = printHostConfiguration()
 	case "network":
 		err = probeNetwork(argument(2), true)
 	case "network-slow":
@@ -589,4 +591,25 @@ func requireFile(path string) error {
 func fail(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(1)
+}
+
+func printHostConfiguration() error {
+	stat, err := os.ReadFile("/proc/1/stat")
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:]))
+	if len(fields) < 20 {
+		return fmt.Errorf("unexpected /proc/1/stat")
+	}
+	resolver, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return err
+	}
+	hosts, err := os.ReadFile("/etc/hosts")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("started %s\n%s%s", fields[19], resolver, hosts)
+	return nil
 }

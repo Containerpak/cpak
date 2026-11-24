@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 
 	"github.com/mirkobrombin/cpak/pkg/filegrant"
@@ -17,9 +18,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var errGrantMountWorkerClosed = errors.New("file grant mount worker is closed")
+
 type grantMountWorker struct {
 	requests chan grantMountRequest
 	done     chan struct{}
+	mu       sync.Mutex
+	closed   bool
 }
 
 type grantMountRequest struct {
@@ -71,7 +76,9 @@ func (w *grantMountWorker) Clone(grant filegrant.Grant, sources grantproto.Sourc
 		return nil, errors.New("file grant mount worker is unavailable")
 	}
 	result := make(chan grantMountResult, 1)
-	w.requests <- grantMountRequest{grant: grant, sources: sources, result: result}
+	if !w.send(grantMountRequest{grant: grant, sources: sources, result: result}) {
+		return nil, errGrantMountWorkerClosed
+	}
 	cloned := <-result
 	return cloned.tree, cloned.err
 }
@@ -81,15 +88,34 @@ func (w *grantMountWorker) Do(fn func() error) error {
 		return errors.New("file grant mount worker is unavailable")
 	}
 	result := make(chan grantMountResult, 1)
-	w.requests <- grantMountRequest{run: fn, result: result}
+	if !w.send(grantMountRequest{run: fn, result: result}) {
+		return errGrantMountWorkerClosed
+	}
 	return (<-result).err
+}
+
+func (w *grantMountWorker) send(request grantMountRequest) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return false
+	}
+	w.requests <- request
+	return true
 }
 
 func (w *grantMountWorker) Close() {
 	if w == nil {
 		return
 	}
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
+	w.closed = true
 	close(w.requests)
+	w.mu.Unlock()
 	<-w.done
 }
 

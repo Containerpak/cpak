@@ -115,6 +115,8 @@ type SpawnCmd struct {
 	RuntimeDestination []string `cli:"runtime-destination" help:"select the destination for each runtime package"`
 	ExtraArgs          []string `arg:"extra" help:"Extra arguments"`
 
+	followedConfiguration []followedConfiguration
+
 	cli.Base
 }
 
@@ -1163,6 +1165,13 @@ func (c *SpawnCmd) injectConfigurationFiles(rootFs string, includeNvidia bool, n
 		if err = os.Chmod(destination, 0644); err != nil {
 			return nil, false, fmt.Errorf("chmod:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
+		if followsHost(conf, nameserver) {
+			local, openErr := os.OpenFile(destination, os.O_RDWR, 0)
+			if openErr != nil {
+				return nil, false, fmt.Errorf("follow:%s: an error occurred while spawning the namespace: %s", conf, openErr)
+			}
+			c.followedConfiguration = append(c.followedConfiguration, followedConfiguration{source: conf, local: local, content: content})
+		}
 		if err = tools.MountBindReadOnlyPrepared(destination, destination, true); err != nil {
 			return nil, false, fmt.Errorf("restrict:%s: an error occurred while spawning the namespace: %s", conf, err)
 		}
@@ -1888,6 +1897,9 @@ func (c *SpawnCmd) serveInit(listener *unixsocket.Listener, grantListener net.Li
 	go c.serveGrantMounts(grantListener, grantMounts)
 	if c.WatchHidraw {
 		go c.watchHidraw(grantMounts)
+	}
+	if len(c.followedConfiguration) > 0 {
+		go c.followHostConfiguration(grantMounts)
 	}
 	reaper := newChildReaper("/proc")
 	defer reaper.close()

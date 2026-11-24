@@ -38,6 +38,9 @@ cleanup() {
 	for pid in ${service_pids:-}; do
 		kill "$pid" 2>/dev/null || true
 	done
+	if [ "${hosts_mount_active:-false}" = true ]; then
+		sudo umount /etc/hosts 2>/dev/null || true
+	fi
 	if [ "${resolver_mount_active:-false}" = true ]; then
 		sudo umount /etc/resolv.conf 2>/dev/null || true
 	fi
@@ -366,6 +369,25 @@ slirp_pid() {
 	pgrep -n -x slirp4netns 2>/dev/null || true
 }
 
+wait_host_configuration() {
+	expected_start=$1
+	expected=$2
+	for attempt in $(seq 1 300); do
+		current=$(run_command "$manifest_host/integration/loopback" host-configuration 2>/dev/null || true)
+		if [ "$(printf '%s\n' "$current" | sed -n 1p)" != "$expected_start" ]; then
+			echo "the host-network instance restarted instead of following the host" >&2
+			exit 1
+		fi
+		if printf '%s\n' "$current" | grep -Fx -- "$expected" >/dev/null; then
+			return 0
+		fi
+		sleep 0.05
+	done
+	printf '%s\n' "$current" >&2
+	echo "the host-network instance did not follow: $expected" >&2
+	exit 1
+}
+
 network_supervisor_pid() {
 	ps -eo pid=,args= | awk '$0 ~ /cpak [n]etwork-helper/ {print $1}' | tail -n 1
 }
@@ -646,8 +668,10 @@ for attempt in $(seq 1 100); do
 	fi
 	sleep 0.05
 done
+host_follow_start=$(run_command "$manifest_host/integration/loopback" host-configuration | sed -n 1p)
 sudo mount --bind "$work/resolver-old" /etc/resolv.conf
 resolver_mount_active=true
+wait_host_configuration "$host_follow_start" "nameserver 192.0.2.254"
 run_command "$network_origin" network-slow "$network_url" >"$work/network-concurrent-1.log" 2>&1 &
 network_client_1=$!
 run_command "$network_origin" network-slow "$network_url" >"$work/network-concurrent-2.log" 2>&1 &
@@ -681,6 +705,14 @@ sudo umount /etc/resolv.conf
 resolver_mount_active=false
 sudo mount --bind "$work/resolver-new" /etc/resolv.conf
 resolver_mount_active=true
+wait_host_configuration "$host_follow_start" "nameserver 127.0.0.1"
+{ cat /etc/hosts; printf '192.0.2.77 cpak-follow.test\n'; } >"$work/hosts-new"
+sudo mount --bind "$work/hosts-new" /etc/hosts
+hosts_mount_active=true
+wait_host_configuration "$host_follow_start" "192.0.2.77 cpak-follow.test"
+sudo umount /etc/hosts
+hosts_mount_active=false
+"$cpak" stop "$manifest_host/integration/loopback"
 for attempt in $(seq 1 200); do
 	refreshed_helper=$(slirp_pid)
 	if [ -n "$refreshed_helper" ] && [ "$refreshed_helper" != "$network_helper" ]; then
