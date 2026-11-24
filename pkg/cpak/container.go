@@ -786,6 +786,12 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		cmds = append(cmds, "--system-shims", shim)
 	}
 
+	logFile, err := os.OpenFile(container.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("open container log: %w", err)
+	}
+	defer logFile.Close()
+
 	readyReader, readyWriter, err := os.Pipe()
 	if err != nil {
 		return "", 0, "", fmt.Errorf("create readiness pipe: %w", err)
@@ -823,9 +829,9 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 	} else {
 		cmd = nativeNamespaceCommand(cpakBinary, cmds, namespace)
 	}
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdin = nil
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	cmd.Env = append(os.Environ(), containerEnv...)
 	cmd.Env = append(cmd.Env, "CPAK_CONTAINER_ID="+container.CpakId)
 	if mountDir != "" {
@@ -873,8 +879,8 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 			return "", 0, "", fmt.Errorf("create network readiness pipe: %w", pipeErr)
 		}
 		helper := network.supervisorCommand(cpakBinary, namespacePID, helperReadyWriter, networkExitReader)
-		helper.Stdout = os.Stdout
-		helper.Stderr = os.Stderr
+		helper.Stdout = logFile
+		helper.Stderr = logFile
 		if err = helper.Start(); err != nil {
 			helperReadyReader.Close()
 			helperReadyWriter.Close()
@@ -935,30 +941,30 @@ func (c *Cpak) startContainer(container types.Container, app types.Application, 
 		case err = <-ready:
 			if err != nil {
 				_ = cmd.Process.Kill()
-				return "", 0, "", fmt.Errorf("container failed before readiness: %w", err)
+				return "", 0, "", fmt.Errorf("container failed before readiness: %w (see %s)", err, container.LogPath)
 			}
 			containerReady = true
 			ready = nil
 		case err = <-networkReady:
 			if err != nil {
 				_ = cmd.Process.Kill()
-				return "", 0, "", fmt.Errorf("network helper failed before readiness: %w", err)
+				return "", 0, "", fmt.Errorf("network helper failed before readiness: %w (see %s)", err, container.LogPath)
 			}
 			networkIsReady = true
 			networkReady = nil
 		case err = <-networkExited:
 			if err == nil {
-				err = fmt.Errorf("network helper exited before readiness")
+				err = fmt.Errorf("network helper exited before readiness (see %s)", container.LogPath)
 			}
 			return "", 0, "", err
 		case err = <-exited:
 			if err == nil {
-				err = fmt.Errorf("container init exited before readiness")
+				err = fmt.Errorf("container init exited before readiness (see %s)", container.LogPath)
 			}
 			return "", 0, "", err
 		case <-timeout.C:
 			_ = cmd.Process.Kill()
-			return "", 0, "", fmt.Errorf("container readiness timed out")
+			return "", 0, "", fmt.Errorf("container readiness timed out (see %s)", container.LogPath)
 		}
 	}
 
