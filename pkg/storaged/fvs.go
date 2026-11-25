@@ -8,6 +8,7 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
+	"github.com/mirkobrombin/cpak/pkg/imagetree"
 )
 
 // FVS exposes FVS layer checkouts through the cpak storage driver protocol.
@@ -75,7 +76,7 @@ func (d *FVS) Remove(_ context.Context, request storage.RemoveRequest) (storage.
 		} else if err != nil {
 			return result, err
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := imagetree.RemoveAll(path); err != nil {
 			return result, err
 		}
 		result.Removed++

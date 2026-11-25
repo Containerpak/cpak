@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mirkobrombin/cpak/pkg/cpak"
+	"github.com/mirkobrombin/cpak/pkg/imagetree"
 	"github.com/mirkobrombin/cpak/pkg/types"
 )
 
@@ -136,13 +137,13 @@ func useIsolatedCpakEnvironment() (func() error, error) {
 		saved = append(saved, savedEnvironment{name: name, value: previous, present: present})
 		if err = os.Setenv(name, value); err != nil {
 			restoreEnvironment(saved)
-			_ = os.RemoveAll(root)
+			_ = imagetree.RemoveAll(root)
 			return nil, err
 		}
 	}
 	return func() error {
 		restoreEnvironment(saved)
-		return os.RemoveAll(root)
+		return imagetree.RemoveAll(root)
 	}, nil
 }
 

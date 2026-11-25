@@ -86,3 +86,33 @@ func TestUseIsolatedCpakEnvironmentWithLongTemporaryPath(t *testing.T) {
 		listener.Close()
 	}
 }
+
+func TestUseIsolatedCpakEnvironmentRemovesReadOnlyCheckouts(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this case relies on")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	cleanup, err := useIsolatedCpakEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := os.Getenv("CPAK_INSTALLATION_PATH")
+	directory := filepath.Join(root, "store", "storage", "drivers", "fvs", "layers", "layer", "rootfs", "usr", "bin")
+	if err = os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(directory, "WebKitWebDriver"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{directory, filepath.Dir(directory)} {
+		if err = os.Chmod(path, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("isolated path was not removed: %v", err)
+	}
+}

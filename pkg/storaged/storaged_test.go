@@ -153,3 +153,72 @@ func seedLayer(t *testing.T, sourceRoot, layer string) {
 		t.Fatal(err)
 	}
 }
+
+func TestFVSRemovesCheckoutsWithReadOnlyDirectories(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this case relies on")
+	}
+	for _, method := range []string{"remove", "gc"} {
+		t.Run(method, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "source")
+			driverRoot := filepath.Join(root, "driver")
+			seedReadOnlyLayer(t, source, "layer")
+			handler, err := NewFVS(source, driverRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := handler.Prepare(context.Background(), storage.PrepareRequest{
+				Layers: []string{"layer"}, ClearPrivilegedBits: true,
+				OverlayWhiteouts: true, PruneLooseBlocks: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(filepath.Join(prepared.LowerDirs[0], "usr/bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o555 {
+				t.Fatalf("checkout did not keep the image directory mode: %v", info.Mode().Perm())
+			}
+			if method == "gc" {
+				_, err = handler.GC(context.Background(), storage.GCRequest{Apply: true})
+			} else {
+				_, err = handler.Remove(context.Background(), storage.RemoveRequest{Layers: []string{"layer"}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(filepath.Join(driverRoot, "layers", "layer")); !os.IsNotExist(err) {
+				t.Fatalf("checkout still exists: %v", err)
+			}
+		})
+	}
+}
+
+func seedReadOnlyLayer(t *testing.T, sourceRoot, layer string) {
+	t.Helper()
+	repository, err := fvsrepo.InitWithOptions(filepath.Join(sourceRoot, "layers", layer), fvsrepo.InitOptions{
+		BlocksPath: filepath.Join(sourceRoot, "blocks"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := fvsrepo.BeginSnapshot(repository.Path, fvsrepo.SnapshotOptions{ComputeSHA256: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{"usr", "usr/bin"} {
+		if err := writer.Add(fvsrepo.Entry{Path: directory, Kind: fvsrepo.EntryDir, Mode: 0o555}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content := []byte("binary")
+	if err := writer.Add(fvsrepo.Entry{Path: "usr/bin/WebKitWebDriver", Kind: fvsrepo.EntryFile, Mode: 0o755, Size: int64(len(content))}, bytes.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
