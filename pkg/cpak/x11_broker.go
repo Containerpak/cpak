@@ -283,7 +283,7 @@ func runLazyX11Broker(options X11BrokerOptions) error {
 	defer cancel()
 	container := types.Container{CpakId: options.ContainerID, Pid: options.ContainerPid, ProcessStartTime: options.ContainerStartTime}
 	for sameContainerProcess(container, options.ContainerPid) {
-		pending, err := waitForX11Client(ctx, int(listener.Fd()), func() bool {
+		pending, err := waitForX11Client(ctx, int(listener.Fd()), options.ContainerPid, func() bool {
 			return sameContainerProcess(container, options.ContainerPid)
 		})
 		if err != nil {
@@ -383,13 +383,63 @@ func provePrivateX11ListenerConnection(listener *os.File, path string) error {
 	return nil
 }
 
-func waitForX11Client(ctx context.Context, listener int, containerAlive func() bool) (bool, error) {
+func waitForX11Client(ctx context.Context, listener int, containerPid int, containerAlive func() bool) (bool, error) {
+	if ctx.Err() != nil || !containerAlive() {
+		return false, nil
+	}
+	pidfd, err := unix.PidfdOpen(containerPid, 0)
+	if err != nil {
+		return pollForX11Client(ctx, listener, containerAlive)
+	}
+	defer unix.Close(pidfd)
+	if !containerAlive() {
+		return false, nil
+	}
+	wakeReader, wakeWriter, err := os.Pipe()
+	if err != nil {
+		return false, fmt.Errorf("wait for X11 client: %w", err)
+	}
+	defer wakeReader.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-done:
+		}
+		wakeWriter.Close()
+	}()
+	for {
+		poll := []unix.PollFd{
+			{Fd: int32(listener), Events: unix.POLLIN},
+			{Fd: int32(pidfd), Events: unix.POLLIN},
+			{Fd: int32(wakeReader.Fd()), Events: unix.POLLIN},
+		}
+		if _, err := unix.Poll(poll, -1); err != nil {
+			if errors.Is(err, syscall.EINTR) {
+				continue
+			}
+			return false, fmt.Errorf("wait for X11 client: %w", err)
+		}
+		if poll[1].Revents != 0 || poll[2].Revents != 0 {
+			return false, nil
+		}
+		if poll[0].Revents&unix.POLLIN != 0 {
+			return true, nil
+		}
+		if poll[0].Revents != 0 {
+			return false, errors.New("private X11 listener failed")
+		}
+	}
+}
+
+func pollForX11Client(ctx context.Context, listener int, containerAlive func() bool) (bool, error) {
 	for {
 		if ctx.Err() != nil || !containerAlive() {
 			return false, nil
 		}
 		poll := []unix.PollFd{{Fd: int32(listener), Events: unix.POLLIN}}
-		count, err := unix.Poll(poll, 100)
+		count, err := unix.Poll(poll, 1000)
 		if err != nil {
 			if errors.Is(err, syscall.EINTR) {
 				continue
