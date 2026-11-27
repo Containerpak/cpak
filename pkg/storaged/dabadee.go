@@ -9,6 +9,7 @@ import (
 
 	storage "github.com/containerpak/storage/pkg/driver"
 	fvsrepo "github.com/fvs-lab/fvs2/repo"
+	"github.com/mirkobrombin/cpak/pkg/imagetree"
 	dabadee "github.com/mirkobrombin/dabadee/v2/pkg/store"
 )
 
@@ -105,7 +106,7 @@ func (d *DaBaDee) Remove(ctx context.Context, request storage.RemoveRequest) (st
 		} else if err != nil {
 			return result, err
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := imagetree.RemoveAll(path); err != nil {
 			return result, err
 		}
 		result.Removed++

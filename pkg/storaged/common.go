@@ -13,6 +13,7 @@ import (
 	"time"
 
 	storage "github.com/containerpak/storage/pkg/driver"
+	"github.com/mirkobrombin/cpak/pkg/imagetree"
 )
 
 const driverVersion = "1"
@@ -102,7 +103,7 @@ func collectDriverGarbage(ctx context.Context, root string, live []string, apply
 		result.Layers = append(result.Layers, entry.Name())
 		result.Bytes += bytes
 		if apply {
-			if err := os.RemoveAll(path); err != nil {
+			if err := imagetree.RemoveAll(path); err != nil {
 				return result, err
 			}
 		}
